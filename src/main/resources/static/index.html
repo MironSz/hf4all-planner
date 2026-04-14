@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HF4A Mission Planner</title>
+<script src="/d3-dispatch.min.js"></script>
+<script src="/d3-selection.min.js"></script>
+<script src="/d3-color.min.js"></script>
+<script src="/d3-interpolate.min.js"></script>
+<script src="/d3-timer.min.js"></script>
+<script src="/d3-ease.min.js"></script>
+<script src="/d3-transition.min.js"></script>
+<script src="/d3-drag.min.js"></script>
+<script src="/d3-zoom.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { display: flex; height: 100vh; background: #1a1a2e; color: #eee; font-family: monospace; overflow: hidden; }
+#map-container { flex: 1; position: relative; overflow: hidden; }
+#main { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+#main img { display: block; }
+#main canvas { position: absolute; top: 0; left: 0; }
+#sidebar { width: 300px; background: #16213e; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; border-left: 1px solid #333; }
+h2 { font-size: 14px; color: #7ec8e3; margin-bottom: 4px; }
+label { display: block; font-size: 12px; margin-bottom: 2px; color: #aaa; }
+input[type="number"] { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #555; color: #eee; font-family: monospace; font-size: 13px; }
+input[type="checkbox"] { margin-right: 6px; }
+.engine-block { background: #0f3460; padding: 8px; border-radius: 4px; border: 1px solid #333; }
+.engine-block h3 { font-size: 12px; color: #e94560; margin-bottom: 6px; }
+.engine-row { display: flex; gap: 6px; margin-bottom: 4px; }
+.engine-row > div { flex: 1; }
+button { padding: 8px 16px; background: #e94560; color: white; border: none; cursor: pointer; font-family: monospace; font-size: 13px; border-radius: 4px; margin-bottom: 4px; }
+button:hover { background: #c73650; }
+button:disabled { background: #555; cursor: not-allowed; }
+#status { font-size: 11px; color: #888; min-height: 40px; }
+#node-info { font-size: 12px; color: #ccc; min-height: 30px; background: #0f3460; padding: 8px; border-radius: 4px; }
+#debug-toggle { position: fixed; bottom: 12px; left: 12px; z-index: 100; display: flex; align-items: center; gap: 6px; font-size: 11px; color: #888; }
+#debug-toggle label { color: #888; margin: 0; cursor: pointer; user-select: none; }
+#debug-toggle input { cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="debug-toggle"><input type="checkbox" id="debug-cb"><label for="debug-cb">Debug</label></div>
+<div id="map-container">
+    <div id="main">
+        <img id="bg" alt="HF4A Map">
+        <canvas id="canvas"></canvas>
+    </div>
+</div>
+<div id="sidebar">
+    <h2>HF4A Mission Planner</h2>
+    <div id="node-info">Click a node on the map to select start</div>
+
+    <div>
+        <label>Starting Fuel (0-40):</label>
+        <input type="number" id="fuel" value="20" min="0" max="40">
+    </div>
+
+    <div id="engines-container"></div>
+
+    <button id="add-engine" type="button">+ Add Engine</button>
+    <div id="status">Loading map data...</div>
+    <div id="debug-route" style="display:none;font-size:11px;color:#aaa;background:#0a1a30;padding:8px;border-radius:4px;max-height:40vh;overflow-y:auto;white-space:pre;font-family:monospace"></div>
+</div>
+
+<script>
+(function() {
+    // --- State ---
+    let mapData = null;
+    let selectedNode = null;    // starting node id
+    let hoveredNode = null;     // node under cursor (temporary, while mouse is near)
+    let pinnedEndpoint = null;  // clicked final destination (stays until ESC or new click)
+    let selectedRouteIndex = 0; // which Pareto-optimal route to show (arrow keys)
+    let traverseResult = null;  // response from /api/traverse
+    let treeIndex = null;       // id → {node, parent} built from tree
+    let reachableNodes = null;  // nodeId → [treeNodeId, ...] for all nodes in tree
+    let debugMode = false;
+    let debugHoveredNode = null; // nearest node under cursor (debug only, unfiltered)
+    let imgW = 0, imgH = 0;
+
+    document.getElementById('debug-cb').addEventListener('change', (e) => {
+        debugMode = e.target.checked;
+        draw();
+    });
+
+    const bgImg = document.getElementById('bg');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const mainEl = document.getElementById('main');
+    const container = document.getElementById('map-container');
+
+    // --- Load map data, then load image ---
+    fetch('/api/map')
+        .then(r => r.json())
+        .then(data => {
+            mapData = data;
+            document.getElementById('status').textContent = 'Loading map image...';
+            addEngineBlock();
+            // Load image after data is ready
+            bgImg.onload = () => initCanvas();
+            bgImg.onerror = () => {
+                document.getElementById('status').textContent = 'Image failed to load. Using plain canvas.';
+                initCanvas();
+            };
+            bgImg.src = '/hf4.jpg';
+        })
+        .catch(err => {
+            document.getElementById('status').textContent = 'Failed to load map: ' + err;
+        });
+
+    // --- Canvas setup ---
+    function initCanvas() {
+        imgW = bgImg.naturalWidth || 5000;
+        imgH = bgImg.naturalHeight || 5000;
+        canvas.width = imgW;
+        canvas.height = imgH;
+
+        const z = d3.zoom()
+            .scaleExtent([0.1, 1.5])
+            .translateExtent([[0, 0], [imgW, imgH]])
+            .filter((event) => !event.ctrlKey && !event.button)
+            .on('zoom', (event) => {
+                const {x, y, k} = event.transform;
+                mainEl.style.transform = `translate(${x}px,${y}px) scale(${k})`;
+            });
+
+        d3.select(container).call(z)
+            .call(z.translateTo, 0.85 * imgW, 0.80 * imgH);
+
+        canvas.addEventListener('click', onCanvasClick);
+        canvas.addEventListener('mousemove', onCanvasMouseMove);
+        draw();
+    }
+
+    // --- Find nearest node to map coordinates ---
+    // filterSet: if provided, only consider nodes whose id is a key in this object
+    function findNearest(mapX, mapY, maxDist, filterSet) {
+        let nearest = null;
+        let nearestDist = Infinity;
+        for (const [id, p] of Object.entries(mapData.points)) {
+            if (p.type === 'decorative') continue;
+            if (filterSet && !(id in filterSet)) continue;
+            const px = p.x * imgW;
+            const py = p.y * imgH;
+            const dist = Math.hypot(px - mapX, py - mapY);
+            if (dist < nearestDist) {
+                nearestDist = dist;
+                nearest = id;
+            }
+        }
+        return (nearest && nearestDist < maxDist) ? nearest : null;
+    }
+
+    // --- Click: select start node or pin endpoint ---
+    function onCanvasClick(event) {
+        if (!mapData) return;
+
+        // If we already have a start + routes, clicking pins an endpoint
+        if (selectedNode && reachableNodes) {
+            const epId = findNearest(event.offsetX, event.offsetY, 40, reachableNodes);
+            if (epId) {
+                pinnedEndpoint = epId;
+                selectedRouteIndex = 0;
+                draw();
+                updateDebugRoute();
+                return;
+            }
+            return; // click on nothing — ignore (ESC to clear)
+        }
+
+        // No start yet — select start node
+        const nodeId = findNearest(event.offsetX, event.offsetY, 20);
+        if (!nodeId) return;
+
+        selectedNode = nodeId;
+        hoveredNode = null;
+        pinnedEndpoint = null;
+        selectedRouteIndex = 0;
+        traverseResult = null;
+
+        const p = mapData.points[nodeId];
+        let info = nodeId.substring(0, 8) + '... (' + (p.type || '?') + ')';
+        if (p.siteName) info = p.siteName + ' (' + p.type + ')';
+        document.getElementById('node-info').textContent = 'Start: ' + info;
+
+        draw();
+        fireTraverse();
+    }
+
+    // --- Build flat index from tree: id → {node, parent} (iterative to handle deep trees) ---
+    // Also builds reachableNodes: mapNodeId → [treeNodeId, ...] for all nodes in tree
+    function buildTreeIndex(tree) {
+        const index = {};
+        const reachable = {};
+        const stack = [{ node: tree, parent: null }];
+        while (stack.length > 0) {
+            const { node, parent } = stack.pop();
+            index[node.id] = { node, parent };
+            const mapId = node.nodeId;
+            if (!reachable[mapId]) reachable[mapId] = [];
+            reachable[mapId].push(node.id);
+            for (const child of (node.children || [])) {
+                stack.push({ node: child, parent: node });
+            }
+        }
+        reachableNodes = reachable;
+        return index;
+    }
+
+    // --- Get path from tree root to a given tree node id ---
+    function getPathToRoot(treeNodeId) {
+        if (!treeIndex) return [];
+        const path = [];
+        let entry = treeIndex[treeNodeId];
+        while (entry) {
+            path.unshift(entry.node);
+            entry = entry.parent ? treeIndex[entry.parent.id] : null;
+        }
+        return path;
+    }
+
+    // --- Active endpoint: pinned takes priority, hovered is temporary preview ---
+    function getActiveEndpoint() {
+        if (hoveredNode && reachableNodes && reachableNodes[hoveredNode]) return hoveredNode;
+        return pinnedEndpoint;
+    }
+
+    // --- Get tree node IDs for a given map node (endpoints first, then all reachable) ---
+    function getTreeNodeIds(nodeId) {
+        if (traverseResult && traverseResult.endpoints && traverseResult.endpoints[nodeId]) {
+            return traverseResult.endpoints[nodeId];
+        }
+        if (reachableNodes && reachableNodes[nodeId]) {
+            return reachableNodes[nodeId];
+        }
+        return null;
+    }
+
+    function getActiveRouteIndex() {
+        const active = getActiveEndpoint();
+        if (active === pinnedEndpoint) return selectedRouteIndex;
+        return 0; // hover always shows first route
+    }
+
+    // --- Hover: highlight route to hovered endpoint ---
+    function onCanvasMouseMove(event) {
+        let needsDraw = false;
+        if (mapData && reachableNodes) {
+            const nodeId = findNearest(event.offsetX, event.offsetY, 40, reachableNodes);
+            if (nodeId !== hoveredNode) {
+                hoveredNode = nodeId;
+                needsDraw = true;
+                updateDebugRoute();
+            }
+        }
+        if (debugMode && mapData) {
+            const dbgId = findNearest(event.offsetX, event.offsetY, 20);
+            if (dbgId !== debugHoveredNode) {
+                debugHoveredNode = dbgId;
+                needsDraw = true;
+            }
+        }
+        if (needsDraw) draw();
+    }
+
+    // --- Keyboard: ESC clears selection, arrows cycle routes ---
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            selectedNode = null;
+            pinnedEndpoint = null;
+            hoveredNode = null;
+            selectedRouteIndex = 0;
+            traverseResult = null;
+            treeIndex = null;
+            reachableNodes = null;
+            document.getElementById('node-info').textContent = 'Click a node on the map to select start';
+            document.getElementById('status').textContent = '';
+            draw();
+            updateDebugRoute();
+            return;
+        }
+        const active = getActiveEndpoint();
+        if (!active) return;
+        const ids = getTreeNodeIds(active);
+        if (!ids || ids.length <= 1) return;
+        if (e.key === 'ArrowRight') {
+            selectedRouteIndex = (selectedRouteIndex + 1) % ids.length;
+            // pin if we're cycling via arrows on a hovered (non-pinned) node
+            if (!pinnedEndpoint) { pinnedEndpoint = active; }
+            draw();
+            updateDebugRoute();
+        } else if (e.key === 'ArrowLeft') {
+            selectedRouteIndex = (selectedRouteIndex - 1 + ids.length) % ids.length;
+            if (!pinnedEndpoint) { pinnedEndpoint = active; }
+            draw();
+            updateDebugRoute();
+        }
+    });
+
+    function updateDebugRoute() {
+        const el = document.getElementById('debug-route');
+        const active = getActiveEndpoint();
+        if (!debugMode || !active) {
+            el.style.display = 'none';
+            return;
+        }
+        const treeNodeIds = getTreeNodeIds(active);
+        if (!treeNodeIds || treeNodeIds.length === 0) { el.style.display = 'none'; return; }
+        const idx = getActiveRouteIndex();
+        const pathNodes = getPathToRoot(treeNodeIds[idx]);
+
+        const header = `Route ${idx + 1}/${treeNodeIds.length} to ${active.substring(0, 12)}`;
+        const lines = pathNodes.map((n, i) => {
+            const p = mapData.points[n.nodeId];
+            const name = (p && p.siteName) ? p.siteName : n.nodeId.substring(0, 12);
+            const type = (p && p.type) ? p.type : '?';
+            return `${i}) ${name} [${type}] t${n.turns} f${n.fuelSpent} h${n.hazards} r${n.worstRadRoll}`;
+        });
+        el.textContent = header + '\n' + lines.join('\n');
+        el.style.display = 'block';
+    }
+
+    // --- Drawing ---
+    function draw() {
+        if (!mapData || !imgW) return;
+        const { points, edges } = mapData;
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Draw edges
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        ctx.lineWidth = 1;
+        for (const edgeStr of edges) {
+            const colon = edgeStr.indexOf(':');
+            const a = points[edgeStr.substring(0, colon)];
+            const b = points[edgeStr.substring(colon + 1)];
+            if (!a || !b) continue;
+            ctx.beginPath();
+            ctx.moveTo(a.x * imgW, a.y * imgH);
+            ctx.lineTo(b.x * imgW, b.y * imgH);
+            ctx.stroke();
+        }
+
+        // Draw reachable site indicators (small dots for all reachable sites)
+        if (traverseResult && traverseResult.endpoints) {
+            for (const nodeId of Object.keys(traverseResult.endpoints)) {
+                if (nodeId === selectedNode) continue;
+                const p = points[nodeId];
+                if (!p) continue;
+                ctx.beginPath();
+                ctx.arc(p.x * imgW, p.y * imgH, 6, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(46, 204, 113, 0.6)';
+                ctx.fill();
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+        }
+
+        // Draw highlighted route path (for active endpoint: pinned or hovered)
+        const activeEp = getActiveEndpoint();
+        const activeIdx = getActiveRouteIndex();
+        const treeNodeIds = activeEp ? getTreeNodeIds(activeEp) : null;
+        if (activeEp && treeNodeIds && treeNodeIds.length > 0) {
+            const treeNodeId = treeNodeIds[activeIdx % treeNodeIds.length];
+            const pathNodes = getPathToRoot(treeNodeId);
+            if (pathNodes.length >= 2) {
+                const turnColors = [
+                    'rgba(255,255,0,0.9)',   // turn 1 — yellow
+                    'rgba(0,200,255,0.9)',    // turn 2 — cyan
+                    'rgba(255,100,0,0.9)',    // turn 3 — orange
+                    'rgba(180,0,255,0.9)',    // turn 4 — purple
+                    'rgba(0,255,100,0.9)',    // turn 5 — green
+                    'rgba(255,50,50,0.9)',    // turn 6 — red
+                    'rgba(255,180,0,0.9)',    // turn 7 — amber
+                    'rgba(0,150,255,0.9)',    // turn 8 — blue
+                ];
+                ctx.lineWidth = 8;
+                for (let i = 1; i < pathNodes.length; i++) {
+                    const prev = points[pathNodes[i - 1].nodeId];
+                    const curr = points[pathNodes[i].nodeId];
+                    if (!prev || !curr) continue;
+                    const turn = pathNodes[i].turns;
+                    ctx.strokeStyle = turnColors[(turn - 1) % turnColors.length];
+                    ctx.beginPath();
+                    ctx.moveTo(prev.x * imgW, prev.y * imgH);
+                    ctx.lineTo(curr.x * imgW, curr.y * imgH);
+                    ctx.stroke();
+                }
+
+                // Draw route info near active endpoint
+                const hp = points[activeEp];
+                const endNode = pathNodes[pathNodes.length - 1];
+                if (hp && endNode) {
+                    const x = hp.x * imgW + 12;
+                    const y = hp.y * imgH;
+                    ctx.save();
+                    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                    const boxH = debugMode ? 96 : 75;
+                    ctx.fillRect(x - 2, y - 21, 240, boxH);
+                    ctx.fillStyle = '#2ecc71';
+                    ctx.font = 'bold 18px monospace';
+                    ctx.textAlign = 'left';
+                    const name = hp.siteName || activeEp.substring(0, 10);
+                    const routeLabel = treeNodeIds.length > 1 ? `  [${activeIdx + 1}/${treeNodeIds.length}]` : '';
+                    ctx.fillText(name + routeLabel, x, y);
+                    ctx.fillStyle = 'white';
+                    ctx.font = '17px monospace';
+                    ctx.fillText('fuel: ' + endNode.fuelSpent + '  turns: ' + endNode.turns, x, y + 21);
+                    ctx.fillText('haz: ' + endNode.hazards + '  rad: ' + endNode.worstRadRoll, x, y + 42);
+                    if (debugMode) {
+                        ctx.fillStyle = '#888';
+                        ctx.font = '13px monospace';
+                        ctx.fillText('id: ' + activeEp, x, y + 60);
+                    }
+                    ctx.restore();
+                }
+            }
+        }
+
+        // Debug: show thrustRequired tooltip on landing burn hover
+        if (debugMode && debugHoveredNode) {
+            const dp = points[debugHoveredNode];
+            if (dp && dp.type === 'burn' && dp.landing && dp.thrustRequired) {
+                const tx = dp.x * imgW + 12;
+                const ty = dp.y * imgH - 8;
+                ctx.save();
+                ctx.fillStyle = 'rgba(0,0,0,0.8)';
+                ctx.fillRect(tx - 4, ty - 14, 160, 20);
+                ctx.fillStyle = '#e94560';
+                ctx.font = 'bold 13px monospace';
+                ctx.textAlign = 'left';
+                ctx.fillText('thrustReq: ' + dp.thrustRequired, tx, ty);
+                ctx.restore();
+            }
+        }
+
+        // Draw selected start node highlight
+        if (selectedNode) {
+            const p = points[selectedNode];
+            if (p) {
+                ctx.beginPath();
+                ctx.arc(p.x * imgW, p.y * imgH, 10, 0, Math.PI * 2);
+                ctx.fillStyle = 'red';
+                ctx.fill();
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
+        }
+    }
+
+    // --- Fire traverse request ---
+    function fireTraverse() {
+        if (!selectedNode) return;
+        pinnedEndpoint = null;
+        selectedRouteIndex = 0;
+
+        const engines = [];
+        document.querySelectorAll('.engine-block').forEach(block => {
+            engines.push({
+                netThrust: parseInt(block.querySelector('.e-thrust').value) || 0,
+                fuelConsumption: parseInt(block.querySelector('.e-fuel').value) || 0,
+                solarPowered: block.querySelector('.e-solar').checked,
+                bonusPivots: parseInt(block.querySelector('.e-pivots').value) || 0
+            });
+        });
+
+        if (engines.length === 0) {
+            document.getElementById('status').textContent = 'Add at least one engine.';
+            return;
+        }
+
+        const request = {
+            startNodeId: selectedNode,
+            engines: engines,
+            fuel: parseInt(document.getElementById('fuel').value) || 0
+        };
+
+        document.getElementById('status').textContent = 'Planning routes...';
+
+        fetch('/api/traverse', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(request)
+        })
+        .then(r => r.json())
+        .then(data => {
+            console.log('Traverse response:', data.status,
+                'tree nodes:', data.tree ? 'yes' : 'no',
+                'endpoints:', data.endpoints ? Object.keys(data.endpoints).length : 0);
+            traverseResult = data;
+            treeIndex = data.tree ? buildTreeIndex(data.tree) : null;
+            console.log('Tree index built, entries:', treeIndex ? Object.keys(treeIndex).length : 0);
+            const routeCount = data.endpoints ? Object.keys(data.endpoints).length : 0;
+            document.getElementById('status').textContent = routeCount + ' sites reachable. Hover to see routes. [' + data.status + ']';
+            draw();
+        })
+        .catch(err => {
+            console.error('Traverse error:', err);
+            document.getElementById('status').textContent = 'Error: ' + err;
+        });
+    }
+
+    // --- Engine form ---
+    function renumberEngines() {
+        const blocks = document.querySelectorAll('.engine-block');
+        blocks.forEach((block, i) => {
+            block.querySelector('h3').textContent = 'Engine ' + (i + 1);
+        });
+        document.getElementById('add-engine').disabled = blocks.length >= 4;
+    }
+
+    function addEngineBlock() {
+        const blocks = document.querySelectorAll('.engine-block');
+        if (blocks.length >= 4) return;
+        const div = document.createElement('div');
+        div.className = 'engine-block';
+        div.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                <h3 style="margin:0">Engine</h3>
+                <button class="e-remove" style="padding:2px 8px;font-size:11px;margin:0">X</button>
+            </div>
+            <div class="engine-row">
+                <div><label>Thrust:</label><input type="number" class="e-thrust" value="3" min="0" max="20"></div>
+                <div><label>Fuel/burn:</label><input type="number" class="e-fuel" value="2" min="0" max="20"></div>
+            </div>
+            <div class="engine-row">
+                <div><label>Pivots:</label><input type="number" class="e-pivots" value="0" min="0" max="5"></div>
+                <div><label><input type="checkbox" class="e-solar">Solar</label></div>
+            </div>
+        `;
+        div.querySelector('.e-remove').addEventListener('click', () => {
+            div.remove();
+            renumberEngines();
+            fireTraverse();
+        });
+        div.querySelectorAll('input').forEach(inp => {
+            inp.addEventListener('change', fireTraverse);
+        });
+        document.getElementById('engines-container').appendChild(div);
+        renumberEngines();
+        fireTraverse();
+    }
+
+    document.getElementById('add-engine').addEventListener('click', addEngineBlock);
+    document.getElementById('fuel').addEventListener('change', fireTraverse);
+})();
+</script>
+</body>
+</html>
