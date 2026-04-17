@@ -27,6 +27,12 @@ public final class Pathfinder {
     private static final int MAX_TURNS = 24;
     private static final int MAX_ITERATIONS = 5_000_000;
 
+    /** Canonical ordering for the priority queue and the per-node Pareto frontier. */
+    private static final Comparator<SearchState> BY_COST =
+            Comparator.comparingInt((SearchState s) -> s.fuelSpent)
+                      .thenComparingInt(s -> s.hazards)
+                      .thenComparingInt(s -> s.turn);
+
     private Pathfinder(SolarMap map, List<EngineSpec> engines, int maxFuel) {
         this.map = map;
         this.engines = engines;
@@ -40,16 +46,16 @@ public final class Pathfinder {
     public static TraverseResponse traverse(SolarMap map, TraverseRequest request) {
         MapNode start = map.nodeById(request.startNodeId());
         if (start == null) {
-            return new TraverseResponse(request.startNodeId(), null, Map.of(),
-                    "unknown node: " + request.startNodeId());
+            return error(request.startNodeId(), "unknown node: " + request.startNodeId());
         }
         if (request.engines() == null || request.engines().isEmpty()) {
-            return new TraverseResponse(request.startNodeId(), null, Map.of(),
-                    "at least one engine required");
+            return error(request.startNodeId(), "at least one engine required");
         }
-        TraverseResponse result = new Pathfinder(map, request.engines(), request.fuel())
-                .run(start);
-        return result;
+        return new Pathfinder(map, request.engines(), request.fuel()).run(start);
+    }
+
+    private static TraverseResponse error(String startId, String message) {
+        return new TraverseResponse(startId, null, Map.of(), message);
     }
 
     // -------------------------------------------------------------------------
@@ -62,17 +68,10 @@ public final class Pathfinder {
         return buildResponse(start.id(), endpoints);
     }
 
-    /**
-     * Phase 1 — Pareto-optimal BFS.
-     */
+    /** Phase 1 — Pareto-optimal BFS. */
     private Map<String, List<SearchState>> search(MapNode start) {
         Map<String, List<SearchState>> bestFound = new HashMap<>();
-
-        PriorityQueue<SearchState> queue = new PriorityQueue<>((a, b) -> {
-            if (a.fuelSpent != b.fuelSpent) return a.fuelSpent - b.fuelSpent;
-            if (a.hazards != b.hazards) return a.hazards - b.hazards;
-            return a.turn - b.turn;
-        });
+        PriorityQueue<SearchState> queue = new PriorityQueue<>(BY_COST);
 
         // Seed: one initial state per engine (simulates waitTurn from prequel)
         for (int i = 0; i < engines.size(); i++) {
@@ -93,94 +92,86 @@ public final class Pathfinder {
             if (++iterations > MAX_ITERATIONS) break;
 
             SearchState current = queue.poll();
-
-            // Skip if this state was dominated since it was enqueued
             if (!isStillBest(current, bestFound)) continue;
 
-            // --- Expand to graph neighbors ---
+            // Expand to graph neighbors
             for (Neighbor neighbor : getNeighbors(current)) {
                 for (SearchState next : expandToNeighbor(current, neighbor)) {
                     if (!isAllowed(current, next)) continue;
                     if (next.fuelSpent > maxFuel || next.turn > MAX_TURNS) continue;
-                    if (addIfBest(next, bestFound)) {
-                        queue.add(next);
-                    }
+                    if (addIfBest(next, bestFound)) queue.add(next);
                 }
             }
 
-            // --- Wait-turn option (available when mid-turn) ---
-            if (current.parent != null && current.turn == current.parent.turn) {
+            // Wait-turn option (available when mid-turn)
+            if (isMidTurn(current)) {
                 for (SearchState wait : waitTurn(current)) {
                     if (!isAllowed(current, wait)) continue;
                     if (wait.turn > MAX_TURNS) continue;
-                    if (addIfBest(wait, bestFound)) {
-                        queue.add(wait);
-                    }
+                    if (addIfBest(wait, bestFound)) queue.add(wait);
                 }
             }
         }
-
         return bestFound;
     }
 
     /**
-     * Phase 2 — Final 4-dimension pruning at endpoint nodes.
-     *
-     * Every reachable non-decorative node is treated as an endpoint so the UI
-     * can show routes to burns, lagranges, hohmann intersections, flybys,
-     * radhaz nodes, etc. — not just to sites. Decorative nodes are skipped
-     * because they represent mid-edge cruise points with no game effect.
+     * Phase 2 — prune to the 4 output dimensions at every non-decorative node,
+     * then collapse states with identical output-cost vectors to the shortest
+     * path so the UI shows one route per (cost, destination).
      */
     private Map<String, List<SearchState>> finalPrune(Map<String, List<SearchState>> bestFound) {
         Map<String, List<SearchState>> endpoints = new LinkedHashMap<>();
-
         for (var entry : bestFound.entrySet()) {
             MapNode node = map.nodeById(entry.getKey());
             if (node == null || node.isDecorative()) continue;
 
-            List<SearchState> states = entry.getValue();
-            List<SearchState> pruned = new ArrayList<>();
-
-            for (SearchState s : states) {
-                boolean dominated = false;
-                for (SearchState other : states) {
-                    if (other == s) continue;
-                    if (other.fuelSpent <= s.fuelSpent && other.turn <= s.turn
-                            && other.hazards <= s.hazards && other.worstRadRoll <= s.worstRadRoll) {
-                        if (other.fuelSpent < s.fuelSpent || other.turn < s.turn
-                                || other.hazards < s.hazards || other.worstRadRoll < s.worstRadRoll) {
-                            dominated = true;
-                            break;
-                        }
-                    }
-                }
-                if (!dominated) pruned.add(s);
-            }
-
-            if (!pruned.isEmpty()) {
-                // Collapse states with identical 4-dim cost vectors, keeping the
-                // shortest path (fewest visited nodes) as a deterministic
-                // tiebreaker. Without this, two routes to the same destination
-                // with equal costs but different intermediate hops both survive.
-                Map<String, SearchState> bestPerCost = new LinkedHashMap<>();
-                for (SearchState s : pruned) {
-                    String key = s.fuelSpent + ":" + s.turn + ":"
-                            + s.hazards + ":" + s.worstRadRoll;
-                    SearchState existing = bestPerCost.get(key);
-                    if (existing == null || s.visitedNodes < existing.visitedNodes) {
-                        bestPerCost.put(key, s);
-                    }
-                }
-                endpoints.put(entry.getKey(), new ArrayList<>(bestPerCost.values()));
-            }
+            List<SearchState> survivors = paretoOnOutputCosts(entry.getValue());
+            List<SearchState> deduped   = keepShortestPerCostVector(survivors);
+            if (!deduped.isEmpty()) endpoints.put(entry.getKey(), deduped);
         }
-
         return endpoints;
     }
 
+    /** Keep only states not strictly dominated on (fuel, turn, hazards, radRoll). */
+    private static List<SearchState> paretoOnOutputCosts(List<SearchState> states) {
+        List<SearchState> result = new ArrayList<>();
+        for (SearchState s : states) {
+            boolean dominated = false;
+            for (SearchState other : states) {
+                if (other != s && outputDominates(other, s)) { dominated = true; break; }
+            }
+            if (!dominated) result.add(s);
+        }
+        return result;
+    }
+
+    /** Strict Pareto dominance on the 4 output cost dimensions. */
+    private static boolean outputDominates(SearchState a, SearchState b) {
+        boolean le = a.fuelSpent <= b.fuelSpent && a.turn <= b.turn
+                  && a.hazards   <= b.hazards   && a.worstRadRoll <= b.worstRadRoll;
+        boolean lt = a.fuelSpent <  b.fuelSpent || a.turn <  b.turn
+                  || a.hazards   <  b.hazards   || a.worstRadRoll <  b.worstRadRoll;
+        return le && lt;
+    }
+
     /**
-     * Phase 3 — Build the PathNode tree and endpoint index from parent pointers.
+     * Collapses states with identical output-cost vectors, keeping the one with
+     * the fewest visited nodes (shortest path) as a deterministic tiebreaker.
      */
+    private static List<SearchState> keepShortestPerCostVector(List<SearchState> states) {
+        Map<String, SearchState> bestPerCost = new LinkedHashMap<>();
+        for (SearchState s : states) {
+            String key = s.fuelSpent + ":" + s.turn + ":" + s.hazards + ":" + s.worstRadRoll;
+            SearchState existing = bestPerCost.get(key);
+            if (existing == null || s.visitedNodes < existing.visitedNodes) {
+                bestPerCost.put(key, s);
+            }
+        }
+        return new ArrayList<>(bestPerCost.values());
+    }
+
+    /** Phase 3 — Build the PathNode tree and endpoint index from parent pointers. */
     private TraverseResponse buildResponse(String startNodeId,
                                            Map<String, List<SearchState>> endpoints) {
         // Collect all endpoint search states
@@ -205,14 +196,11 @@ public final class Pathfinder {
             }
         }
 
-        // Assign integer IDs and build PathNode tree
-        int[] idCounter = {0};
         // Root: merged representation of all initial states (all share the same output costs)
-        PathNode root = new PathNode(idCounter[0]++, startNodeId, 0, 1, 0, 0);
+        int nextId = 0;
+        PathNode root = new PathNode(nextId++, startNodeId, 0, 1, 0, 0);
 
         Map<SearchState, PathNode> stateToNode = new IdentityHashMap<>();
-
-        // Map root search states (parent == null) to the shared root PathNode
         Deque<SearchState> buildQueue = new ArrayDeque<>();
         for (SearchState s : onPath) {
             if (s.parent == null) {
@@ -221,12 +209,11 @@ public final class Pathfinder {
             }
         }
 
-        // BFS to build the rest of the tree
         while (!buildQueue.isEmpty()) {
             SearchState current = buildQueue.poll();
             PathNode currentPN = stateToNode.get(current);
             for (SearchState child : childrenMap.getOrDefault(current, List.of())) {
-                PathNode childPN = new PathNode(idCounter[0]++, child.node.id(),
+                PathNode childPN = new PathNode(nextId++, child.node.id(),
                         child.fuelSpent, child.turn, child.hazards, child.worstRadRoll);
                 currentPN.addChild(childPN);
                 stateToNode.put(child, childPN);
@@ -234,7 +221,6 @@ public final class Pathfinder {
             }
         }
 
-        // Build endpoint index: site nodeId → list of PathNode IDs
         Map<String, List<Integer>> endpointIndex = new LinkedHashMap<>();
         for (var entry : endpoints.entrySet()) {
             List<Integer> ids = new ArrayList<>();
@@ -269,13 +255,12 @@ public final class Pathfinder {
         MapNode node = current.node;
         String dir = current.entryLabel;
 
-        // Precompute: does the current node have any edge labels?
         boolean nodeHasLabels = false;
         for (MapNode adj : map.neighboursOf(node)) {
             if (map.edgeLabel(node, adj) != null) { nodeHasLabels = true; break; }
         }
 
-        // Part 1: Same-node direction changes (Hohmann pivots)
+        // Part 1: Same-node direction changes (Hohmann pivots).
         //   At a Hohmann node, we can switch to any other direction label present.
         Set<String> seenLabels = new HashSet<>();
         for (MapNode adj : map.neighboursOf(node)) {
@@ -286,7 +271,7 @@ public final class Pathfinder {
             }
         }
 
-        // Part 2: Cross-node moves
+        // Part 2: Cross-node moves.
         for (MapNode adj : map.neighboursOf(node)) {
             // One-way block: if the edge at adj pointing toward us is "0", skip
             String labelAtAdj = map.edgeLabel(adj, node);
@@ -301,7 +286,7 @@ public final class Pathfinder {
             }
 
             // Arrival direction at adj = the label at adj pointing toward node
-            String arrivalDir = labelAtAdj; // null if adj has no labels
+            String arrivalDir = labelAtAdj;
 
             // Prevent degenerate self-loop: same node, had a direction, losing it
             if (node.equals(adj) && dir != null && arrivalDir == null) continue;
@@ -317,108 +302,127 @@ public final class Pathfinder {
     // -------------------------------------------------------------------------
 
     /**
-     * Expands the current state toward a single neighbor, producing zero or more
-     * successor states depending on the edge type (burn / turn / cruise).
+     * Expands the current state toward a single neighbor, dispatching on the
+     * edge kind (burn / same-node turn / cruise).
      */
     private List<SearchState> expandToNeighbor(SearchState current, Neighbor neighbor) {
-        List<SearchState> results = new ArrayList<>(2);
         MapNode dest = neighbor.node;
         boolean sameNode = current.node.equals(dest);
-        // Decorative nodes don't count toward route length
-        int visitedIncrement = (!sameNode && !dest.isDecorative()) ? 1 : 0;
 
-        // --- Classify the edge ---
-        boolean isBurn = !sameNode && dest.isBurn();
-        boolean isTurn = sameNode && dest.isHohmann()
-                && current.entryLabel != null && neighbor.direction != null
-                && !current.entryLabel.equals(neighbor.direction);
-        boolean isHazard = !sameNode && dest.hazard();
-        int radiation = !sameNode ? dest.radiation() : 0;
-        boolean isLanding = !sameNode && !dest.landing().isZero();
+        // For same-node moves we preserve previousNodeId; for cross-node moves
+        // we record the node we just left (enables the no-U-turn rule).
+        String prevNode = sameNode ? current.previousNodeId : current.node.id();
 
         // Crossing a one-way edge (aerobrake-style) consumes all free burns:
         // the maneuver is passive, not a powered burn.
         boolean oneWay = !sameNode && "0".equals(map.edgeLabel(current.node, dest));
 
-        int newHazards = current.hazards + (isHazard ? 1 : 0);
-        int newRadRoll = Math.max(current.worstRadRoll, radiation);
+        if (!sameNode && dest.isBurn()) {
+            return expandBurn(current, neighbor, prevNode, oneWay);
+        }
+        if (isPivot(current, neighbor, sameNode)) {
+            return expandTurn(current, neighbor, prevNode);
+        }
+        return expandCruise(current, neighbor, prevNode, oneWay, sameNode);
+    }
 
-        if (isBurn) {
-            int fuelCost = engines.get(current.engineIndex).fuelConsumption();
+    private static boolean isPivot(SearchState current, Neighbor neighbor, boolean sameNode) {
+        return sameNode && neighbor.node.isHohmann()
+                && current.entryLabel != null && neighbor.direction != null
+                && !current.entryLabel.equals(neighbor.direction);
+    }
 
-            // For cross-node moves, record where we came from (no-U-turn rule)
-            String prevNode = current.node.id();
+    /** BURN edge: either a free burn (if available) or a paid burn. */
+    private List<SearchState> expandBurn(SearchState current, Neighbor neighbor,
+                                         String prevNode, boolean oneWay) {
+        List<SearchState> out = new ArrayList<>(2);
+        MapNode dest = neighbor.node;
+        boolean isHazard  = dest.hazard();
+        boolean isLanding = !dest.landing().isZero();
+        int radiation    = dest.radiation();
+        int newHazards   = current.hazards + (isHazard ? 1 : 0);
+        int newRadRoll   = Math.max(current.worstRadRoll, radiation);
+        int fuelCost     = engines.get(current.engineIndex).fuelConsumption();
+        int visitedInc   = dest.isDecorative() ? 0 : 1;
 
-            // Option A: free burn (if available and not a landing approach)
-            if (current.freeBurns > 0 && !isLanding) {
-                results.add(new SearchState(
-                        dest, neighbor.direction, current.engineIndex,
-                        current.burnsRemaining, current.pivotsRemaining,
-                        oneWay ? 0 : current.freeBurns - 1, current.thrust,
-                        current.fuelSpent, current.turn, newHazards, newRadRoll,
-                        current.visitedNodes + visitedIncrement, prevNode, current, new ArrayList<>(current.bonusSites)));
-            }
-
-            // Option B: paid burn
-            if (current.burnsRemaining > 0) {
-                results.add(new SearchState(
-                        dest, neighbor.direction, current.engineIndex,
-                        current.burnsRemaining - 1, current.pivotsRemaining,
-                        oneWay ? 0 : current.freeBurns, current.thrust,
-                        current.fuelSpent + fuelCost, current.turn, newHazards, newRadRoll,
-                        current.visitedNodes + visitedIncrement, prevNode, current, new ArrayList<>(current.bonusSites)));
-            }
-
-        } else if (isTurn) {
-            // Same-node direction change: preserve previousNodeId
-            String prevNode = current.previousNodeId;
-
-            // Option A: use a pivot
-            if (current.pivotsRemaining > 0) {
-                results.add(new SearchState(
-                        dest, neighbor.direction, current.engineIndex,
-                        current.burnsRemaining, current.pivotsRemaining - 1,
-                        current.freeBurns, current.thrust,
-                        current.fuelSpent, current.turn, current.hazards, current.worstRadRoll,
-                        current.visitedNodes, prevNode, current, new ArrayList<>(current.bonusSites)));
-            }
-
-            // Option B: force-turn via 2 burns
-            if (current.burnsRemaining > 1) {
-                int fuelCost = engines.get(current.engineIndex).fuelConsumption() * 2;
-                results.add(new SearchState(
-                        dest, neighbor.direction, current.engineIndex,
-                        current.burnsRemaining - 2, current.pivotsRemaining,
-                        current.freeBurns, current.thrust,
-                        current.fuelSpent + fuelCost, current.turn, current.hazards, current.worstRadRoll,
-                        current.visitedNodes, prevNode, current, new ArrayList<>(current.bonusSites)));
-            }
-
-        } else {
-            // CRUISE: free passage (Lagrange, flyby, radhaz, site, etc.)
-            int newFreeBurns = current.freeBurns;
-            List<String> newBonusSites = new ArrayList<>(current.bonusSites);
-            // Cross-node cruise: record where we came from; same-node: preserve
-            String prevNode = sameNode ? current.previousNodeId : current.node.id();
-
-            if (!sameNode && dest.isFlyby()) {
-                newFreeBurns += dest.flybyBoost();
-                newBonusSites.add(dest.id());
-            }
-
-            // One-way edge zeroes out free burns (applies after flyby boost too).
-            if (oneWay) newFreeBurns = 0;
-
-            results.add(new SearchState(
+        // Option A: free burn (not allowed on a landing approach)
+        if (current.freeBurns > 0 && !isLanding) {
+            out.add(new SearchState(
                     dest, neighbor.direction, current.engineIndex,
                     current.burnsRemaining, current.pivotsRemaining,
-                    newFreeBurns, current.thrust,
+                    oneWay ? 0 : current.freeBurns - 1, current.thrust,
                     current.fuelSpent, current.turn, newHazards, newRadRoll,
-                    current.visitedNodes + visitedIncrement,
-                    prevNode, current, newBonusSites));
+                    current.visitedNodes + visitedInc, prevNode, current,
+                    new ArrayList<>(current.bonusSites)));
         }
+        // Option B: paid burn
+        if (current.burnsRemaining > 0) {
+            out.add(new SearchState(
+                    dest, neighbor.direction, current.engineIndex,
+                    current.burnsRemaining - 1, current.pivotsRemaining,
+                    oneWay ? 0 : current.freeBurns, current.thrust,
+                    current.fuelSpent + fuelCost, current.turn, newHazards, newRadRoll,
+                    current.visitedNodes + visitedInc, prevNode, current,
+                    new ArrayList<>(current.bonusSites)));
+        }
+        return out;
+    }
 
-        return results;
+    /** Same-node direction change at a Hohmann intersection: pivot or 2-burn force-turn. */
+    private List<SearchState> expandTurn(SearchState current, Neighbor neighbor, String prevNode) {
+        List<SearchState> out = new ArrayList<>(2);
+        MapNode dest = neighbor.node;
+
+        // Option A: use a pivot
+        if (current.pivotsRemaining > 0) {
+            out.add(new SearchState(
+                    dest, neighbor.direction, current.engineIndex,
+                    current.burnsRemaining, current.pivotsRemaining - 1,
+                    current.freeBurns, current.thrust,
+                    current.fuelSpent, current.turn, current.hazards, current.worstRadRoll,
+                    current.visitedNodes, prevNode, current,
+                    new ArrayList<>(current.bonusSites)));
+        }
+        // Option B: force-turn via 2 paid burns
+        if (current.burnsRemaining > 1) {
+            int fuelCost = engines.get(current.engineIndex).fuelConsumption() * 2;
+            out.add(new SearchState(
+                    dest, neighbor.direction, current.engineIndex,
+                    current.burnsRemaining - 2, current.pivotsRemaining,
+                    current.freeBurns, current.thrust,
+                    current.fuelSpent + fuelCost, current.turn, current.hazards, current.worstRadRoll,
+                    current.visitedNodes, prevNode, current,
+                    new ArrayList<>(current.bonusSites)));
+        }
+        return out;
+    }
+
+    /** Free passage: Lagrange, flyby, radhaz, site, decorative, etc. */
+    private List<SearchState> expandCruise(SearchState current, Neighbor neighbor,
+                                           String prevNode, boolean oneWay, boolean sameNode) {
+        MapNode dest = neighbor.node;
+        boolean isHazard = !sameNode && dest.hazard();
+        int radiation    = !sameNode ? dest.radiation() : 0;
+        int newHazards   = current.hazards + (isHazard ? 1 : 0);
+        int newRadRoll   = Math.max(current.worstRadRoll, radiation);
+        int visitedInc   = (!sameNode && !dest.isDecorative()) ? 1 : 0;
+
+        int newFreeBurns = current.freeBurns;
+        List<String> newBonusSites = new ArrayList<>(current.bonusSites);
+        if (!sameNode && dest.isFlyby()) {
+            newFreeBurns += dest.flybyBoost();
+            newBonusSites.add(dest.id());
+        }
+        // One-way edge zeroes out free burns (applies after flyby boost too).
+        if (oneWay) newFreeBurns = 0;
+
+        return List.of(new SearchState(
+                dest, neighbor.direction, current.engineIndex,
+                current.burnsRemaining, current.pivotsRemaining,
+                newFreeBurns, current.thrust,
+                current.fuelSpent, current.turn, newHazards, newRadRoll,
+                current.visitedNodes + visitedInc,
+                prevNode, current, newBonusSites));
     }
 
     /**
@@ -440,63 +444,83 @@ public final class Pathfinder {
         return results;
     }
 
+    /** True while the state is a mid-turn position (reached by burn/turn/cruise, not waitTurn). */
+    private static boolean isMidTurn(SearchState s) {
+        return s.parent != null && s.turn == s.parent.turn;
+    }
+
     // -------------------------------------------------------------------------
-    // Filters
+    // Transition restrictions — movement rules that can't be expressed by the
+    // edge-cost model alone. Each rule is its own predicate for readability.
     // -------------------------------------------------------------------------
+
+    /** Composite gate: every rule must permit the transition for it to be allowed. */
+    private boolean isAllowed(SearchState from, SearchState to) {
+        // Flyby re-entry applies unconditionally (same-node or cross-node).
+        if (isFlybyReentry(from, to)) return false;
+
+        boolean sameNode = from.node.equals(to.node);
+        if (!sameNode) {
+            if (!passesLandingBurnThrustGate(to))   return false;
+            if (!passesSiteLandingRule(from, to))   return false;
+            if (!passesSiteLiftoffRule(from, to))   return false;
+            if (isReversingLastMove(from, to))      return false;
+        } else if (from.turn != to.turn) {
+            // Same-node different-turn = waitTurn.
+            if (!canEndTurnHere(from))              return false;
+        }
+        return true;
+    }
+
+    /** A landing-burn node requires {@code thrust ≥ thrustRequired}. */
+    private static boolean passesLandingBurnThrustGate(SearchState to) {
+        if (to.node.landing().isZero()) return true;
+        int required = to.node.thrustRequired();
+        return required <= 0 || to.thrust >= required;
+    }
 
     /**
-     * Movement rules that cannot be expressed by the edge cost model alone:
-     * thrust requirements, landing-burn restrictions, and U-turn prevention.
+     * H6a / H6b: powered landing on a site requires {@code thrust > siteSize};
+     * aerobrake landings bypass this gate when {@code siteSize ≥ 6}. Aerobrake
+     * entry takes one of two forms in the HF4A data:
+     * <ol>
+     *   <li>dec-chain entry: the "0" one-way label sits upstream, so by the
+     *       time we reach the site the source node is a decorative.</li>
+     *   <li>direct entry: the "0" one-way label sits on the final edge
+     *       leading into the site (e.g. haz-lagrange → Mars: north pole).</li>
+     * </ol>
      */
-    private boolean isAllowed(SearchState from, SearchState to) {
-        boolean sameNode = from.node.equals(to.node);
+    private boolean passesSiteLandingRule(SearchState from, SearchState to) {
+        if (!to.node.isSite()) return true;
+        int required = to.node.thrustRequired();
+        if (required <= 0 || to.thrust > required) return true;
 
-        // Landing burn thrust gate: thrust must be >= thrustRequired.
-        if (!sameNode && !to.node.landing().isZero()) {
-            int required = to.node.thrustRequired();
-            if (required > 0 && to.thrust < required) return false;
-        }
+        boolean viaDecChain = from.node.isDecorative();
+        boolean viaOneWayIn = "0".equals(map.edgeLabel(from.node, to.node));
+        return (viaDecChain || viaOneWayIn) && required >= 6;
+    }
 
-        // Site thrust gate: powered landing requires thrust > site size (H6a).
-        // Aerobrake landings bypass this (H6b) for sites of size >= 6. The
-        // atmospheric approach takes one of two shapes in the HF4A data:
-        //   (1) dec-chain entry: the "0" one-way label sits on the edge leading
-        //       INTO a decorative chain that ends at the site. By the time we
-        //       reach the site, the source node is a decorative.
-        //   (2) direct entry:    the "0" one-way label sits on the very edge
-        //       INTO the site (e.g. haz-lagrange 0.38552 -> Mars: north pole).
-        //       Source of that edge is a lagrange, not a decorative.
-        // Either shape is a valid aerobrake.
-        if (!sameNode && to.node.isSite()) {
-            int required = to.node.thrustRequired();
-            if (required > 0 && to.thrust <= required) {
-                boolean viaDecChain  = from.node.isDecorative();
-                boolean viaOneWayIn  = "0".equals(map.edgeLabel(from.node, to.node));
-                boolean aerobrakeBypass = (viaDecChain || viaOneWayIn) && required >= 6;
-                if (!aerobrakeBypass) return false;
-            }
-        }
+    /** H6a: liftoff from a site requires {@code thrust > siteSize}. */
+    private static boolean passesSiteLiftoffRule(SearchState from, SearchState to) {
+        if (!from.node.isSite()) return true;
+        int required = from.node.thrustRequired();
+        return required <= 0 || to.thrust > required;
+    }
 
-        // Liftoff check: leaving a site requires thrust > site size (H6a).
-        if (!sameNode && from.node.isSite()) {
-            int required = from.node.thrustRequired();
-            if (required > 0 && to.thrust <= required) return false;
-        }
+    /** Cannot end a turn on a landing-burn node or a decorative (mid-edge) node. */
+    private static boolean canEndTurnHere(SearchState at) {
+        return at.node.landing().isZero() && !at.node.isDecorative();
+    }
 
-        // Cannot wait (end turn) on a landing-burn node or a decorative node
-        if (sameNode && from.turn != to.turn
-                && (!from.node.landing().isZero() || from.node.isDecorative())) {
-            return false;
-        }
+    /** No-U-turn: cannot immediately return to the node we just came from. */
+    private static boolean isReversingLastMove(SearchState from, SearchState to) {
+        return from.previousNodeId != null
+            && to.node.id().equals(from.previousNodeId);
+    }
 
-        // No turning back: cannot return to the node we just came from
-        if (!sameNode && from.previousNodeId != null
-                && to.node.id().equals(from.previousNodeId)) return false;
-
-        // Flyby re-entry prevention: cannot re-enter a flyby node used this turn
-        if (from.bonusSites.contains(to.node.id())) return false;
-
-        return true;
+    /** Cannot re-enter a flyby node already used this turn. */
+    private static boolean isFlybyReentry(SearchState from, SearchState to) {
+        return from.bonusSites.contains(to.node.id());
     }
 
     // -------------------------------------------------------------------------
@@ -511,25 +535,18 @@ public final class Pathfinder {
         String nodeId = state.node.id();
         List<SearchState> existing = bestFound.computeIfAbsent(nodeId, k -> new ArrayList<>());
 
-        // Check if any existing state dominates or equals the new state
+        // Reject if any existing state dominates or equals the new state.
         for (SearchState e : existing) {
             if (!state.notDominatedBy(e) || state.equalState(e)) {
                 return false;
             }
         }
 
-        // Remove states now dominated by the new state
+        // Evict any existing states now dominated by the new state.
         existing.removeIf(e -> !e.notDominatedBy(state));
 
         existing.add(state);
-
-        // Keep sorted for deterministic expansion order
-        existing.sort((a, b) -> {
-            if (a.fuelSpent != b.fuelSpent) return a.fuelSpent - b.fuelSpent;
-            if (a.hazards != b.hazards) return a.hazards - b.hazards;
-            return a.turn - b.turn;
-        });
-
+        existing.sort(BY_COST); // deterministic expansion order
         return true;
     }
 
