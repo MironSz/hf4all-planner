@@ -124,14 +124,19 @@ public final class Pathfinder {
     }
 
     /**
-     * Phase 2 — Final 4-dimension pruning at site nodes.
+     * Phase 2 — Final 4-dimension pruning at endpoint nodes.
+     *
+     * Every reachable non-decorative node is treated as an endpoint so the UI
+     * can show routes to burns, lagranges, hohmann intersections, flybys,
+     * radhaz nodes, etc. — not just to sites. Decorative nodes are skipped
+     * because they represent mid-edge cruise points with no game effect.
      */
     private Map<String, List<SearchState>> finalPrune(Map<String, List<SearchState>> bestFound) {
         Map<String, List<SearchState>> endpoints = new LinkedHashMap<>();
 
         for (var entry : bestFound.entrySet()) {
             MapNode node = map.nodeById(entry.getKey());
-            if (node == null || !node.isSite()) continue;
+            if (node == null || node.isDecorative()) continue;
 
             List<SearchState> states = entry.getValue();
             List<SearchState> pruned = new ArrayList<>();
@@ -153,7 +158,20 @@ public final class Pathfinder {
             }
 
             if (!pruned.isEmpty()) {
-                endpoints.put(entry.getKey(), pruned);
+                // Collapse states with identical 4-dim cost vectors, keeping the
+                // shortest path (fewest visited nodes) as a deterministic
+                // tiebreaker. Without this, two routes to the same destination
+                // with equal costs but different intermediate hops both survive.
+                Map<String, SearchState> bestPerCost = new LinkedHashMap<>();
+                for (SearchState s : pruned) {
+                    String key = s.fuelSpent + ":" + s.turn + ":"
+                            + s.hazards + ":" + s.worstRadRoll;
+                    SearchState existing = bestPerCost.get(key);
+                    if (existing == null || s.visitedNodes < existing.visitedNodes) {
+                        bestPerCost.put(key, s);
+                    }
+                }
+                endpoints.put(entry.getKey(), new ArrayList<>(bestPerCost.values()));
             }
         }
 
@@ -318,6 +336,10 @@ public final class Pathfinder {
         int radiation = !sameNode ? dest.radiation() : 0;
         boolean isLanding = !sameNode && !dest.landing().isZero();
 
+        // Crossing a one-way edge (aerobrake-style) consumes all free burns:
+        // the maneuver is passive, not a powered burn.
+        boolean oneWay = !sameNode && "0".equals(map.edgeLabel(current.node, dest));
+
         int newHazards = current.hazards + (isHazard ? 1 : 0);
         int newRadRoll = Math.max(current.worstRadRoll, radiation);
 
@@ -332,7 +354,7 @@ public final class Pathfinder {
                 results.add(new SearchState(
                         dest, neighbor.direction, current.engineIndex,
                         current.burnsRemaining, current.pivotsRemaining,
-                        current.freeBurns - 1, current.thrust,
+                        oneWay ? 0 : current.freeBurns - 1, current.thrust,
                         current.fuelSpent, current.turn, newHazards, newRadRoll,
                         current.visitedNodes + visitedIncrement, prevNode, current, new ArrayList<>(current.bonusSites)));
             }
@@ -342,7 +364,7 @@ public final class Pathfinder {
                 results.add(new SearchState(
                         dest, neighbor.direction, current.engineIndex,
                         current.burnsRemaining - 1, current.pivotsRemaining,
-                        current.freeBurns, current.thrust,
+                        oneWay ? 0 : current.freeBurns, current.thrust,
                         current.fuelSpent + fuelCost, current.turn, newHazards, newRadRoll,
                         current.visitedNodes + visitedIncrement, prevNode, current, new ArrayList<>(current.bonusSites)));
             }
@@ -383,6 +405,9 @@ public final class Pathfinder {
                 newFreeBurns += dest.flybyBoost();
                 newBonusSites.add(dest.id());
             }
+
+            // One-way edge zeroes out free burns (applies after flyby boost too).
+            if (oneWay) newFreeBurns = 0;
 
             results.add(new SearchState(
                     dest, neighbor.direction, current.engineIndex,
@@ -433,18 +458,24 @@ public final class Pathfinder {
         }
 
         // Site thrust gate: powered landing requires thrust > site size (H6a).
-        // Aerobrake landings (entering from decorative node) bypass this (H6b),
-        // but only for sites of size >= 6 (small sites have no aerobrake paths).
+        // Aerobrake landings bypass this (H6b) for sites of size >= 6. The
+        // atmospheric approach takes one of two shapes in the HF4A data:
+        //   (1) dec-chain entry: the "0" one-way label sits on the edge leading
+        //       INTO a decorative chain that ends at the site. By the time we
+        //       reach the site, the source node is a decorative.
+        //   (2) direct entry:    the "0" one-way label sits on the very edge
+        //       INTO the site (e.g. haz-lagrange 0.38552 -> Mars: north pole).
+        //       Source of that edge is a lagrange, not a decorative.
+        // Either shape is a valid aerobrake.
         if (!sameNode && to.node.isSite()) {
             int required = to.node.thrustRequired();
             if (required > 0 && to.thrust <= required) {
-                boolean aerobrakeBypass = from.node.isDecorative() && required >= 6;
+                boolean viaDecChain  = from.node.isDecorative();
+                boolean viaOneWayIn  = "0".equals(map.edgeLabel(from.node, to.node));
+                boolean aerobrakeBypass = (viaDecChain || viaOneWayIn) && required >= 6;
                 if (!aerobrakeBypass) return false;
             }
         }
-
-        // Aerobrake paths lead to sites/lagranges, never to burns
-        if (!sameNode && from.node.isDecorative() && to.node.isBurn()) return false;
 
         // Liftoff check: leaving a site requires thrust > site size (H6a).
         if (!sameNode && from.node.isSite()) {

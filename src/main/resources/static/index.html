@@ -51,6 +51,13 @@ button:disabled { background: #555; cursor: not-allowed; }
     <h2>HF4A Mission Planner</h2>
     <div id="node-info">Click a node on the map to select start</div>
 
+    <div id="route-info" style="display:none;background:#0a1a30;padding:8px;border-radius:4px;font-family:monospace;font-size:13px;color:#fff;margin-bottom:8px;">
+        <div id="route-info-name" style="color:#2ecc71;font-weight:bold;font-size:15px;margin-bottom:4px;"></div>
+        <div id="route-info-cost"></div>
+        <div id="route-info-haz"></div>
+        <div id="route-info-id" style="color:#888;font-size:11px;margin-top:4px;display:none;"></div>
+    </div>
+
     <div>
         <label>Starting Fuel (0-40):</label>
         <input type="number" id="fuel" value="20" min="0" max="40">
@@ -81,6 +88,8 @@ button:disabled { background: #555; cursor: not-allowed; }
     document.getElementById('debug-cb').addEventListener('change', (e) => {
         debugMode = e.target.checked;
         draw();
+        updateDebugRoute();
+        updateRouteInfo();
     });
 
     const bgImg = document.getElementById('bg');
@@ -163,6 +172,7 @@ button:disabled { background: #555; cursor: not-allowed; }
                 selectedRouteIndex = 0;
                 draw();
                 updateDebugRoute();
+                updateRouteInfo();
                 return;
             }
             return; // click on nothing — ignore (ESC to clear)
@@ -251,6 +261,7 @@ button:disabled { background: #555; cursor: not-allowed; }
                 hoveredNode = nodeId;
                 needsDraw = true;
                 updateDebugRoute();
+                updateRouteInfo();
             }
         }
         if (debugMode && mapData) {
@@ -277,6 +288,7 @@ button:disabled { background: #555; cursor: not-allowed; }
             document.getElementById('status').textContent = '';
             draw();
             updateDebugRoute();
+            updateRouteInfo();
             return;
         }
         const active = getActiveEndpoint();
@@ -289,13 +301,48 @@ button:disabled { background: #555; cursor: not-allowed; }
             if (!pinnedEndpoint) { pinnedEndpoint = active; }
             draw();
             updateDebugRoute();
+            updateRouteInfo();
         } else if (e.key === 'ArrowLeft') {
             selectedRouteIndex = (selectedRouteIndex - 1 + ids.length) % ids.length;
             if (!pinnedEndpoint) { pinnedEndpoint = active; }
             draw();
             updateDebugRoute();
+            updateRouteInfo();
         }
     });
+
+    function updateRouteInfo() {
+        const panel = document.getElementById('route-info');
+        const active = getActiveEndpoint();
+        if (!active) { panel.style.display = 'none'; return; }
+        const treeNodeIds = getTreeNodeIds(active);
+        if (!treeNodeIds || treeNodeIds.length === 0) {
+            panel.style.display = 'none';
+            return;
+        }
+        const idx = getActiveRouteIndex();
+        const pathNodes = getPathToRoot(treeNodeIds[idx % treeNodeIds.length]);
+        const endNode = pathNodes[pathNodes.length - 1];
+        const hp = mapData.points[active];
+        if (!endNode || !hp) { panel.style.display = 'none'; return; }
+
+        const name = hp.siteName || active.substring(0, 10);
+        const routeLabel = treeNodeIds.length > 1
+                ? `  [${idx + 1}/${treeNodeIds.length}]` : '';
+        document.getElementById('route-info-name').textContent = name + routeLabel;
+        document.getElementById('route-info-cost').textContent =
+                'fuel: ' + endNode.fuelSpent + '  turns: ' + endNode.turns;
+        document.getElementById('route-info-haz').textContent =
+                'haz: ' + endNode.hazards + '  rad: ' + endNode.worstRadRoll;
+        const idEl = document.getElementById('route-info-id');
+        if (debugMode) {
+            idEl.textContent = 'id: ' + active;
+            idEl.style.display = 'block';
+        } else {
+            idEl.style.display = 'none';
+        }
+        panel.style.display = 'block';
+    }
 
     function updateDebugRoute() {
         const el = document.getElementById('debug-route');
@@ -375,46 +422,54 @@ button:disabled { background: #555; cursor: not-allowed; }
                     'rgba(255,180,0,0.9)',    // turn 7 — amber
                     'rgba(0,150,255,0.9)',    // turn 8 — blue
                 ];
-                ctx.lineWidth = 8;
+                // Group segments by undirected edge so that when the same edge
+                // is traversed across multiple turns, each turn gets its own
+                // parallel line (offset perpendicular to the edge) instead of
+                // overdrawing a single colored line.
+                const segmentsByEdge = new Map();
                 for (let i = 1; i < pathNodes.length; i++) {
-                    const prev = points[pathNodes[i - 1].nodeId];
-                    const curr = points[pathNodes[i].nodeId];
-                    if (!prev || !curr) continue;
+                    const a = pathNodes[i - 1].nodeId;
+                    const b = pathNodes[i].nodeId;
+                    const key = a < b ? a + '|' + b : b + '|' + a;
                     const turn = pathNodes[i].turns;
-                    ctx.strokeStyle = turnColors[(turn - 1) % turnColors.length];
-                    ctx.beginPath();
-                    ctx.moveTo(prev.x * imgW, prev.y * imgH);
-                    ctx.lineTo(curr.x * imgW, curr.y * imgH);
-                    ctx.stroke();
+                    if (!segmentsByEdge.has(key)) {
+                        segmentsByEdge.set(key, { a, b, turns: [] });
+                    }
+                    const entry = segmentsByEdge.get(key);
+                    // De-dupe identical (edge, turn) pairs — a single turn can
+                    // produce only one directed traversal per edge in a valid
+                    // path, but guard anyway.
+                    if (!entry.turns.includes(turn)) entry.turns.push(turn);
                 }
 
-                // Draw route info near active endpoint
-                const hp = points[activeEp];
-                const endNode = pathNodes[pathNodes.length - 1];
-                if (hp && endNode) {
-                    const x = hp.x * imgW + 12;
-                    const y = hp.y * imgH;
-                    ctx.save();
-                    ctx.fillStyle = 'rgba(0,0,0,0.7)';
-                    const boxH = debugMode ? 96 : 75;
-                    ctx.fillRect(x - 2, y - 21, 240, boxH);
-                    ctx.fillStyle = '#2ecc71';
-                    ctx.font = 'bold 18px monospace';
-                    ctx.textAlign = 'left';
-                    const name = hp.siteName || activeEp.substring(0, 10);
-                    const routeLabel = treeNodeIds.length > 1 ? `  [${activeIdx + 1}/${treeNodeIds.length}]` : '';
-                    ctx.fillText(name + routeLabel, x, y);
-                    ctx.fillStyle = 'white';
-                    ctx.font = '17px monospace';
-                    ctx.fillText('fuel: ' + endNode.fuelSpent + '  turns: ' + endNode.turns, x, y + 21);
-                    ctx.fillText('haz: ' + endNode.hazards + '  rad: ' + endNode.worstRadRoll, x, y + 42);
-                    if (debugMode) {
-                        ctx.fillStyle = '#888';
-                        ctx.font = '13px monospace';
-                        ctx.fillText('id: ' + activeEp, x, y + 60);
+                const lineWidth = 8;
+                const spacing = 9; // perpendicular gap between parallel lines
+                ctx.lineWidth = lineWidth;
+                for (const { a, b, turns } of segmentsByEdge.values()) {
+                    const pa = points[a];
+                    const pb = points[b];
+                    if (!pa || !pb) continue;
+                    const x1 = pa.x * imgW, y1 = pa.y * imgH;
+                    const x2 = pb.x * imgW, y2 = pb.y * imgH;
+                    const dx = x2 - x1, dy = y2 - y1;
+                    const len = Math.hypot(dx, dy) || 1;
+                    // Unit perpendicular vector
+                    const px = -dy / len, py = dx / len;
+                    turns.sort((u, v) => u - v);
+                    const n = turns.length;
+                    for (let k = 0; k < n; k++) {
+                        const offset = (k - (n - 1) / 2) * spacing;
+                        const ox = px * offset, oy = py * offset;
+                        ctx.strokeStyle = turnColors[(turns[k] - 1) % turnColors.length];
+                        ctx.beginPath();
+                        ctx.moveTo(x1 + ox, y1 + oy);
+                        ctx.lineTo(x2 + ox, y2 + oy);
+                        ctx.stroke();
                     }
-                    ctx.restore();
                 }
+
+                // Route info is rendered into the sidebar (above fuel input),
+                // not onto the canvas. See updateRouteInfo().
             }
         }
 

@@ -18,11 +18,11 @@ public class TestRunner {
         }
 
         try {
-            test.marsNorthPoleUnreachableWithLowThrust();
-            System.out.println("PASS: marsNorthPoleUnreachableWithLowThrust");
+            test.marsNorthPoleReachableViaAerobrakeWithLowThrust();
+            System.out.println("PASS: marsNorthPoleReachableViaAerobrakeWithLowThrust");
             passed++;
         } catch (Throwable e) {
-            System.out.println("FAIL: marsNorthPoleUnreachableWithLowThrust — " + e.getMessage());
+            System.out.println("FAIL: marsNorthPoleReachableViaAerobrakeWithLowThrust — " + e.getMessage());
             e.printStackTrace();
             failed++;
         }
@@ -33,6 +33,16 @@ public class TestRunner {
             passed++;
         } catch (Throwable e) {
             System.out.println("FAIL: marsNorthPoleReachableWithHighThrust — " + e.getMessage());
+            e.printStackTrace();
+            failed++;
+        }
+
+        try {
+            test.decorativeChainBidirectional();
+            System.out.println("PASS: decorativeChainBidirectional");
+            passed++;
+        } catch (Throwable e) {
+            System.out.println("FAIL: decorativeChainBidirectional — " + e.getMessage());
             e.printStackTrace();
             failed++;
         }
