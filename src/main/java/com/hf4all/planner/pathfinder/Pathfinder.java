@@ -332,6 +332,17 @@ public final class Pathfinder {
                 && !current.entryLabel.equals(neighbor.direction);
     }
 
+    /**
+     * Radiation is applied on node entry. The rolled severity is the node's
+     * raw radiation minus the ship's current thrust (floor 0, per the original
+     * HF4A JS rule {@code Math.max(RADIATION - thrust, 0)}). The new
+     * {@code worstRadRoll} is the running max over the path.
+     */
+    private static int updatedRadRoll(int currentWorst, MapNode dest, int thrust) {
+        int mitigated = Math.max(dest.radiation() - thrust, 0);
+        return Math.max(currentWorst, mitigated);
+    }
+
     /** BURN edge: either a free burn (if available) or a paid burn. */
     private List<SearchState> expandBurn(SearchState current, Neighbor neighbor,
                                          String prevNode, boolean oneWay) {
@@ -339,9 +350,8 @@ public final class Pathfinder {
         MapNode dest = neighbor.node;
         boolean isHazard  = dest.hazard();
         boolean isLanding = !dest.landing().isZero();
-        int radiation    = dest.radiation();
         int newHazards   = current.hazards + (isHazard ? 1 : 0);
-        int newRadRoll   = Math.max(current.worstRadRoll, radiation);
+        int newRadRoll   = updatedRadRoll(current.worstRadRoll, dest, current.thrust);
         int fuelCost     = engines.get(current.engineIndex).fuelConsumption();
         int visitedInc   = dest.isDecorative() ? 0 : 1;
 
@@ -402,9 +412,10 @@ public final class Pathfinder {
                                            String prevNode, boolean oneWay, boolean sameNode) {
         MapNode dest = neighbor.node;
         boolean isHazard = !sameNode && dest.hazard();
-        int radiation    = !sameNode ? dest.radiation() : 0;
         int newHazards   = current.hazards + (isHazard ? 1 : 0);
-        int newRadRoll   = Math.max(current.worstRadRoll, radiation);
+        int newRadRoll   = sameNode
+                ? current.worstRadRoll
+                : updatedRadRoll(current.worstRadRoll, dest, current.thrust);
         int visitedInc   = (!sameNode && !dest.isDecorative()) ? 1 : 0;
 
         int newFreeBurns = current.freeBurns;

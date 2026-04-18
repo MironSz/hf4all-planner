@@ -47,6 +47,16 @@ public class TestRunner {
             failed++;
         }
 
+        try {
+            test.engineSwitchingOffersRadiationMitigationRoutes();
+            System.out.println("PASS: engineSwitchingOffersRadiationMitigationRoutes");
+            passed++;
+        } catch (Throwable e) {
+            System.out.println("FAIL: engineSwitchingOffersRadiationMitigationRoutes — " + e.getMessage());
+            e.printStackTrace();
+            failed++;
+        }
+
         System.out.println("\n" + passed + " passed, " + failed + " failed.");
         if (failed > 0) System.exit(1);
     }

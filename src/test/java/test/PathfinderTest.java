@@ -98,16 +98,68 @@ class PathfinderTest {
         TraverseResponse highResponse = Pathfinder.traverse(map, highThrust);
         assertEquals("ok", highResponse.status());
 
-        // Debug: print all reachable endpoints
-        System.out.println("Reachable endpoints with thrust=11:");
-        for (var entry : highResponse.endpoints().entrySet()) {
-            String id = entry.getKey();
-            var p = map.nodeById(id);
-            System.out.println("  " + id.substring(0, 10) + " " + (p != null ? p : "?"));
-        }
-
         assertTrue(highResponse.endpoints().containsKey(northPoleId),
                 "Mars north pole should be reachable with thrust 11");
+    }
+
+    /**
+     * Engine-switching to dodge radiation. From LEO to GEO there is a direct
+     * 2-burn path that traverses a radhaz (node 0.6059...). With a single
+     * low-thrust engine (3) you eat a rad-3 roll getting through it.
+     *
+     * But if you also carry a beefy engine (thrust 10, fuel 10), you have the
+     * option of spending a turn switching engines so the radhaz is entered
+     * under thrust 10 — mitigating the rad-6 down to 0. The Pareto frontier
+     * at GEO should therefore contain three routes that trade fuel vs. turns
+     * vs. radiation:
+     *   Route 1: t=1 f=4 h=0 r=3  (fastest and cheapest, eats the rad)
+     *   Route 2: t=3 f=4 h=0 r=0  (takes 3 turns juggling to avoid rad)
+     *   Route 3: t=2 f=12 h=0 r=0 (switches to thrust-10 engine to skip rad)
+     *
+     * Seeing all three means the planner is correctly exploring multi-engine
+     * waitTurn transitions, not just the cheapest single-engine path.
+     */
+    @Test
+    void engineSwitchingOffersRadiationMitigationRoutes() {
+        String leoId = "0.5555204595681098"; // lagrange LEO
+        String geoId = "0.721502604956894";  // burn GEO
+
+        EngineSpec lowThrust  = new EngineSpec(3, 2, false, 0);
+        EngineSpec highThrust = new EngineSpec(10, 10, false, 0);
+        TraverseRequest req = new TraverseRequest(
+                leoId, List.of(lowThrust, highThrust), 40);
+
+        TraverseResponse response = Pathfinder.traverse(map, req);
+        assertEquals("ok", response.status());
+
+        List<Integer> treeIds = response.endpoints().get(geoId);
+        assertNotNull(treeIds, "GEO should be reachable");
+
+        // Collapse routes that share the same visible map-node sequence
+        // (matches the UI's getTreeNodeIds dedup). The backend's Pareto set
+        // can include multiple cost vectors over the same physical path
+        // (e.g. same hops, different engine/fuel trade) — the UI and this
+        // test only count visually distinct routes.
+        Set<String> seenSequences = new LinkedHashSet<>();
+        Set<String> actualCosts = new LinkedHashSet<>();
+        for (int id : treeIds) {
+            List<PathNode> path = getPathToRoot(response.tree(), id);
+            String sequence = path.stream()
+                    .map(PathNode::nodeId)
+                    .reduce((a, b) -> a + "|" + b).orElse("");
+            if (!seenSequences.add(sequence)) continue; // already covered by an earlier route
+            PathNode n = path.get(path.size() - 1);
+            actualCosts.add(n.fuelSpent() + "|" + n.turns()
+                    + "|" + n.hazards() + "|" + n.worstRadRoll());
+        }
+
+        Set<String> expected = Set.of(
+                "4|1|0|3",   // direct: 2 burns through radhaz, eat rad-3
+                "4|3|0|0",   // 3 turns, avoid rad via waitTurn manoeuvres
+                "12|2|0|0"   // switch to thrust-10, blow through radhaz unharmed
+        );
+        assertEquals(expected, actualCosts,
+                "Pareto cost vectors at GEO must match the expected three");
     }
 
     /**
