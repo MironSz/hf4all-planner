@@ -176,6 +176,11 @@ public final class MapLoader {
             b.flybyBoost(p.get("flybyBoost").getAsInt());
         }
 
+        // solarMod — heliocentric-zone thrust modifier for solar engines (defaults to 0)
+        if (p.has("solarMod") && !p.get("solarMod").isJsonNull()) {
+            b.solarMod(p.get("solarMod").getAsInt());
+        }
+
         // siteName — may appear on any node type as a display label
         String siteName = getString(p, "siteName", null);
 

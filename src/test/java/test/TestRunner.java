@@ -57,6 +57,26 @@ public class TestRunner {
             failed++;
         }
 
+        try {
+            test.solarModLoadsFromJson();
+            System.out.println("PASS: solarModLoadsFromJson");
+            passed++;
+        } catch (Throwable e) {
+            System.out.println("FAIL: solarModLoadsFromJson — " + e.getMessage());
+            e.printStackTrace();
+            failed++;
+        }
+
+        try {
+            test.solarEngineInOuterZoneHasReducedReachability();
+            System.out.println("PASS: solarEngineInOuterZoneHasReducedReachability");
+            passed++;
+        } catch (Throwable e) {
+            System.out.println("FAIL: solarEngineInOuterZoneHasReducedReachability — " + e.getMessage());
+            e.printStackTrace();
+            failed++;
+        }
+
         System.out.println("\n" + passed + " passed, " + failed + " failed.");
         if (failed > 0) System.exit(1);
     }

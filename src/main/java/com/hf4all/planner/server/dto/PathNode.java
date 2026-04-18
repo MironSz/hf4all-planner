@@ -16,15 +16,18 @@ public final class PathNode {
     private final int turns;
     private final int hazards;
     private final int worstRadRoll;
+    /** Index into the request's engine list — which engine powered the move into this node. */
+    private final int engineIndex;
     private final List<PathNode> children = new ArrayList<>();
 
-    public PathNode(int id, String nodeId, int fuelSpent, int turns, int hazards, int worstRadRoll) {
+    public PathNode(int id, String nodeId, int fuelSpent, int turns, int hazards, int worstRadRoll, int engineIndex) {
         this.id = id;
         this.nodeId = nodeId;
         this.fuelSpent = fuelSpent;
         this.turns = turns;
         this.hazards = hazards;
         this.worstRadRoll = worstRadRoll;
+        this.engineIndex = engineIndex;
     }
 
     public int id() { return id; }
@@ -33,6 +36,7 @@ public final class PathNode {
     public int turns() { return turns; }
     public int hazards() { return hazards; }
     public int worstRadRoll() { return worstRadRoll; }
+    public int engineIndex() { return engineIndex; }
     public List<PathNode> children() { return children; }
 
     public void addChild(PathNode child) { children.add(child); }

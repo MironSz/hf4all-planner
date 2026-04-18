@@ -40,7 +40,10 @@ button:disabled { background: #555; cursor: not-allowed; }
 </style>
 </head>
 <body>
-<div id="debug-toggle"><input type="checkbox" id="debug-cb"><label for="debug-cb">Debug</label></div>
+<div id="debug-toggle">
+    <input type="checkbox" id="debug-cb"><label for="debug-cb">Debug</label>
+    <input type="checkbox" id="no-venus-cb" style="margin-left:12px;"><label for="no-venus-cb">Disable Venus flyby</label>
+</div>
 <div id="map-container">
     <div id="main">
         <img id="bg" alt="HF4A Map">
@@ -49,6 +52,15 @@ button:disabled { background: #555; cursor: not-allowed; }
 </div>
 <div id="sidebar">
     <h2>HF4A Mission Planner</h2>
+
+    <div id="search-box" style="position:relative;">
+        <input type="text" id="search-input" placeholder="Search site by name or id..."
+               autocomplete="off"
+               style="width:100%;padding:6px 8px;background:#0f3460;border:1px solid #555;color:#eee;font-family:monospace;font-size:12px;box-sizing:border-box;">
+        <div id="search-suggestions"
+             style="display:none;position:absolute;left:0;right:0;top:100%;max-height:220px;overflow-y:auto;background:#0a1a30;border:1px solid #555;border-top:none;z-index:50;font-size:12px;"></div>
+    </div>
+
     <div id="node-info">Click a node on the map to select start</div>
 
     <div id="route-info" style="display:none;background:#0a1a30;padding:8px;border-radius:4px;font-family:monospace;font-size:13px;color:#fff;margin-bottom:8px;">
@@ -101,6 +113,10 @@ button:disabled { background: #555; cursor: not-allowed; }
     let debugMode = false;
     let debugHoveredNode = null; // nearest node under cursor (debug only, unfiltered)
     let imgW = 0, imgH = 0;
+    // d3-zoom behavior and the selection it's bound to — captured in initCanvas
+    // so the search box can pan the view programmatically.
+    let zoomBehavior = null;
+    let zoomSel = null;
 
     document.getElementById('debug-cb').addEventListener('change', (e) => {
         debugMode = e.target.checked;
@@ -108,6 +124,103 @@ button:disabled { background: #555; cursor: not-allowed; }
         updateDebugRoute();
         updateRouteInfo();
     });
+
+    // Toggling Venus-flyby-disable re-plans the current start, so the new
+    // routing constraint takes effect without the user having to click again.
+    document.getElementById('no-venus-cb').addEventListener('change', () => {
+        if (selectedNode) fireTraverse();
+    });
+
+    // --- Search box: filter sites by name or id, focus map on pick ---
+    (function() {
+        const input = document.getElementById('search-input');
+        const list  = document.getElementById('search-suggestions');
+        let suggestions = []; // array of {id, label}
+        let activeIdx = -1;
+
+        function renderList() {
+            if (suggestions.length === 0) { list.style.display = 'none'; return; }
+            list.innerHTML = '';
+            suggestions.forEach((s, i) => {
+                const row = document.createElement('div');
+                row.textContent = s.label;
+                row.style.cssText = 'padding:4px 8px;cursor:pointer;color:#ccc;'
+                        + (i === activeIdx ? 'background:#1b3a70;color:#fff;' : '');
+                row.addEventListener('mousedown', (ev) => {
+                    ev.preventDefault(); // keep focus in input
+                    choose(i);
+                });
+                list.appendChild(row);
+            });
+            list.style.display = 'block';
+        }
+
+        function updateSuggestions() {
+            const q = input.value.trim().toLowerCase();
+            if (!mapData || !q) { suggestions = []; activeIdx = -1; renderList(); return; }
+            const matches = [];
+            for (const [id, p] of Object.entries(mapData.points)) {
+                if (p.type === 'decorative') continue;
+                const name = p.siteName || '';
+                if (name.toLowerCase().includes(q) || id.toLowerCase().startsWith(q)) {
+                    matches.push({
+                        id,
+                        label: name ? `${name}  [${p.type}]` : `${id.substring(0, 14)}  [${p.type}]`
+                    });
+                    if (matches.length >= 20) break;
+                }
+            }
+            suggestions = matches;
+            activeIdx = matches.length > 0 ? 0 : -1;
+            renderList();
+        }
+
+        function focusNode(id) {
+            const p = mapData && mapData.points && mapData.points[id];
+            if (!p || !zoomBehavior || !zoomSel) return;
+            // Center the view on the target node. translateTo operates on
+            // content coordinates (pre-zoom), so we pass the node's image pos.
+            zoomSel.transition().duration(400)
+                .call(zoomBehavior.translateTo, p.x * imgW, p.y * imgH);
+        }
+
+        function choose(i) {
+            if (i < 0 || i >= suggestions.length) return;
+            const pick = suggestions[i];
+            input.value = pick.label.split('  ')[0];
+            suggestions = [];
+            renderList();
+            focusNode(pick.id);
+            input.blur();
+        }
+
+        input.addEventListener('input', updateSuggestions);
+        input.addEventListener('focus', updateSuggestions);
+        input.addEventListener('blur', () => {
+            // Delay hide so mousedown on a row can still fire
+            setTimeout(() => { list.style.display = 'none'; }, 150);
+        });
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowDown') {
+                if (suggestions.length === 0) return;
+                activeIdx = (activeIdx + 1) % suggestions.length;
+                renderList();
+                e.preventDefault();
+            } else if (e.key === 'ArrowUp') {
+                if (suggestions.length === 0) return;
+                activeIdx = (activeIdx - 1 + suggestions.length) % suggestions.length;
+                renderList();
+                e.preventDefault();
+            } else if (e.key === 'Enter') {
+                if (activeIdx >= 0) choose(activeIdx);
+                else if (suggestions.length > 0) choose(0);
+                e.preventDefault();
+            } else if (e.key === 'Escape') {
+                input.blur();
+                list.style.display = 'none';
+            }
+        });
+    })();
 
     const bgImg = document.getElementById('bg');
     const canvas = document.getElementById('canvas');
@@ -150,7 +263,9 @@ button:disabled { background: #555; cursor: not-allowed; }
                 mainEl.style.transform = `translate(${x}px,${y}px) scale(${k})`;
             });
 
-        d3.select(container).call(z)
+        zoomBehavior = z;
+        zoomSel = d3.select(container);
+        zoomSel.call(z)
             .call(z.translateTo, 0.85 * imgW, 0.80 * imgH);
 
         canvas.addEventListener('click', onCanvasClick);
@@ -393,7 +508,9 @@ button:disabled { background: #555; cursor: not-allowed; }
             const p = mapData.points[n.nodeId];
             const name = (p && p.siteName) ? p.siteName : n.nodeId.substring(0, 12);
             const type = (p && p.type) ? p.type : '?';
-            return `${i}) ${name} [${type}] t${n.turns} f${n.fuelSpent} h${n.hazards} r${n.worstRadRoll}`;
+            const eng = (n.engineIndex != null && n.engineIndex >= 0)
+                    ? ` e${n.engineIndex + 1}` : '';
+            return `${i}) ${name} [${type}] t${n.turns} f${n.fuelSpent} h${n.hazards} r${n.worstRadRoll}${eng}`;
         });
         el.textContent = header + '\n' + lines.join('\n');
         el.style.display = 'block';
@@ -506,15 +623,17 @@ button:disabled { background: #555; cursor: not-allowed; }
             const treeNodeId = treeNodeIds[activeIdx % treeNodeIds.length];
             const pathNodes = getPathToRoot(treeNodeId);
             if (pathNodes.length >= 2) {
+                // Yellow and blue are reserved by the printed HF4A boardgame map
+                // (used to highlight orbital routes), so they're omitted here.
                 const turnColors = [
-                    'rgba(255,255,0,0.9)',   // turn 1 — yellow
-                    'rgba(0,200,255,0.9)',    // turn 2 — cyan
-                    'rgba(255,100,0,0.9)',    // turn 3 — orange
-                    'rgba(180,0,255,0.9)',    // turn 4 — purple
-                    'rgba(0,255,100,0.9)',    // turn 5 — green
-                    'rgba(255,50,50,0.9)',    // turn 6 — red
-                    'rgba(255,180,0,0.9)',    // turn 7 — amber
-                    'rgba(0,150,255,0.9)',    // turn 8 — blue
+                    'rgba(0,200,200,0.9)',    // turn 1 — cyan/teal
+                    'rgba(255,100,0,0.9)',    // turn 2 — orange
+                    'rgba(180,0,255,0.9)',    // turn 3 — purple
+                    'rgba(0,255,100,0.9)',    // turn 4 — green
+                    'rgba(255,50,50,0.9)',    // turn 5 — red
+                    'rgba(255,100,200,0.9)',  // turn 6 — pink
+                    'rgba(150,255,0,0.9)',    // turn 7 — lime
+                    'rgba(180,120,60,0.9)',   // turn 8 — brown
                 ];
                 // Group segments by undirected edge so that when the same edge
                 // is traversed across multiple turns, each turn gets its own
@@ -561,6 +680,35 @@ button:disabled { background: #555; cursor: not-allowed; }
                         ctx.stroke();
                     }
                 }
+
+                // --- Engine-segment labels ---
+                // A "segment" is a contiguous run of moves using the same engine.
+                // Label the start node of each such run with "Engine N" (1-based).
+                ctx.save();
+                ctx.font = 'bold 14px monospace';
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'bottom';
+                let lastEngine = -2; // -1 is the root sentinel; use -2 so first move always triggers a label
+                for (let i = 1; i < pathNodes.length; i++) {
+                    const ei = pathNodes[i].engineIndex;
+                    if (ei === lastEngine) continue;
+                    lastEngine = ei;
+                    if (ei < 0) continue;
+                    // Anchor the label to the node at the START of this segment
+                    // (the path node just before this move).
+                    const anchor = pathNodes[i - 1];
+                    const p = points[anchor.nodeId];
+                    if (!p) continue;
+                    const lx = p.x * imgW + 10;
+                    const ly = p.y * imgH - 10;
+                    const label = 'Engine ' + (ei + 1);
+                    const w = ctx.measureText(label).width;
+                    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+                    ctx.fillRect(lx - 3, ly - 16, w + 6, 18);
+                    ctx.fillStyle = '#ffe066';
+                    ctx.fillText(label, lx, ly);
+                }
+                ctx.restore();
 
                 // Route info is rendered into the sidebar (above fuel input),
                 // not onto the canvas. See updateRouteInfo().
@@ -623,7 +771,8 @@ button:disabled { background: #555; cursor: not-allowed; }
         const request = {
             startNodeId: selectedNode,
             engines: engines,
-            fuel: parseInt(document.getElementById('fuel').value) || 0
+            fuel: parseInt(document.getElementById('fuel').value) || 0,
+            disableVenusFlyby: document.getElementById('no-venus-cb').checked
         };
 
         document.getElementById('status').textContent = 'Planning routes...';

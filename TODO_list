@@ -1,0 +1,10 @@
+1. Rename ids of nodes to 1,2,3.... in data json file. Be extra careful not change the actual data stucture/map topology.
+2. Add search toolbox underneath "HF4A Mission Planner" text. User can input site name or site id, choose from dropdown list of suggestions. When he clicks "Enter" Map should focus arround the searched node
+3. Add "disable venus flyby" checkbox near the "debug" checkbox. When checkbox is toggled, enetering venus flyby is disabled.
+4. Design interface of tracking time (sun seasons). When player sets starting time of sun season, it should override "disable venus flyby" and track when flyby is usable and when not. It should also apply to
+entering/leaving synodic comets. If there is no data about synodic comets in the json data file, notify me, check if you can deduce them without my input and implement the rest of the feature.
+5. Routes are divided into segments. Each beginning of route should have "Engine x" where x is number of engine starting with 1.
+6. Remove yellow and blue colours from possible segments colors. Those colors are used by the boardgame map to highlight important routes and it is not readable because of it.
+7. Analyze how to implement afterburn, implement it, add it to engine input
+8. Analyze how to implement mass requrements/mechanics into the ame
+

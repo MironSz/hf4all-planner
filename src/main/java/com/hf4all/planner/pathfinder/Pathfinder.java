@@ -23,6 +23,7 @@ public final class Pathfinder {
     private final SolarMap map;
     private final List<EngineSpec> engines;
     private final int maxFuel;
+    private final boolean disableVenusFlyby;
 
     private static final int MAX_TURNS = 24;
     private static final int MAX_ITERATIONS = 5_000_000;
@@ -33,10 +34,11 @@ public final class Pathfinder {
                       .thenComparingInt(s -> s.hazards)
                       .thenComparingInt(s -> s.turn);
 
-    private Pathfinder(SolarMap map, List<EngineSpec> engines, int maxFuel) {
+    private Pathfinder(SolarMap map, List<EngineSpec> engines, int maxFuel, boolean disableVenusFlyby) {
         this.map = map;
         this.engines = engines;
         this.maxFuel = maxFuel;
+        this.disableVenusFlyby = disableVenusFlyby;
     }
 
     // -------------------------------------------------------------------------
@@ -51,7 +53,8 @@ public final class Pathfinder {
         if (request.engines() == null || request.engines().isEmpty()) {
             return error(request.startNodeId(), "at least one engine required");
         }
-        return new Pathfinder(map, request.engines(), request.fuel()).run(start);
+        return new Pathfinder(map, request.engines(), request.fuel(),
+                request.disableVenusFlyby()).run(start);
     }
 
     private static TraverseResponse error(String startId, String message) {
@@ -76,10 +79,11 @@ public final class Pathfinder {
         // Seed: one initial state per engine (simulates waitTurn from prequel)
         for (int i = 0; i < engines.size(); i++) {
             EngineSpec engine = engines.get(i);
-            int thrust = engine.netThrust();
+            int thrust = effectiveThrustAt(i, start);
+            int burns  = Math.max(thrust, 0);
             SearchState initial = new SearchState(
                     start, null, i,
-                    thrust, engine.bonusPivots(), 0, thrust,
+                    burns, engine.bonusPivots(), 0, thrust,
                     0, 1, 0, 0,
                     1, null, null, List.of());
             if (addIfBest(initial, bestFound)) {
@@ -196,9 +200,10 @@ public final class Pathfinder {
             }
         }
 
-        // Root: merged representation of all initial states (all share the same output costs)
+        // Root: merged representation of all initial states (all share the same output costs).
+        // engineIndex = -1 marks "no engine in use yet" — used at the starting node before any move.
         int nextId = 0;
-        PathNode root = new PathNode(nextId++, startNodeId, 0, 1, 0, 0);
+        PathNode root = new PathNode(nextId++, startNodeId, 0, 1, 0, 0, -1);
 
         Map<SearchState, PathNode> stateToNode = new IdentityHashMap<>();
         Deque<SearchState> buildQueue = new ArrayDeque<>();
@@ -214,7 +219,8 @@ public final class Pathfinder {
             PathNode currentPN = stateToNode.get(current);
             for (SearchState child : childrenMap.getOrDefault(current, List.of())) {
                 PathNode childPN = new PathNode(nextId++, child.node.id(),
-                        child.fuelSpent, child.turn, child.hazards, child.worstRadRoll);
+                        child.fuelSpent, child.turn, child.hazards, child.worstRadRoll,
+                        child.engineIndex);
                 currentPN.addChild(childPN);
                 stateToNode.put(child, childPN);
                 buildQueue.add(child);
@@ -251,20 +257,30 @@ public final class Pathfinder {
      * </ol>
      */
     private List<Neighbor> getNeighbors(SearchState current) {
-        List<Neighbor> neighbors = new ArrayList<>();
         MapNode node = current.node;
         String dir = current.entryLabel;
+        List<MapNode> adjList = map.neighboursOf(node);
+        int n = adjList.size();
 
-        boolean nodeHasLabels = false;
-        for (MapNode adj : map.neighboursOf(node)) {
-            if (map.edgeLabel(node, adj) != null) { nodeHasLabels = true; break; }
+        // Single pass: cache both directed labels per neighbor so Parts 1 & 2
+        // below don't re-hit the edgeLabel map three times per adjacency.
+        String[] labelFromNode = new String[n];
+        String[] labelAtAdj    = new String[n];
+        boolean nodeHasLabels  = false;
+        for (int i = 0; i < n; i++) {
+            MapNode adj = adjList.get(i);
+            labelFromNode[i] = map.edgeLabel(node, adj);
+            labelAtAdj[i]    = map.edgeLabel(adj, node);
+            if (labelFromNode[i] != null) nodeHasLabels = true;
         }
+
+        List<Neighbor> neighbors = new ArrayList<>();
 
         // Part 1: Same-node direction changes (Hohmann pivots).
         //   At a Hohmann node, we can switch to any other direction label present.
         Set<String> seenLabels = new HashSet<>();
-        for (MapNode adj : map.neighboursOf(node)) {
-            String label = map.edgeLabel(node, adj);
+        for (int i = 0; i < n; i++) {
+            String label = labelFromNode[i];
             if (label != null && !label.equals("0") && !label.equals(dir)
                     && seenLabels.add(label)) {
                 neighbors.add(new Neighbor(node, label));
@@ -272,21 +288,22 @@ public final class Pathfinder {
         }
 
         // Part 2: Cross-node moves.
-        for (MapNode adj : map.neighboursOf(node)) {
+        for (int i = 0; i < n; i++) {
             // One-way block: if the edge at adj pointing toward us is "0", skip
-            String labelAtAdj = map.edgeLabel(adj, node);
-            if ("0".equals(labelAtAdj)) continue;
+            String labelAtAdjI = labelAtAdj[i];
+            if ("0".equals(labelAtAdjI)) continue;
 
             // Direction compatibility:
             //   Allow if: node has no labels, OR no label on this edge, OR label matches dir
-            String labelFromNode = map.edgeLabel(node, adj);
-            if (nodeHasLabels && labelFromNode != null && dir != null
-                    && !labelFromNode.equals(dir)) {
+            String labelFromNodeI = labelFromNode[i];
+            if (nodeHasLabels && labelFromNodeI != null && dir != null
+                    && !labelFromNodeI.equals(dir)) {
                 continue;
             }
 
+            MapNode adj = adjList.get(i);
             // Arrival direction at adj = the label at adj pointing toward node
-            String arrivalDir = labelAtAdj;
+            String arrivalDir = labelAtAdjI;
 
             // Prevent degenerate self-loop: same node, had a direction, losing it
             if (node.equals(adj) && dir != null && arrivalDir == null) continue;
@@ -308,6 +325,12 @@ public final class Pathfinder {
     private List<SearchState> expandToNeighbor(SearchState current, Neighbor neighbor) {
         MapNode dest = neighbor.node;
         boolean sameNode = current.node.equals(dest);
+
+        // User-controlled: forbid entering Venus flyby nodes.
+        if (disableVenusFlyby && !sameNode
+                && dest.type() == com.hf4all.planner.model.NodeType.VENUS) {
+            return List.of();
+        }
 
         // For same-node moves we preserve previousNodeId; for cross-node moves
         // we record the node we just left (enables the no-U-turn rule).
@@ -346,12 +369,17 @@ public final class Pathfinder {
     /** BURN edge: either a free burn (if available) or a paid burn. */
     private List<SearchState> expandBurn(SearchState current, Neighbor neighbor,
                                          String prevNode, boolean oneWay) {
-        List<SearchState> out = new ArrayList<>(2);
         MapNode dest = neighbor.node;
+        // Entering a burn space requires an operational thruster. For solar engines
+        // in outer zones, effective thrust at dest can drop to ≤ 0 — no burns possible.
+        int destThrust = effectiveThrustAt(current.engineIndex, dest);
+        if (destThrust <= 0) return List.of();
+
+        List<SearchState> out = new ArrayList<>(2);
         boolean isHazard  = dest.hazard();
         boolean isLanding = !dest.landing().isZero();
         int newHazards   = current.hazards + (isHazard ? 1 : 0);
-        int newRadRoll   = updatedRadRoll(current.worstRadRoll, dest, current.thrust);
+        int newRadRoll   = updatedRadRoll(current.worstRadRoll, dest, destThrust);
         int fuelCost     = engines.get(current.engineIndex).fuelConsumption();
         int visitedInc   = dest.isDecorative() ? 0 : 1;
 
@@ -360,20 +388,20 @@ public final class Pathfinder {
             out.add(new SearchState(
                     dest, neighbor.direction, current.engineIndex,
                     current.burnsRemaining, current.pivotsRemaining,
-                    oneWay ? 0 : current.freeBurns - 1, current.thrust,
+                    oneWay ? 0 : current.freeBurns - 1, destThrust,
                     current.fuelSpent, current.turn, newHazards, newRadRoll,
                     current.visitedNodes + visitedInc, prevNode, current,
-                    new ArrayList<>(current.bonusSites)));
+                    current.bonusSites));
         }
         // Option B: paid burn
         if (current.burnsRemaining > 0) {
             out.add(new SearchState(
                     dest, neighbor.direction, current.engineIndex,
                     current.burnsRemaining - 1, current.pivotsRemaining,
-                    oneWay ? 0 : current.freeBurns, current.thrust,
+                    oneWay ? 0 : current.freeBurns, destThrust,
                     current.fuelSpent + fuelCost, current.turn, newHazards, newRadRoll,
                     current.visitedNodes + visitedInc, prevNode, current,
-                    new ArrayList<>(current.bonusSites)));
+                    current.bonusSites));
         }
         return out;
     }
@@ -391,10 +419,10 @@ public final class Pathfinder {
                     current.freeBurns, current.thrust,
                     current.fuelSpent, current.turn, current.hazards, current.worstRadRoll,
                     current.visitedNodes, prevNode, current,
-                    new ArrayList<>(current.bonusSites)));
+                    current.bonusSites));
         }
-        // Option B: force-turn via 2 paid burns
-        if (current.burnsRemaining > 1) {
+        // Option B: force-turn via 2 paid burns (requires an operational thruster)
+        if (current.burnsRemaining > 1 && current.thrust > 0) {
             int fuelCost = engines.get(current.engineIndex).fuelConsumption() * 2;
             out.add(new SearchState(
                     dest, neighbor.direction, current.engineIndex,
@@ -402,7 +430,7 @@ public final class Pathfinder {
                     current.freeBurns, current.thrust,
                     current.fuelSpent + fuelCost, current.turn, current.hazards, current.worstRadRoll,
                     current.visitedNodes, prevNode, current,
-                    new ArrayList<>(current.bonusSites)));
+                    current.bonusSites));
         }
         return out;
     }
@@ -411,11 +439,14 @@ public final class Pathfinder {
     private List<SearchState> expandCruise(SearchState current, Neighbor neighbor,
                                            String prevNode, boolean oneWay, boolean sameNode) {
         MapNode dest = neighbor.node;
+        // For cross-node moves, recompute effective thrust at the destination
+        // (solar engines change thrust as they cross heliocentric zones).
+        int newThrust    = sameNode ? current.thrust : effectiveThrustAt(current.engineIndex, dest);
         boolean isHazard = !sameNode && dest.hazard();
         int newHazards   = current.hazards + (isHazard ? 1 : 0);
         int newRadRoll   = sameNode
                 ? current.worstRadRoll
-                : updatedRadRoll(current.worstRadRoll, dest, current.thrust);
+                : updatedRadRoll(current.worstRadRoll, dest, newThrust);
         int visitedInc   = (!sameNode && !dest.isDecorative()) ? 1 : 0;
 
         int newFreeBurns = current.freeBurns;
@@ -430,7 +461,7 @@ public final class Pathfinder {
         return List.of(new SearchState(
                 dest, neighbor.direction, current.engineIndex,
                 current.burnsRemaining, current.pivotsRemaining,
-                newFreeBurns, current.thrust,
+                newFreeBurns, newThrust,
                 current.fuelSpent, current.turn, newHazards, newRadRoll,
                 current.visitedNodes + visitedInc,
                 prevNode, current, newBonusSites));
@@ -444,15 +475,28 @@ public final class Pathfinder {
         List<SearchState> results = new ArrayList<>(engines.size());
         for (int i = 0; i < engines.size(); i++) {
             EngineSpec engine = engines.get(i);
-            int thrust = engine.netThrust();
+            int thrust = effectiveThrustAt(i, current.node);
+            int burns  = Math.max(thrust, 0);
             results.add(new SearchState(
                     current.node, null, i,
-                    thrust, engine.bonusPivots(), 0, thrust,
+                    burns, engine.bonusPivots(), 0, thrust,
                     current.fuelSpent, current.turn + 1,
                     current.hazards, current.worstRadRoll,
                     current.visitedNodes, null, current, List.of()));
         }
         return results;
+    }
+
+    /**
+     * Effective net thrust for an engine at a given node. For solar-powered
+     * engines, adds the node's heliocentric-zone modifier (can go negative →
+     * engine is non-operational there; ship can coast but cannot burn or
+     * force-turn). For non-solar engines, just returns the engine's base thrust.
+     */
+    private int effectiveThrustAt(int engineIndex, MapNode node) {
+        EngineSpec engine = engines.get(engineIndex);
+        int base = engine.netThrust();
+        return engine.solarPowered() ? base + node.solarMod() : base;
     }
 
     /** True while the state is a mid-turn position (reached by burn/turn/cruise, not waitTurn). */
@@ -557,7 +601,8 @@ public final class Pathfinder {
         existing.removeIf(e -> !e.notDominatedBy(state));
 
         existing.add(state);
-        existing.sort(BY_COST); // deterministic expansion order
+        // No sort needed — the priority queue governs expansion order; this list
+        // is only scanned for dominance/identity, both order-independent.
         return true;
     }
 

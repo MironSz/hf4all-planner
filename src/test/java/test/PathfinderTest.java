@@ -38,8 +38,8 @@ class PathfinderTest {
      */
     @Test
     void arsiaMonsReachableViaAerobrake() {
-        String startId = "0.2807724500807758";       // lagrange near Mars
-        String arsiaId = "0.3297091594567021";       // Mars: Arsia Mons caves
+        String startId = "334";       // lagrange near Mars
+        String arsiaId = "341";       // Mars: Arsia Mons caves
 
         TraverseRequest request = new TraverseRequest(
                 startId, List.of(DEFAULT_ENGINE), DEFAULT_FUEL);
@@ -72,8 +72,8 @@ class PathfinderTest {
      */
     @Test
     void marsNorthPoleReachableViaAerobrakeWithLowThrust() {
-        String startId = "0.2807724500807758";           // lagrange near Mars
-        String northPoleId = "0.1990466816181795";       // Mars: north pole
+        String startId = "334";           // lagrange near Mars
+        String northPoleId = "340";       // Mars: north pole
 
         TraverseRequest req = new TraverseRequest(
                 startId, List.of(DEFAULT_ENGINE), DEFAULT_FUEL);
@@ -87,8 +87,8 @@ class PathfinderTest {
 
     @Test
     void marsNorthPoleReachableWithHighThrust() {
-        String startId = "0.2807724500807758";           // lagrange near Mars
-        String northPoleId = "0.1990466816181795";       // Mars: north pole
+        String startId = "334";           // lagrange near Mars
+        String northPoleId = "340";       // Mars: north pole
 
         // thrust=11 meets the landing burn thrustRequired=11 and exceeds site size=10
         EngineSpec highEngine = new EngineSpec(11, 2, false, 0);
@@ -121,8 +121,8 @@ class PathfinderTest {
      */
     @Test
     void engineSwitchingOffersRadiationMitigationRoutes() {
-        String leoId = "0.5555204595681098"; // lagrange LEO
-        String geoId = "0.721502604956894";  // burn GEO
+        String leoId = "90"; // lagrange LEO
+        String geoId = "96";  // burn GEO
 
         EngineSpec lowThrust  = new EngineSpec(3, 2, false, 0);
         EngineSpec highThrust = new EngineSpec(10, 10, false, 0);
@@ -175,9 +175,9 @@ class PathfinderTest {
      */
     @Test
     void decorativeChainBidirectional() {
-        String burnA = "0.016525490471957616";   // burn — "left" side
-        String burnB = "0.4092470027101103";      // burn — "right" side
-        String lagrangeA = "0.12420602360382982"; // lagrange on the "left" side of burnA
+        String burnA = "890";   // burn — "left" side
+        String burnB = "257";      // burn — "right" side
+        String lagrangeA = "894"; // lagrange on the "left" side of burnA
 
         // Forward: start at burnA, burnB should be in the tree (as an intermediate
         // on paths to sites like Mars: Arsia Mons caves, reachable via the
@@ -203,6 +203,58 @@ class PathfinderTest {
                 "Reverse: burnA should be reachable from burnB via decorative chain");
         assertNotNull(findNodeByMapId(revResp.tree(), lagrangeA),
                 "Reverse: lagrangeA should be reachable from burnB via the chain");
+    }
+
+    /**
+     * Sanity: {@code MapNode.solarMod()} is loaded from the JSON. Picks one
+     * known-outer (sphere7, modifier −4) and one known-inner (sphere0,
+     * modifier +2) node; verifies both values round-trip through the loader.
+     * Also verifies an unlabeled node defaults to 0.
+     */
+    @Test
+    void solarModLoadsFromJson() {
+        // sphere7 — outermost (−4)
+        assertEquals(-4, map.nodeById("669").solarMod(),
+                "sphere7 node should load with solarMod = −4");
+        // sphere0 — innermost (+2)
+        assertEquals(+2, map.nodeById("39").solarMod(),
+                "sphere0 node should load with solarMod = +2");
+        // Unlabeled node (LEO from the engine-switching test) defaults to 0
+        assertEquals(0, map.nodeById("90").solarMod(),
+                "Unlabeled node should default to solarMod = 0");
+    }
+
+    /**
+     * Solar-power rule (H3c). Starting at a sphere7 burn node (solarMod −4):
+     *   - A non-solar engine of base thrust 4 has effective thrust 4 → can burn.
+     *   - The same engine with {@code solarPowered=true} has effective thrust
+     *     4 + (−4) = 0 → cannot perform any burn (paid, bonus, or force-turn);
+     *     it can only coast along non-burn cruise edges.
+     *
+     * Non-solar must therefore reach strictly more endpoints than solar.
+     */
+    @Test
+    void solarEngineInOuterZoneHasReducedReachability() {
+        String sphere7Id = "669"; // burn node, solarMod = −4
+
+        EngineSpec nonSolar = new EngineSpec(4, 2, false, 0);
+        EngineSpec solar    = new EngineSpec(4, 2, true,  0);
+
+        TraverseResponse nonSolarResp = Pathfinder.traverse(map,
+                new TraverseRequest(sphere7Id, List.of(nonSolar), 40));
+        TraverseResponse solarResp = Pathfinder.traverse(map,
+                new TraverseRequest(sphere7Id, List.of(solar), 40));
+
+        assertEquals("ok", nonSolarResp.status());
+        assertEquals("ok", solarResp.status());
+
+        int nonSolarEndpoints = nonSolarResp.endpoints().size();
+        int solarEndpoints    = solarResp.endpoints().size();
+
+        assertTrue(solarEndpoints < nonSolarEndpoints,
+                "Solar engine should reach strictly fewer endpoints than non-solar "
+              + "at a sphere7 start (solarMod = −4 → effective thrust 0, no burns). "
+              + "Got solar=" + solarEndpoints + ", nonSolar=" + nonSolarEndpoints);
     }
 
     /** Walk from a tree node to the root, returning the full path. */
