@@ -26,7 +26,8 @@
       "siteName": "Eureka",
       "siteSize": "1D",
       "siteWater": "0",
-      "solarMod": -1
+      "solarMod": -1,
+      "astrobiology": true
     },
     "5": {
       "x": 0.9335185185185185,
@@ -83,7 +84,8 @@
       "siteName": "Cruithne",
       "siteSize": "1M",
       "siteWater": "1",
-      "solarMod": 0
+      "solarMod": 0,
+      "push": true
     },
     "14": {
       "x": 0.957962962962963,
@@ -152,7 +154,8 @@
       "siteName": "Khufu",
       "siteSize": "1S",
       "siteWater": "2",
-      "solarMod": 0
+      "solarMod": 0,
+      "push": true
     },
     "25": {
       "x": 0.6338888888888888,
@@ -222,7 +225,10 @@
       "siteName": "Venus Aerostat-Xity",
       "siteSize": "11C",
       "siteWater": "0",
-      "solarMod": 0
+      "solarMod": 0,
+      "push": true,
+      "astrobiology": true,
+      "atmospheric": true
     },
     "36": {
       "x": 0.6792592592592592,
@@ -711,7 +717,8 @@
       "siteName": "Luna: Aristarchus plateau",
       "siteSize": "9H",
       "siteWater": "0",
-      "solarMod": 0
+      "solarMod": 0,
+      "spaceElevator": true
     },
     "115": {
       "x": 0.8868518518518519,
@@ -807,7 +814,8 @@
       "siteName": "Mjolnir",
       "siteSize": "1S",
       "siteWater": "1",
-      "solarMod": 0
+      "solarMod": 0,
+      "push": true
     },
     "130": {
       "x": 0.5603703703703704,
@@ -828,7 +836,10 @@
       "siteName": "Icarus",
       "siteSize": "1S",
       "siteWater": "4",
-      "solarMod": 0
+      "solarMod": 0,
+      "synodic": "Red",
+      "push": true,
+      "astrobiology": true
     },
     "133": {
       "x": 0.6359259259259259,
@@ -1276,7 +1287,8 @@
       "siteName": "Apophis",
       "siteSize": "1S",
       "siteWater": "0",
-      "solarMod": 0
+      "solarMod": 0,
+      "push": true
     },
     "207": {
       "x": 0.692037037037037,
@@ -1345,7 +1357,10 @@
       "siteName": "Phaethon",
       "siteSize": "1H",
       "siteWater": "4",
-      "solarMod": 0
+      "solarMod": 0,
+      "synodic": "Yellow",
+      "push": true,
+      "astrobiology": true
     },
     "218": {
       "x": 0.6351851851851852,
@@ -1415,7 +1430,8 @@
       "siteName": "YORP",
       "siteSize": "1S",
       "siteWater": "0",
-      "solarMod": 0
+      "solarMod": 0,
+      "push": true
     },
     "229": {
       "x": 0.7985185185185185,
@@ -1615,7 +1631,8 @@
       "siteName": "Phobos",
       "siteSize": "1C",
       "siteWater": "2",
-      "solarMod": -1
+      "solarMod": -1,
+      "spaceElevator": true
     },
     "261": {
       "x": 0.9677777777777777,
@@ -1700,7 +1717,8 @@
       "siteName": "Toro",
       "siteSize": "1S",
       "siteWater": "0",
-      "solarMod": -1
+      "solarMod": -1,
+      "astrobiology": true
     },
     "274": {
       "x": 0.5370370370370371,
@@ -1927,7 +1945,8 @@
       "siteName": "Ivar",
       "siteSize": "1S",
       "siteWater": "0",
-      "solarMod": -1
+      "solarMod": -1,
+      "astrobiology": true
     },
     "309": {
       "x": 0.42962962962962964,
@@ -2132,7 +2151,8 @@
       "siteName": "Mars: north pole",
       "siteSize": "10C",
       "siteWater": "4",
-      "solarMod": -1
+      "solarMod": -1,
+      "atmospheric": true
     },
     "341": {
       "x": 0.9038888888888889,
@@ -2141,7 +2161,9 @@
       "siteName": "Mars: Arsia Mons caves",
       "siteSize": "10C",
       "siteWater": "3",
-      "solarMod": -1
+      "solarMod": -1,
+      "atmospheric": true,
+      "spaceElevator": true
     },
     "342": {
       "x": 0.9309259259259259,
@@ -2150,7 +2172,8 @@
       "siteName": "Mars: Hellas Basin buried glaciers",
       "siteSize": "10C",
       "siteWater": "4",
-      "solarMod": -1
+      "solarMod": -1,
+      "atmospheric": true
     },
     "343": {
       "x": 0.8855555555555555,
@@ -2175,7 +2198,8 @@
       "siteName": "Mercury: North pole",
       "siteSize": "10V",
       "siteWater": "3",
-      "solarMod": 2
+      "solarMod": 2,
+      "push": true
     },
     "346": {
       "x": 0.7037037037037037,
@@ -2201,7 +2225,8 @@
       "siteName": "Itokawa",
       "siteSize": "1S",
       "siteWater": "0",
-      "solarMod": 0
+      "solarMod": 0,
+      "push": true
     },
     "349": {
       "x": 0.9188888888888889,
@@ -2246,7 +2271,8 @@
       "siteName": "Ceres",
       "siteSize": "6C",
       "siteWater": "4",
-      "solarMod": -2
+      "solarMod": -2,
+      "submarine": true
     },
     "354": {
       "x": 0.9075925925925926,
@@ -2607,7 +2633,9 @@
       "siteName": "Comet Holmes",
       "siteSize": "1D",
       "siteWater": "4",
-      "solarMod": -2
+      "solarMod": -2,
+      "synodic": "Red",
+      "astrobiology": true
     },
     "404": {
       "x": 0.7466666666666667,
@@ -2628,7 +2656,9 @@
       "siteName": "Comet Borrelly",
       "siteSize": "1D",
       "siteWater": "4",
-      "solarMod": -2
+      "solarMod": -2,
+      "synodic": "Yellow",
+      "astrobiology": true
     },
     "407": {
       "x": 0.6664814814814815,
@@ -2731,7 +2761,9 @@
       "siteName": "Comet Encke",
       "siteSize": "1V",
       "siteWater": "4",
-      "solarMod": -2
+      "solarMod": -2,
+      "synodic": "Blue",
+      "astrobiology": true
     },
     "423": {
       "x": 0.5581481481481482,
@@ -2877,7 +2909,8 @@
       "siteName": "Comet Elst-Pizarro",
       "siteSize": "1D",
       "siteWater": "4",
-      "solarMod": -2
+      "solarMod": -2,
+      "astrobiology": true
     },
     "443": {
       "x": 0.4514814814814815,
@@ -3035,7 +3068,8 @@
       "siteName": "Comet Wilson-Harrington",
       "siteSize": "1D",
       "siteWater": "4",
-      "solarMod": -2
+      "solarMod": -2,
+      "astrobiology": true
     },
     "465": {
       "x": 0.4053703703703704,
@@ -3111,7 +3145,8 @@
       "siteName": "Comet Wild 2",
       "siteSize": "1D",
       "siteWater": "4",
-      "solarMod": -2
+      "solarMod": -2,
+      "astrobiology": true
     },
     "476": {
       "x": 0.3464814814814815,
@@ -3184,7 +3219,9 @@
       "siteName": "Comet Bartley 2",
       "siteSize": "1D",
       "siteWater": "4",
-      "solarMod": -2
+      "solarMod": -2,
+      "synodic": "Yellow",
+      "astrobiology": true
     },
     "486": {
       "x": 0.35388888888888886,
@@ -3217,7 +3254,9 @@
       "siteName": "Elatus",
       "siteSize": "2D",
       "siteWater": "4",
-      "solarMod": -2
+      "solarMod": -2,
+      "astrobiology": true,
+      "centaur": true
     },
     "491": {
       "x": 0.8766666666666667,
@@ -3239,7 +3278,9 @@
       "siteName": "Chiron",
       "siteSize": "4C",
       "siteWater": "4",
-      "solarMod": -2
+      "solarMod": -2,
+      "astrobiology": true,
+      "centaur": true
     },
     "494": {
       "x": 0.8479629629629629,
@@ -3438,7 +3479,9 @@
       "siteName": "Comet Neujmin 1",
       "siteSize": "1D",
       "siteWater": "4",
-      "solarMod": -3
+      "solarMod": -3,
+      "synodic": "Blue",
+      "astrobiology": true
     },
     "523": {
       "x": 0.3814814814814815,
@@ -3544,7 +3587,8 @@
       "siteName": "Callisto: Valhalla",
       "siteSize": "8C",
       "siteWater": "4",
-      "solarMod": -3
+      "solarMod": -3,
+      "submarine": true
     },
     "539": {
       "x": 0.3446296296296296,
@@ -3697,7 +3741,8 @@
       "siteName": "Europa: subsurface ocean",
       "siteSize": "8C",
       "siteWater": "4",
-      "solarMod": -3
+      "solarMod": -3,
+      "submarine": true
     },
     "562": {
       "x": 0.267037037037037,
@@ -3706,7 +3751,8 @@
       "siteName": "Europa: Conamara chaos",
       "siteSize": "8S",
       "siteWater": "4",
-      "solarMod": -3
+      "solarMod": -3,
+      "astrobiology": true
     },
     "563": {
       "x": 0.2564814814814815,
@@ -3753,7 +3799,8 @@
       "siteName": "Ganymede: Uruk Sulcus",
       "siteSize": "9V",
       "siteWater": "4",
-      "solarMod": -3
+      "solarMod": -3,
+      "submarine": true
     },
     "569": {
       "x": 0.2985185185185185,
@@ -3835,7 +3882,9 @@
       "siteName": "Comet Schwassmann-Wachmann 1",
       "siteSize": "2D",
       "siteWater": "4",
-      "solarMod": -3
+      "solarMod": -3,
+      "astrobiology": true,
+      "centaur": true
     },
     "581": {
       "x": 0.29685185185185187,
@@ -4004,7 +4053,8 @@
       "siteName": "Hermes A",
       "siteSize": "1S",
       "siteWater": "0",
-      "solarMod": -2
+      "solarMod": -2,
+      "synodic": "Blue"
     },
     "604": {
       "x": 0.45944444444444443,
@@ -4013,7 +4063,8 @@
       "siteName": "Hermes B",
       "siteSize": "1S",
       "siteWater": "0",
-      "solarMod": -2
+      "solarMod": -2,
+      "synodic": "Blue"
     },
     "605": {
       "x": 0.24962962962962962,
@@ -4082,7 +4133,9 @@
       "siteName": "Io: Gish Bar Mons",
       "siteSize": "9M",
       "siteWater": "1",
-      "solarMod": -3
+      "solarMod": -3,
+      "push": true,
+      "astrobiology": true
     },
     "616": {
       "x": 0.3322222222222222,
@@ -4091,7 +4144,9 @@
       "siteName": "Io: Loki Patera",
       "siteSize": "9S",
       "siteWater": "0",
-      "solarMod": -3
+      "solarMod": -3,
+      "push": true,
+      "astrobiology": true
     },
     "617": {
       "x": 0.43296296296296294,
@@ -4100,7 +4155,9 @@
       "siteName": "Okyrhoe",
       "siteSize": "2D",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true,
+      "centaur": true
     },
     "618": {
       "x": 0.32796296296296296,
@@ -4115,7 +4172,9 @@
       "siteName": "Kreutz Sungrazer",
       "siteSize": "1H",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "synodic": "Yellow",
+      "astrobiology": true
     },
     "620": {
       "x": 0.2225925925925926,
@@ -4124,7 +4183,9 @@
       "siteName": "Comet Crommelin",
       "siteSize": "1D",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "synodic": "Yellow",
+      "astrobiology": true
     },
     "621": {
       "x": 0.24074074074074073,
@@ -4203,7 +4264,8 @@
       "siteName": "Methone",
       "siteSize": "1D",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "submarine": true
     },
     "632": {
       "x": 0.09,
@@ -4257,7 +4319,8 @@
       "siteName": "Tethys",
       "siteSize": "5C",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true
     },
     "640": {
       "x": 0.05907407407407408,
@@ -4298,7 +4361,8 @@
       "siteName": "Dione",
       "siteSize": "6V",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "submarine": true
     },
     "645": {
       "x": 0.09722222222222222,
@@ -4360,7 +4424,8 @@
       "siteName": "Rhea",
       "siteSize": "6V",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "submarine": true
     },
     "654": {
       "x": 0.11259259259259259,
@@ -4411,7 +4476,8 @@
       "siteName": "Enceladus",
       "siteSize": "5M",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "submarine": true
     },
     "661": {
       "x": 0.09259259259259259,
@@ -4426,7 +4492,9 @@
       "siteName": "Chariklo",
       "siteSize": "4D",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true,
+      "centaur": true
     },
     "663": {
       "x": 0.09833333333333333,
@@ -4466,7 +4534,10 @@
       "siteName": "Asbolus",
       "siteSize": "3D",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "synodic": "Blue",
+      "astrobiology": true,
+      "centaur": true
     },
     "669": {
       "x": 0.17425925925925925,
@@ -4493,7 +4564,8 @@
       "siteName": "Hylonome",
       "siteSize": "3D",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "centaur": true
     },
     "673": {
       "x": 0.09166666666666666,
@@ -4532,7 +4604,8 @@
       "siteName": "Juliet",
       "siteSize": "2V",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true
     },
     "678": {
       "x": 0.13722222222222222,
@@ -4541,7 +4614,8 @@
       "siteName": "Portia",
       "siteSize": "3V",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true
     },
     "679": {
       "x": 0.12462962962962963,
@@ -4599,7 +4673,10 @@
       "siteName": "Uranus aerostat",
       "siteSize": "11H",
       "siteWater": "1",
-      "solarMod": -4
+      "solarMod": -4,
+      "submarine": true,
+      "atmospheric": true,
+      "spaceElevator": true
     },
     "686": {
       "x": 0.05407407407407407,
@@ -4725,7 +4802,8 @@
       "siteName": "Oberon",
       "siteSize": "7D",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "submarine": true
     },
     "705": {
       "x": 0.062407407407407404,
@@ -4734,7 +4812,8 @@
       "siteName": "Titania",
       "siteSize": "7D",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "submarine": true
     },
     "706": {
       "x": 0.09388888888888888,
@@ -4743,7 +4822,8 @@
       "siteName": "Umbriel",
       "siteSize": "6D",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true
     },
     "707": {
       "x": 0.11981481481481482,
@@ -4752,7 +4832,8 @@
       "siteName": "Ariel",
       "siteSize": "6V",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "submarine": true
     },
     "708": {
       "x": 0.10166666666666667,
@@ -4803,7 +4884,8 @@
       "siteName": "Belinda",
       "siteSize": "2V",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true
     },
     "715": {
       "x": 0.10592592592592592,
@@ -4812,7 +4894,9 @@
       "siteName": "Cordelia",
       "siteSize": "1C",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true,
+      "spaceElevator": true
     },
     "716": {
       "x": 0.06888888888888889,
@@ -4855,7 +4939,9 @@
       "siteName": "Comet Halley",
       "siteSize": "1H",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "synodic": "Red",
+      "astrobiology": true
     },
     "721": {
       "x": 0.23296296296296296,
@@ -5009,7 +5095,10 @@
       "siteName": "Pholus",
       "siteSize": "4D",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "synodic": "Red",
+      "astrobiology": true,
+      "centaur": true
     },
     "746": {
       "x": 0.1674074074074074,
@@ -5058,7 +5147,8 @@
       "siteName": "Triton: Mahilani plume",
       "siteSize": "8M",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "submarine": true
     },
     "753": {
       "x": 0.2374074074074074,
@@ -5067,7 +5157,8 @@
       "siteName": "Triton: Tuenela Plantia",
       "siteSize": "8C",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true
     },
     "754": {
       "x": 0.1874074074074074,
@@ -5135,7 +5226,8 @@
       "siteName": "Larissa",
       "siteSize": "3D",
       "siteWater": "3",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true
     },
     "764": {
       "x": 0.22277777777777777,
@@ -5144,7 +5236,8 @@
       "siteName": "Galatea",
       "siteSize": "3S",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true
     },
     "765": {
       "x": 0.2001851851851852,
@@ -5153,7 +5246,8 @@
       "siteName": "Despina",
       "siteSize": "3D",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "spaceElevator": true
     },
     "766": {
       "x": 0.18814814814814815,
@@ -5194,7 +5288,10 @@
       "siteName": "Neptune Aerostat",
       "siteSize": "11H",
       "siteWater": "2",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true,
+      "atmospheric": true,
+      "spaceElevator": true
     },
     "771": {
       "x": 0.15055555555555555,
@@ -5274,7 +5371,8 @@
       "siteName": "Sao",
       "siteSize": "1D",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true
     },
     "783": {
       "x": 0.09055555555555556,
@@ -5384,7 +5482,9 @@
       "siteName": "Charon",
       "siteSize": "6D",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true,
+      "spaceElevator": true
     },
     "799": {
       "x": 0.047962962962962964,
@@ -5393,7 +5493,8 @@
       "siteName": "Hydra",
       "siteSize": "2D",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true
     },
     "800": {
       "x": 0.01685185185185185,
@@ -5402,7 +5503,8 @@
       "siteName": "Nix",
       "siteSize": "2V",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true
     },
     "801": {
       "x": 0.017407407407407406,
@@ -5411,7 +5513,9 @@
       "siteName": "Pluto",
       "siteSize": "7D",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "submarine": true,
+      "spaceElevator": true
     },
     "802": {
       "x": 0.16555555555555557,
@@ -5462,7 +5566,8 @@
       "siteName": "Huya",
       "siteSize": "5M",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true
     },
     "810": {
       "x": 0.1937037037037037,
@@ -5534,7 +5639,8 @@
       "siteName": "Quaoar",
       "siteSize": "7S",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "submarine": true
     },
     "821": {
       "x": 0.3024074074074074,
@@ -5543,7 +5649,8 @@
       "siteName": "Weywot",
       "siteSize": "3D",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true
     },
     "822": {
       "x": 0.18333333333333332,
@@ -5588,7 +5695,8 @@
       "siteName": "Teharoniawako",
       "siteSize": "4S",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true
     },
     "829": {
       "x": 0.13425925925925927,
@@ -5597,7 +5705,8 @@
       "siteName": "Sawiakera",
       "siteSize": "3D",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true
     },
     "830": {
       "x": 0.13333333333333333,
@@ -5818,7 +5927,8 @@
       "siteName": "Sedna",
       "siteSize": "6H",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "submarine": true
     },
     "866": {
       "x": 0.11574074074074074,
@@ -5834,7 +5944,8 @@
       "siteName": "Comet Mcnaught",
       "siteSize": "1H",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true
     },
     "868": {
       "x": 0.020185185185185184,
@@ -5873,7 +5984,8 @@
       "siteName": "19990Y",
       "siteSize": "2V",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true
     },
     "874": {
       "x": 0.02148148148148148,
@@ -5882,7 +5994,8 @@
       "siteName": "2002TX",
       "siteSize": "4D",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true
     },
     "875": {
       "x": 0.028148148148148148,
@@ -5901,10 +6014,11 @@
       "x": 0.06425925925925927,
       "y": 0.12544901906604033,
       "type": "site",
-      "siteName": "Hi\u0027iaka",
+      "siteName": "Hi'iaka",
       "siteSize": "4C",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true
     },
     "878": {
       "x": 0.017962962962962962,
@@ -5913,7 +6027,8 @@
       "siteName": "Namaka",
       "siteSize": "3C",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true
     },
     "879": {
       "x": 0.04722222222222222,
@@ -5930,7 +6045,9 @@
       "siteName": "Haumea",
       "siteSize": "7V",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true,
+      "spaceElevator": true
     },
     "881": {
       "x": 0.15314814814814814,
@@ -6280,7 +6397,8 @@
       "siteName": "Hathor",
       "siteSize": "1S",
       "siteWater": "1",
-      "solarMod": 0
+      "solarMod": 0,
+      "push": true
     },
     "938": {
       "x": 0.6014814814814815,
@@ -6970,7 +7088,9 @@
       "siteName": "Echedus",
       "siteSize": "2D",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true,
+      "centaur": true
     },
     "1050": {
       "x": 0.37574074074074076,
@@ -7028,7 +7148,8 @@
       "siteName": "Churyumov-Gerasimenko",
       "siteSize": "1C",
       "siteWater": "4",
-      "solarMod": -2
+      "solarMod": -2,
+      "astrobiology": true
     },
     "1059": {
       "x": 0.47685185185185186,
@@ -7270,7 +7391,9 @@
       "siteName": "Bee-Zed",
       "siteSize": "1H",
       "siteWater": "4",
-      "solarMod": -3
+      "solarMod": -3,
+      "synodic": "Red",
+      "astrobiology": true
     },
     "1096": {
       "x": 0.45537037037037037,
@@ -7610,7 +7733,9 @@
       "siteName": "Titan: Kraken Mare",
       "siteSize": "9V",
       "siteWater": "3",
-      "solarMod": -4
+      "solarMod": -4,
+      "submarine": true,
+      "atmospheric": true
     },
     "1149": {
       "x": 0.22314814814814815,
@@ -7619,7 +7744,9 @@
       "siteName": "Titan: Ontario Lacus",
       "siteSize": "9D",
       "siteWater": "2",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true,
+      "atmospheric": true
     },
     "1150": {
       "x": 0.23962962962962964,
@@ -7628,7 +7755,9 @@
       "siteName": "Titan Aerostat",
       "siteSize": "8C",
       "siteWater": "0",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true,
+      "atmospheric": true
     },
     "1151": {
       "x": 0.20166666666666666,
@@ -7866,7 +7995,9 @@
       "siteName": "Prometheus",
       "siteSize": "2C",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true,
+      "spaceElevator": true
     },
     "1188": {
       "x": 0.13518518518518519,
@@ -7875,7 +8006,9 @@
       "siteName": "Saturn Aerostat",
       "siteSize": "11H",
       "siteWater": "0",
-      "solarMod": -4
+      "solarMod": -4,
+      "atmospheric": true,
+      "spaceElevator": true
     },
     "1189": {
       "x": 0.15203703703703703,
@@ -7968,7 +8101,8 @@
       "siteName": "Pandora",
       "siteSize": "2C",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true
     },
     "1202": {
       "x": 0.16666666666666666,
@@ -7996,7 +8130,8 @@
       "siteName": "Janus",
       "siteSize": "2C",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true
     },
     "1206": {
       "x": 0.17685185185185184,
@@ -8029,7 +8164,8 @@
       "siteName": "Epimetheus",
       "siteSize": "2C",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true
     },
     "1211": {
       "x": 0.16777777777777778,
@@ -8056,7 +8192,8 @@
       "siteName": "Mimas",
       "siteSize": "4S",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "submarine": true
     },
     "1215": {
       "x": 0.105,
@@ -8841,7 +8978,8 @@
       "siteName": "Ultima-Thule",
       "siteSize": "1D",
       "siteWater": "4",
-      "solarMod": -4
+      "solarMod": -4,
+      "astrobiology": true
     },
     "1344": {
       "x": 0.055185185185185184,
@@ -9040,7 +9178,8 @@
       "siteName": "Bennu",
       "siteSize": "1C",
       "siteWater": "2",
-      "solarMod": 0
+      "solarMod": 0,
+      "push": true
     },
     "1376": {
       "x": 0.5651851851851852,
