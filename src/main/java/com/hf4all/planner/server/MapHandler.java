@@ -1,5 +1,6 @@
 package com.hf4all.planner.server;
 
+import com.hf4all.planner.config.Config;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 
@@ -19,7 +20,8 @@ public final class MapHandler implements HttpHandler {
 
         byte[] body = getJson();
         exchange.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
-        exchange.getResponseHeaders().set("Cache-Control", "public, max-age=86400");
+        exchange.getResponseHeaders().set("Cache-Control",
+                "public, max-age=" + Config.cacheMapSeconds());
         exchange.sendResponseHeaders(200, body.length);
         try (var os = exchange.getResponseBody()) {
             os.write(body);
@@ -28,8 +30,9 @@ public final class MapHandler implements HttpHandler {
 
     private synchronized byte[] getJson() throws IOException {
         if (cachedJson == null) {
-            try (InputStream is = getClass().getClassLoader().getResourceAsStream("data-hf4-v2.json")) {
-                if (is == null) throw new IOException("data-hf4-v2.json not found on classpath");
+            String resource = Config.mapResource();
+            try (InputStream is = getClass().getClassLoader().getResourceAsStream(resource)) {
+                if (is == null) throw new IOException(resource + " not found on classpath");
                 cachedJson = is.readAllBytes();
             }
         }

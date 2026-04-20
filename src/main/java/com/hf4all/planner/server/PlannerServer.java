@@ -1,5 +1,6 @@
 package com.hf4all.planner.server;
 
+import com.hf4all.planner.config.Config;
 import com.hf4all.planner.io.MapLoader;
 import com.hf4all.planner.model.SolarMap;
 import com.sun.net.httpserver.HttpServer;
@@ -28,14 +29,15 @@ public final class PlannerServer {
             throw new RuntimeException("Failed to bind to port " + port, e);
         }
 
-        server.createContext("/api/map", new MapHandler());
-        server.createContext("/api/traverse", new TraverseHandler(map));
-        server.createContext("/stop-hf4-planner", exchange -> {
+        server.createContext(Config.endpointMap(), new MapHandler());
+        server.createContext(Config.endpointTraverse(), new TraverseHandler(map));
+        server.createContext(Config.endpointConfig(), new ConfigHandler());
+        server.createContext(Config.endpointStop(), exchange -> {
             byte[] body = "Server stopping.".getBytes();
             exchange.sendResponseHeaders(200, body.length);
             try (var os = exchange.getResponseBody()) { os.write(body); }
             System.out.println("Stop requested. Shutting down...");
-            server.stop(1);
+            server.stop(Config.serverStopDelaySeconds());
         });
         server.createContext("/", new IndexHandler());
 

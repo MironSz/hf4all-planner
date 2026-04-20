@@ -2,6 +2,7 @@ package com.hf4all.planner.server;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
+import com.hf4all.planner.config.Config;
 import com.hf4all.planner.model.SolarMap;
 import com.hf4all.planner.pathfinder.Pathfinder;
 import com.hf4all.planner.server.dto.TraverseRequest;
@@ -26,7 +27,7 @@ public final class TraverseHandler implements HttpHandler {
     @Override
     public void handle(HttpExchange exchange) throws IOException {
         // CORS headers
-        exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+        exchange.getResponseHeaders().set("Access-Control-Allow-Origin", Config.corsAllowOrigin());
         exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "POST, OPTIONS");
         exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
 
@@ -66,8 +67,13 @@ public final class TraverseHandler implements HttpHandler {
         if (request == null) return "empty request";
         if (request.startNodeId() == null || request.startNodeId().isBlank()) return "startNodeId is required";
         if (request.engines() == null || request.engines().isEmpty()) return "at least one engine required";
-        if (request.engines().size() > 4) return "at most 4 engines allowed";
-        if (request.fuel() < 0 || request.fuel() > 40) return "fuel must be between 0 and 40";
+        int maxEngines = Config.requestMaxEngines();
+        if (request.engines().size() > maxEngines) return "at most " + maxEngines + " engines allowed";
+        int minFuel = Config.fuelMin();
+        int maxFuel = Config.requestMaxFuel();
+        if (request.fuel() < minFuel || request.fuel() > maxFuel) {
+            return "fuel must be between " + minFuel + " and " + maxFuel;
+        }
         return null;
     }
 

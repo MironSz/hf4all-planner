@@ -1,5 +1,6 @@
 package com.hf4all.planner.pathfinder;
 
+import com.hf4all.planner.config.Config;
 import com.hf4all.planner.model.MapNode;
 import com.hf4all.planner.model.SolarMap;
 import com.hf4all.planner.server.dto.*;
@@ -25,8 +26,8 @@ public final class Pathfinder {
     private final int maxFuel;
     private final boolean disableVenusFlyby;
 
-    private static final int MAX_TURNS = 24;
-    private static final int MAX_ITERATIONS = 5_000_000;
+    private static final int MAX_TURNS = Config.searchMaxTurns();
+    private static final int MAX_ITERATIONS = Config.searchMaxIterations();
 
     /** Canonical ordering for the priority queue and the per-node Pareto frontier. */
     private static final Comparator<SearchState> BY_COST =

@@ -1,5 +1,6 @@
 package com.hf4all.planner.server;
 
+import com.hf4all.planner.config.Config;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 
@@ -39,9 +40,10 @@ public final class IndexHandler implements HttpHandler {
 
         exchange.getResponseHeaders().set("Content-Type", contentType);
         if (path.endsWith(".html")) {
-            exchange.getResponseHeaders().set("Cache-Control", "no-cache");
+            exchange.getResponseHeaders().set("Cache-Control", Config.cacheHtml());
         } else {
-            exchange.getResponseHeaders().set("Cache-Control", "public, max-age=86400");
+            exchange.getResponseHeaders().set("Cache-Control",
+                    "public, max-age=" + Config.cacheAssetsSeconds());
         }
         exchange.sendResponseHeaders(200, body.length);
         try (var os = exchange.getResponseBody()) {
@@ -58,7 +60,7 @@ public final class IndexHandler implements HttpHandler {
     }
 
     private byte[] loadResource(String path) {
-        String resource = "static" + path;
+        String resource = Config.staticPrefix() + path;
         try (InputStream is = getClass().getClassLoader().getResourceAsStream(resource)) {
             if (is == null) throw new IOException(resource + " not found on classpath");
             return is.readAllBytes();

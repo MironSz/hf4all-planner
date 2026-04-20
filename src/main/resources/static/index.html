@@ -109,6 +109,23 @@ button:disabled { background: #555; cursor: not-allowed; }
 
 <script>
 (function() {
+    // --- Configuration (loaded from /api/config; falls back to inline defaults) ---
+    let CONFIG = {};
+    const cfgI = (k, d) => { const v = CONFIG[k]; return v != null ? parseInt(v)   : d; };
+    const cfgF = (k, d) => { const v = CONFIG[k]; return v != null ? parseFloat(v) : d; };
+
+    function applyConfigToForm() {
+        const fuel = document.getElementById('fuel');
+        fuel.value = cfgI('ui.fuel.default', 20);
+        fuel.min   = cfgI('ui.fuel.min', 0);
+        fuel.max   = cfgI('ui.fuel.max', 40);
+        const hyd = document.getElementById('hydration-min');
+        hyd.min = cfgI('ui.hydration.filter.min', 0);
+        hyd.max = cfgI('ui.hydration.filter.max', 4);
+        document.getElementById('search-suggestions').style.maxHeight =
+                cfgI('ui.search.suggestions.max.height', 220) + 'px';
+    }
+
     // --- State ---
     let mapData = null;
     let selectedNode = null;    // starting node id
@@ -175,7 +192,7 @@ button:disabled { background: #555; cursor: not-allowed; }
                         id,
                         label: name ? `${name}  [${p.type}]` : `${id.substring(0, 14)}  [${p.type}]`
                     });
-                    if (matches.length >= 20) break;
+                    if (matches.length >= cfgI('ui.search.max.results', 20)) break;
                 }
             }
             suggestions = matches;
@@ -188,7 +205,7 @@ button:disabled { background: #555; cursor: not-allowed; }
             if (!p || !zoomBehavior || !zoomSel) return;
             // Center the view on the target node. translateTo operates on
             // content coordinates (pre-zoom), so we pass the node's image pos.
-            zoomSel.transition().duration(400)
+            zoomSel.transition().duration(cfgI('ui.zoom.transition.ms', 400))
                 .call(zoomBehavior.translateTo, p.x * imgW, p.y * imgH);
         }
 
@@ -206,7 +223,7 @@ button:disabled { background: #555; cursor: not-allowed; }
         input.addEventListener('focus', updateSuggestions);
         input.addEventListener('blur', () => {
             // Delay hide so mousedown on a row can still fire
-            setTimeout(() => { list.style.display = 'none'; }, 150);
+            setTimeout(() => { list.style.display = 'none'; }, cfgI('ui.search.blur.delay.ms', 150));
         });
         input.addEventListener('keydown', (e) => {
             if (e.key === 'ArrowDown') {
@@ -236,34 +253,41 @@ button:disabled { background: #555; cursor: not-allowed; }
     const mainEl = document.getElementById('main');
     const container = document.getElementById('map-container');
 
-    // --- Load map data, then load image ---
-    fetch('/api/map')
+    // --- Load config, then map data, then image ---
+    fetch('/api/config')
         .then(r => r.json())
-        .then(data => {
-            mapData = data;
-            document.getElementById('status').textContent = 'Loading map image...';
-            addEngineBlock();
-            // Load image after data is ready
-            bgImg.onload = () => initCanvas();
-            bgImg.onerror = () => {
-                document.getElementById('status').textContent = 'Image failed to load. Using plain canvas.';
-                initCanvas();
-            };
-            bgImg.src = '/hf4.jpg';
-        })
-        .catch(err => {
-            document.getElementById('status').textContent = 'Failed to load map: ' + err;
+        .then(cfg => { CONFIG = cfg; })
+        .catch(err => { console.warn('Config load failed; using defaults:', err); })
+        .finally(() => {
+            applyConfigToForm();
+            fetch('/api/map')
+                .then(r => r.json())
+                .then(data => {
+                    mapData = data;
+                    document.getElementById('status').textContent = 'Loading map image...';
+                    addEngineBlock();
+                    // Load image after data is ready
+                    bgImg.onload = () => initCanvas();
+                    bgImg.onerror = () => {
+                        document.getElementById('status').textContent = 'Image failed to load. Using plain canvas.';
+                        initCanvas();
+                    };
+                    bgImg.src = '/hf4.jpg';
+                })
+                .catch(err => {
+                    document.getElementById('status').textContent = 'Failed to load map: ' + err;
+                });
         });
 
     // --- Canvas setup ---
     function initCanvas() {
-        imgW = bgImg.naturalWidth || 5000;
-        imgH = bgImg.naturalHeight || 5000;
+        imgW = bgImg.naturalWidth  || cfgI('ui.image.fallback.width',  5000);
+        imgH = bgImg.naturalHeight || cfgI('ui.image.fallback.height', 5000);
         canvas.width = imgW;
         canvas.height = imgH;
 
         const z = d3.zoom()
-            .scaleExtent([0.1, 1.5])
+            .scaleExtent([cfgF('ui.zoom.min', 0.1), cfgF('ui.zoom.max', 1.5)])
             .translateExtent([[0, 0], [imgW, imgH]])
             .filter((event) => !event.ctrlKey && !event.button)
             .on('zoom', (event) => {
@@ -274,7 +298,9 @@ button:disabled { background: #555; cursor: not-allowed; }
         zoomBehavior = z;
         zoomSel = d3.select(container);
         zoomSel.call(z)
-            .call(z.translateTo, 0.85 * imgW, 0.80 * imgH);
+            .call(z.translateTo,
+                  cfgF('ui.viewport.initial.x.ratio', 0.85) * imgW,
+                  cfgF('ui.viewport.initial.y.ratio', 0.80) * imgH);
 
         canvas.addEventListener('click', onCanvasClick);
         canvas.addEventListener('mousemove', onCanvasMouseMove);
@@ -306,7 +332,7 @@ button:disabled { background: #555; cursor: not-allowed; }
 
         // If we already have a start + routes, clicking pins an endpoint
         if (selectedNode && reachableNodes) {
-            const epId = findNearest(event.offsetX, event.offsetY, 40, reachableNodes);
+            const epId = findNearest(event.offsetX, event.offsetY, cfgI('ui.node.click.radius', 40), reachableNodes);
             if (epId) {
                 pinnedEndpoint = epId;
                 selectedRouteIndex = 0;
@@ -319,7 +345,7 @@ button:disabled { background: #555; cursor: not-allowed; }
         }
 
         // No start yet — select start node
-        const nodeId = findNearest(event.offsetX, event.offsetY, 20);
+        const nodeId = findNearest(event.offsetX, event.offsetY, cfgI('ui.start.node.click.radius', 20));
         if (!nodeId) return;
 
         selectedNode = nodeId;
@@ -411,7 +437,7 @@ button:disabled { background: #555; cursor: not-allowed; }
     function onCanvasMouseMove(event) {
         let needsDraw = false;
         if (mapData && reachableNodes) {
-            const nodeId = findNearest(event.offsetX, event.offsetY, 40, reachableNodes);
+            const nodeId = findNearest(event.offsetX, event.offsetY, cfgI('ui.node.click.radius', 40), reachableNodes);
             if (nodeId !== hoveredNode) {
                 hoveredNode = nodeId;
                 needsDraw = true;
@@ -420,7 +446,7 @@ button:disabled { background: #555; cursor: not-allowed; }
             }
         }
         if (debugMode && mapData) {
-            const dbgId = findNearest(event.offsetX, event.offsetY, 20);
+            const dbgId = findNearest(event.offsetX, event.offsetY, cfgI('ui.start.node.click.radius', 20));
             if (dbgId !== debugHoveredNode) {
                 debugHoveredNode = dbgId;
                 needsDraw = true;
@@ -562,7 +588,8 @@ button:disabled { background: #555; cursor: not-allowed; }
         const raw = (hydrationInput.value || '').trim();
         const hasHydration = raw !== '';
         const minHydration = hasHydration
-                ? Math.max(0, Math.min(4, parseInt(raw) || 0))
+                ? Math.max(cfgI('ui.hydration.filter.min', 0),
+                           Math.min(cfgI('ui.hydration.filter.max', 4), parseInt(raw) || 0))
                 : null;
         const active = types.size > 0 || hasHydration;
         return { active, types, minHydration };
@@ -619,7 +646,7 @@ button:disabled { background: #555; cursor: not-allowed; }
                 const p = points[nodeId];
                 if (!p) continue;
                 ctx.beginPath();
-                ctx.arc(p.x * imgW, p.y * imgH, 6, 0, Math.PI * 2);
+                ctx.arc(p.x * imgW, p.y * imgH, cfgI('ui.reachable.indicator.radius', 6), 0, Math.PI * 2);
                 ctx.fillStyle = 'rgba(46, 204, 113, 0.6)';
                 ctx.fill();
                 ctx.strokeStyle = 'white';
@@ -639,7 +666,7 @@ button:disabled { background: #555; cursor: not-allowed; }
                 if (!p || p.type !== 'site') continue;
                 if (!siteMatchesFilter(p, filter)) continue;
                 ctx.beginPath();
-                ctx.arc(p.x * imgW, p.y * imgH, 42, 0, Math.PI * 2);
+                ctx.arc(p.x * imgW, p.y * imgH, cfgI('ui.filter.ring.radius', 42), 0, Math.PI * 2);
                 ctx.fillStyle = 'rgba(46, 204, 113, 0.25)';
                 ctx.fill();
                 ctx.strokeStyle = 'rgba(46, 204, 113, 1.0)';
@@ -687,8 +714,8 @@ button:disabled { background: #555; cursor: not-allowed; }
                     if (!entry.turns.includes(turn)) entry.turns.push(turn);
                 }
 
-                const lineWidth = 8;
-                const spacing = 9; // perpendicular gap between parallel lines
+                const lineWidth = cfgI('ui.route.line.width', 8);
+                const spacing = cfgI('ui.route.line.spacing', 9); // perpendicular gap between parallel lines
                 ctx.lineWidth = lineWidth;
                 for (const { a, b, turns } of segmentsByEdge.values()) {
                     const pa = points[a];
@@ -717,7 +744,7 @@ button:disabled { background: #555; cursor: not-allowed; }
                 // A "segment" is a contiguous run of moves using the same engine.
                 // Label the start node of each such run with "Engine N" (1-based).
                 ctx.save();
-                ctx.font = 'bold 14px monospace';
+                ctx.font = 'bold ' + cfgI('ui.engine.label.font.px', 14) + 'px monospace';
                 ctx.textAlign = 'left';
                 ctx.textBaseline = 'bottom';
                 let lastEngine = -2; // -1 is the root sentinel; use -2 so first move always triggers a label
@@ -838,12 +865,15 @@ button:disabled { background: #555; cursor: not-allowed; }
         blocks.forEach((block, i) => {
             block.querySelector('h3').textContent = 'Engine ' + (i + 1);
         });
-        document.getElementById('add-engine').disabled = blocks.length >= 4;
+        document.getElementById('add-engine').disabled = blocks.length >= cfgI('ui.engines.max', 4);
     }
 
     function addEngineBlock() {
         const blocks = document.querySelectorAll('.engine-block');
-        if (blocks.length >= 4) return;
+        if (blocks.length >= cfgI('ui.engines.max', 4)) return;
+        const thrustDef = cfgI('ui.engine.thrust.default', 3);
+        const fuelDef   = cfgI('ui.engine.fuel.default', 2);
+        const pivotsDef = cfgI('ui.engine.pivots.default', 0);
         const div = document.createElement('div');
         div.className = 'engine-block';
         div.innerHTML = `
@@ -852,11 +882,11 @@ button:disabled { background: #555; cursor: not-allowed; }
                 <button class="e-remove" style="padding:2px 8px;font-size:11px;margin:0">X</button>
             </div>
             <div class="engine-row">
-                <div><label>Thrust:</label><input type="number" class="e-thrust" value="3" min="0" max="20"></div>
-                <div><label>Fuel/burn:</label><input type="number" class="e-fuel" value="2" min="0" max="20"></div>
+                <div><label>Thrust:</label><input type="number" class="e-thrust" value="${thrustDef}" min="0" max="20"></div>
+                <div><label>Fuel/burn:</label><input type="number" class="e-fuel" value="${fuelDef}" min="0" max="20"></div>
             </div>
             <div class="engine-row">
-                <div><label>Pivots:</label><input type="number" class="e-pivots" value="0" min="0" max="5"></div>
+                <div><label>Pivots:</label><input type="number" class="e-pivots" value="${pivotsDef}" min="0" max="5"></div>
                 <div><label><input type="checkbox" class="e-solar">Solar</label></div>
             </div>
         `;
