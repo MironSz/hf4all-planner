@@ -1191,23 +1191,33 @@ button:disabled { background: #555; cursor: not-allowed; }
                 }
 
                 // --- Engine-segment labels ---
-                // A "segment" is a contiguous run of moves using the same engine.
-                // Label the start node of each such run with "Engine N" (1-based).
+                // A "segment" is a contiguous run of moves within a single turn
+                // using the same engine. Each new turn starts a fresh segment
+                // (the ship resets its burn budget), so a label is drawn at
+                // every turn boundary AND at every engine switch, not only at
+                // the start of the trip.
                 ctx.save();
                 ctx.font = 'bold ' + cfgI('ui.engine.label.font.px', 14) + 'px monospace';
                 ctx.textAlign = 'left';
                 ctx.textBaseline = 'bottom';
                 let lastEngine = -2; // -1 is the root sentinel; use -2 so first move always triggers a label
+                let lastTurn   = -1;
+                const drawnAt  = new Set(); // dedupe labels that land on the same map node
                 for (let i = 1; i < pathNodes.length; i++) {
-                    const ei = pathNodes[i].engineIndex;
-                    if (ei === lastEngine) continue;
+                    const ei   = pathNodes[i].engineIndex;
+                    const turn = pathNodes[i].turns;
+                    const engineChanged = ei !== lastEngine;
+                    const turnChanged   = turn !== lastTurn;
                     lastEngine = ei;
+                    lastTurn   = turn;
+                    if (!engineChanged && !turnChanged) continue;
                     if (ei < 0) continue;
-                    // Anchor the label to the node at the START of this segment
-                    // (the path node just before this move).
                     const anchor = pathNodes[i - 1];
                     const p = points[anchor.nodeId];
                     if (!p) continue;
+                    const key = anchor.nodeId + '|' + ei + '|' + turn;
+                    if (drawnAt.has(key)) continue;
+                    drawnAt.add(key);
                     const lx = p.x * imgW + 10;
                     const ly = p.y * imgH - 10;
                     const label = 'Engine ' + (ei + 1);
