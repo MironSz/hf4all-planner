@@ -202,6 +202,61 @@ class MapScenarioScanner {
     @Test
     void printNeighboursOf40() { printNeighboursOf("40"); }
 
+    @Test
+    void printFlybysNearLanderBurns() {
+        SolarMap m = map();
+        for (MapNode n : m.allNodes()) {
+            if (n.type() != NodeType.FLYBY && n.type() != NodeType.VENUS) continue;
+            // Two-hop search to see if any lander is within distance 2
+            for (MapNode adj1 : m.neighboursOf(n)) {
+                if (adj1.isBurn() && !adj1.landing().isZero()) {
+                    System.out.printf("FLYBY->LANDER direct flyby=%s boost=%d lander=%s thrReq=%d%n",
+                            n.id(), n.flybyBoost(), adj1.id(), adj1.thrustRequired());
+                }
+                for (MapNode adj2 : m.neighboursOf(adj1)) {
+                    if (adj2.isBurn() && !adj2.landing().isZero()) {
+                        System.out.printf("FLYBY->%s->LANDER flyby=%s via=%s(%s) lander=%s thrReq=%d%n",
+                                adj1.type(), n.id(), adj1.id(), adj1.type(),
+                                adj2.id(), adj2.thrustRequired());
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    void printNeighboursOfSphere0_39() { printNeighboursOf("39"); }
+
+    @Test
+    void printRadhazVariance() {
+        java.util.Set<Integer> values = new java.util.TreeSet<>();
+        for (MapNode n : map().allNodes()) {
+            if (n.radiation() > 0) values.add(n.radiation());
+        }
+        System.out.println("distinct radiation values on map: " + values);
+    }
+
+    @Test
+    void printConsecutiveFlybys() {
+        SolarMap m = map();
+        for (MapNode n : m.allNodes()) {
+            if (n.type() != NodeType.FLYBY && n.type() != NodeType.VENUS) continue;
+            for (MapNode adj1 : m.neighboursOf(n)) {
+                if (adj1.isFlyby()) {
+                    System.out.printf("FLYBY-FLYBY direct %s(%d) <-> %s(%d)%n",
+                            n.id(), n.flybyBoost(), adj1.id(), adj1.flybyBoost());
+                }
+                for (MapNode adj2 : m.neighboursOf(adj1)) {
+                    if (adj2.isFlyby() && !adj2.equals(n)) {
+                        System.out.printf("FLYBY-%s-FLYBY %s(%d) via %s(%s) <-> %s(%d)%n",
+                                adj1.type(), n.id(), n.flybyBoost(), adj1.id(), adj1.type(),
+                                adj2.id(), adj2.flybyBoost());
+                    }
+                }
+            }
+        }
+    }
+
     private static void printNeighboursOf(String id) {
         SolarMap m = map();
         MapNode center = m.nodeById(id);

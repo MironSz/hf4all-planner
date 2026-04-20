@@ -97,4 +97,102 @@ class BurnAndPivotRulesTest {
         assertTrue(costs.contains("0|2|0|0"),
                 "loiter-then-leave should reach Hohmann 6 with 0 fuel on turn 2; got " + costs);
     }
+
+    /**
+     * H5d — entering a burn that costs more fuel than remains is blocked.
+     * From 334 with {@code fuelConsumption=2} and {@code fuel=1}, the burn
+     * node "257" must not be reachable (would require paying 2 fuel).
+     */
+    @Test
+    void fuelExhaustionPreventsBurn() {
+        SolarMap sub = MapSubgraph.extract(fullMap, "334", 2);
+
+        EngineSpec engine = new EngineSpec(3, 2, false, 0);
+        TraverseResponse r = traverse(sub, "334", engine, 1);
+
+        assertEquals("ok", r.status());
+        assertFalse(reached(r, "257"),
+                "burn 257 must not be reachable with only 1 fuel (burn costs 2)");
+    }
+
+    /**
+     * Parametric check: endpoint fuel at burn 257 scales linearly with
+     * {@code engine.fuelConsumption()} — 1-burn entry pays exactly the
+     * per-burn cost, no coefficients or rounding.
+     */
+    @Test
+    void fuelCostScalesWithConsumption() {
+        SolarMap sub = MapSubgraph.extract(fullMap, "334", 2);
+
+        for (int cost : new int[] { 1, 2, 3, 5 }) {
+            EngineSpec engine = new EngineSpec(3, cost, false, 0);
+            TraverseResponse r = traverse(sub, "334", engine, FUEL_DEFAULT);
+            assertEquals("ok", r.status());
+            String expected = cost + "|1|0|0";
+            assertTrue(costVectorsAt(r, "257").contains(expected),
+                    "fuelConsumption=" + cost + " should reach 257 with cost "
+                            + expected + "; got " + costVectorsAt(r, "257"));
+        }
+    }
+
+    /**
+     * H4c — pivoting at a Hohmann costs 2 burns; a thrust=1 engine only has
+     * 1 burn per turn and must not be able to pivot. At Hohmann 5, starting
+     * at lagrange 1 (dir=2) cannot reach Hohmann 6 (requires dir=1 exit).
+     */
+    @Test
+    void pivotBlockedWhenThrustLow() {
+        SolarMap sub = MapSubgraph.extract(fullMap, "5", 2);
+
+        EngineSpec engine = new EngineSpec(1, 2, false, 0);
+        TraverseResponse r = traverse(sub, "1", engine, FUEL_DEFAULT);
+
+        assertEquals("ok", r.status());
+        // With thrust=1, loiter-and-leave still reaches 6 on turn 2 at 0 fuel.
+        // The direct turn-1 pivot branch (cost 4|1|0|0) must NOT exist.
+        Set<String> costs = costVectorsAt(r, "6");
+        assertFalse(costs.contains("4|1|0|0"),
+                "thrust=1 must not be able to pivot at Hohmann 5 on turn 1; got " + costs);
+    }
+
+    /**
+     * H4c (bonus pivots) — an engine configured with {@code bonusPivots=1}
+     * gets one free pivot per turn, making the first direction change at a
+     * Hohmann cost 0 fuel. At Hohmann 5, reaching Hohmann 6 from lagrange 1
+     * would cost 4 fuel via paid-burn pivot; with a bonus pivot, cost is 0
+     * on turn 1.
+     */
+    @Test
+    void bonusPivotOverridesCost() {
+        SolarMap sub = MapSubgraph.extract(fullMap, "5", 2);
+
+        EngineSpec engine = new EngineSpec(3, 2, false, 1);
+        TraverseResponse r = traverse(sub, "1", engine, FUEL_DEFAULT);
+
+        assertEquals("ok", r.status());
+        assertTrue(costVectorsAt(r, "6").contains("0|1|0|0"),
+                "bonus pivot should let us reach Hohmann 6 with 0 fuel on turn 1; "
+                        + "got " + costVectorsAt(r, "6"));
+    }
+
+    /**
+     * H4c (straight-through) — crossing a Hohmann without changing direction
+     * costs no fuel. At Hohmann 5, entering from 6 (dir=1) and leaving
+     * toward dec 1412 (also dir=1) is a straight-through: the path 6→5→1412
+     * happens entirely in turn 1 at 0 fuel. 1412 is decorative, so we assert
+     * that a non-decorative node two hops past 5 in the same direction is
+     * reached at fuel=0 on turn 1. That node is Hohmann 16 (1412→16).
+     */
+    @Test
+    void straightThroughHohmannCostsNothing() {
+        SolarMap sub = MapSubgraph.extract(fullMap, "5", 3);
+
+        EngineSpec engine = new EngineSpec(3, 2, false, 0);
+        TraverseResponse r = traverse(sub, "6", engine, FUEL_DEFAULT);
+
+        assertEquals("ok", r.status());
+        assertTrue(costVectorsAt(r, "16").contains("0|1|0|0"),
+                "straight-through 6→5→1412→16 (dir=1 throughout) should cost 0 fuel; "
+                        + "got " + costVectorsAt(r, "16"));
+    }
 }

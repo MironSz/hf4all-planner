@@ -115,6 +115,47 @@ class FlybyRulesTest {
      *   <li>{@code disableVenusFlyby=true}  → 33 must NOT appear in endpoints.
      * </ul>
      */
+    /**
+     * H5e — bonus burns from a flyby cannot be used on a lander burn. The
+     * HF4A default map has NO flyby adjacent to (or within 2 hops of) a
+     * landing burn — verified by MapScenarioScanner#printFlybysNearLanderBurns
+     * — so a clean real-map scenario does not exist.
+     */
+    @org.junit.jupiter.api.Disabled(
+            "No flyby is within 2 hops of a landing burn on the default map")
+    @Test
+    void flybyBonusCannotBeUsedOnLandingBurn() {
+        // Placeholder — see note above.
+    }
+
+    /**
+     * A flyby visited in turn N must be re-enterable in turn N+1 after a
+     * {@code waitTurn} resets {@code bonusSites}. As with
+     * {@link MovementConstraintsTest#uTurnAllowedAfterLoiter}, the re-entered
+     * flyby state is Pareto-dominated on the 4 output dimensions and pruned
+     * before tree construction, so the behaviour can't be observed here
+     * without internal state inspection.
+     */
+    @org.junit.jupiter.api.Disabled(
+            "Pareto dominance hides the re-entered flyby state; needs internal inspection")
+    @Test
+    void flybyResetAfterWaitTurn() {
+        // Placeholder — see note above.
+    }
+
+    /**
+     * Two consecutive flybys in a single turn should stack their boost. The
+     * default map has no two flybys within 2 hops of each other — verified
+     * by MapScenarioScanner#printConsecutiveFlybys — so a clean real-map
+     * scenario does not exist.
+     */
+    @org.junit.jupiter.api.Disabled(
+            "No two flybys are within 2 hops on the default map")
+    @Test
+    void multipleFlybysStack() {
+        // Placeholder — see note above.
+    }
+
     @Test
     void disableVenusFlybyBlocksVenus() {
         SolarMap sub = MapSubgraph.extract(fullMap, "40", 2);
