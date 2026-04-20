@@ -41,6 +41,18 @@ button:disabled { background: #555; cursor: not-allowed; }
 .route-arrow:hover { background: #1e4a7a; color: #fff; }
 #route-arrow-left  { border-radius: 4px 0 0 4px; }
 #route-arrow-right { border-radius: 0 4px 4px 0; }
+#tab-strip { display: flex; align-items: center; gap: 4px; margin: -16px -16px 4px -16px; padding: 6px 8px; background: #0a1a30; border-bottom: 1px solid #333; }
+#tab-list { flex: 1; display: flex; gap: 2px; overflow-x: auto; min-width: 0; }
+#tab-list::-webkit-scrollbar { height: 4px; }
+#tab-list::-webkit-scrollbar-thumb { background: #333; }
+.tab { background: #0f3460; border: 1px solid #222; border-radius: 4px; padding: 3px 4px 3px 8px; cursor: pointer; font-size: 11px; display: flex; align-items: center; gap: 4px; white-space: nowrap; user-select: none; color: #aaa; }
+.tab:hover { background: #143359; color: #ddd; }
+.tab.active { background: #16213e; color: #7ec8e3; border-color: #555; }
+.tab .tab-label { max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+.tab .tab-action { color: #888; cursor: pointer; padding: 0 3px; font-size: 12px; line-height: 1; border-radius: 2px; }
+.tab .tab-action:hover { color: #fff; background: #1e4a7a; }
+#new-tab { padding: 2px 8px; background: #0f3460; color: #7ec8e3; border: 1px solid #555; border-radius: 4px; cursor: pointer; font-size: 14px; line-height: 1; margin: 0; flex: 0 0 auto; }
+#new-tab:hover { background: #1b3a70; color: #fff; }
 </style>
 </head>
 <body>
@@ -55,6 +67,11 @@ button:disabled { background: #555; cursor: not-allowed; }
     </div>
 </div>
 <div id="sidebar">
+    <div id="tab-strip">
+        <div id="tab-list"></div>
+        <button id="new-tab" type="button" title="New tab">+</button>
+    </div>
+
     <h2>HF4A Mission Planner</h2>
 
     <div id="search-box" style="position:relative;">
@@ -143,17 +160,338 @@ button:disabled { background: #555; cursor: not-allowed; }
     let zoomBehavior = null;
     let zoomSel = null;
 
+    // =====================================================================
+    // Tabs — multi-plan support.
+    //
+    // Each tab owns its own inputs (fuel, engines, filters, ...) plus its
+    // interactive state (selected start, pinned endpoint, route index, zoom
+    // transform, last traverseResult). The sidebar form DOM is shared across
+    // tabs; switching a tab snapshots the previous tab's DOM into its state
+    // and rewrites the DOM from the new tab's state. The shared canvas is
+    // re-drawn from the new tab's traverseResult.
+    // =====================================================================
+    const TABS_STORAGE_KEY     = 'hf4a-tabs';
+    const TABS_STORAGE_VERSION = 1;
+
+    let tabs = [];
+    let activeTab = null;
+    let tabSeq = 1;             // monotonic id source
+    let pendingFetchToken = 0;  // bumped on tab switch to discard stale fetches
+    let suppressFire = false;   // skip fireTraverse during DOM rebuilds
+    let tabsReady = false;      // gate snapshots until first activate
+
+    function makeDefaultTabState() {
+        return {
+            fuel: cfgI('ui.fuel.default', 20),
+            engines: [{
+                netThrust:        cfgI('ui.engine.thrust.default', 3),
+                fuelConsumption:  cfgI('ui.engine.fuel.default',   2),
+                solarPowered:     false,
+                bonusPivots:      cfgI('ui.engine.pivots.default', 0),
+            }],
+            disableVenusFlyby: false,
+            debug:             false,
+            siteFilter:        { types: [], minHydration: '' },
+            searchQuery:       '',
+            selectedNode:      null,
+            pinnedEndpoint:    null,
+            selectedRouteIndex: 0,
+            zoomTransform:     null,   // {x,y,k} or null = use default viewport
+            traverseResult:    null,
+        };
+    }
+
+    function makeTab(name, state) {
+        return {
+            id: 'tab-' + (tabSeq++),
+            name: name || 'Tab',
+            state: state || makeDefaultTabState(),
+        };
+    }
+
+    // Pull current DOM + module-level state into the active tab's state object.
+    function snapshotActiveTabFromDom() {
+        if (!activeTab || !tabsReady) return;
+        const s = activeTab.state;
+        s.fuel = parseInt(document.getElementById('fuel').value) || 0;
+        s.engines = [];
+        document.querySelectorAll('.engine-block').forEach(b => {
+            s.engines.push({
+                netThrust:       parseInt(b.querySelector('.e-thrust').value) || 0,
+                fuelConsumption: parseInt(b.querySelector('.e-fuel').value)   || 0,
+                solarPowered:    b.querySelector('.e-solar').checked,
+                bonusPivots:     parseInt(b.querySelector('.e-pivots').value) || 0,
+            });
+        });
+        s.disableVenusFlyby = document.getElementById('no-venus-cb').checked;
+        s.debug             = document.getElementById('debug-cb').checked;
+        const types = [];
+        document.querySelectorAll('.site-type-cb').forEach(cb => { if (cb.checked) types.push(cb.value); });
+        s.siteFilter = {
+            types,
+            minHydration: document.getElementById('hydration-min').value,
+        };
+        s.searchQuery       = document.getElementById('search-input').value;
+        s.selectedNode      = selectedNode;
+        s.pinnedEndpoint    = pinnedEndpoint;
+        s.selectedRouteIndex = selectedRouteIndex;
+        s.traverseResult    = traverseResult;
+        if (zoomSel && zoomBehavior) {
+            const t = d3.zoomTransform(zoomSel.node());
+            s.zoomTransform = { x: t.x, y: t.y, k: t.k };
+        }
+    }
+
+    function renderStartLabel(nodeId) {
+        const p = mapData && mapData.points && mapData.points[nodeId];
+        if (!p) return 'Start: ' + nodeId;
+        let info = nodeId.substring(0, 8) + '... (' + (p.type || '?') + ')';
+        if (p.siteName) info = p.siteName + ' (' + p.type + ')';
+        return 'Start: ' + info;
+    }
+
+    // Push the active tab's state into the DOM + module-level vars + canvas.
+    function renderActiveTabToDom() {
+        if (!activeTab) return;
+        const s = activeTab.state;
+
+        document.getElementById('fuel').value          = s.fuel;
+        document.getElementById('no-venus-cb').checked = !!s.disableVenusFlyby;
+        document.getElementById('debug-cb').checked    = !!s.debug;
+        debugMode = !!s.debug;
+        document.getElementById('search-input').value  = s.searchQuery || '';
+        document.getElementById('hydration-min').value = (s.siteFilter && s.siteFilter.minHydration) || '';
+        const ft = (s.siteFilter && s.siteFilter.types) || [];
+        document.querySelectorAll('.site-type-cb').forEach(cb => {
+            cb.checked = ft.indexOf(cb.value) >= 0;
+        });
+
+        // Rebuild engine blocks without firing traverse for each
+        document.getElementById('engines-container').innerHTML = '';
+        suppressFire = true;
+        const enginesToRender = (s.engines && s.engines.length > 0) ? s.engines : [null];
+        enginesToRender.forEach(eng => addEngineBlock(eng));
+        suppressFire = false;
+
+        selectedNode       = s.selectedNode || null;
+        pinnedEndpoint     = s.pinnedEndpoint || null;
+        selectedRouteIndex = s.selectedRouteIndex || 0;
+        hoveredNode        = null;
+        traverseResult     = s.traverseResult || null;
+        treeIndex          = (traverseResult && traverseResult.tree) ? buildTreeIndex(traverseResult.tree) : null;
+        if (!traverseResult) reachableNodes = null;
+
+        document.getElementById('node-info').textContent = selectedNode
+            ? renderStartLabel(selectedNode)
+            : 'Click a node on the map to select start';
+        document.getElementById('status').textContent = traverseResult
+            ? ((traverseResult.endpoints ? Object.keys(traverseResult.endpoints).length : 0)
+                + ' sites reachable.')
+            : '';
+
+        // Restore zoom (or use the configured initial viewport for fresh tabs)
+        if (zoomSel && zoomBehavior && imgW) {
+            if (s.zoomTransform) {
+                zoomSel.call(zoomBehavior.transform,
+                    d3.zoomIdentity
+                        .translate(s.zoomTransform.x, s.zoomTransform.y)
+                        .scale(s.zoomTransform.k));
+            } else {
+                zoomSel.call(zoomBehavior.translateTo,
+                    cfgF('ui.viewport.initial.x.ratio', 0.85) * imgW,
+                    cfgF('ui.viewport.initial.y.ratio', 0.80) * imgH);
+            }
+        }
+
+        draw();
+        updateRouteInfo();
+        updateDebugRoute();
+
+        // If the tab has a start node but no cached results, plan now.
+        if (selectedNode && !traverseResult) {
+            fireTraverse();
+        }
+    }
+
+    function activateTab(tab) {
+        if (activeTab === tab) return;
+        if (activeTab && tabsReady) snapshotActiveTabFromDom();
+        activeTab = tab;
+        pendingFetchToken++; // discard any in-flight fetch from prior tab
+        if (mapData && imgW) renderActiveTabToDom();
+        renderTabStrip();
+        persistTabs();
+    }
+
+    function newTab() {
+        if (activeTab && tabsReady) snapshotActiveTabFromDom();
+        const tab = makeTab('Tab ' + (tabs.length + 1));
+        tabs.push(tab);
+        activateTab(tab);
+    }
+
+    function duplicateTab(srcTab) {
+        if (srcTab === activeTab && tabsReady) snapshotActiveTabFromDom();
+        const cloned = JSON.parse(JSON.stringify(srcTab.state));
+        const tab = makeTab(srcTab.name + ' copy', cloned);
+        const idx = tabs.indexOf(srcTab);
+        tabs.splice(idx + 1, 0, tab);
+        activateTab(tab);
+    }
+
+    function closeTab(tab) {
+        const idx = tabs.indexOf(tab);
+        if (idx < 0) return;
+        if (tabs.length === 1) {
+            // Replace with a blank rather than leaving zero tabs
+            const fresh = makeTab('Tab 1');
+            tabs[0] = fresh;
+            activeTab = null;
+            activateTab(fresh);
+            return;
+        }
+        tabs.splice(idx, 1);
+        if (tab === activeTab) {
+            const next = tabs[Math.min(idx, tabs.length - 1)];
+            activeTab = null;
+            activateTab(next);
+        } else {
+            renderTabStrip();
+            persistTabs();
+        }
+    }
+
+    function renameTab(tab, name) {
+        if (!name || !name.trim()) return;
+        tab.name = name.trim().substring(0, 30);
+        renderTabStrip();
+        persistTabs();
+    }
+
+    function renderTabStrip() {
+        const list = document.getElementById('tab-list');
+        list.innerHTML = '';
+        tabs.forEach(tab => {
+            const el = document.createElement('div');
+            el.className = 'tab' + (tab === activeTab ? ' active' : '');
+            el.title = tab.name + ' — double-click to rename, middle-click to close';
+
+            const label = document.createElement('span');
+            label.className = 'tab-label';
+            label.textContent = tab.name;
+            label.addEventListener('click',     () => activateTab(tab));
+            label.addEventListener('dblclick', (e) => {
+                e.stopPropagation();
+                const name = prompt('Rename tab:', tab.name);
+                if (name != null) renameTab(tab, name);
+            });
+            el.appendChild(label);
+
+            const dup = document.createElement('span');
+            dup.className = 'tab-action';
+            dup.textContent = '⎘';
+            dup.title = 'Duplicate tab';
+            dup.addEventListener('click', (e) => { e.stopPropagation(); duplicateTab(tab); });
+            el.appendChild(dup);
+
+            const close = document.createElement('span');
+            close.className = 'tab-action';
+            close.textContent = '×';
+            close.title = 'Close tab';
+            close.addEventListener('click', (e) => { e.stopPropagation(); closeTab(tab); });
+            el.appendChild(close);
+
+            // Middle-click anywhere on the tab also closes it.
+            el.addEventListener('mousedown', (e) => {
+                if (e.button === 1) { e.preventDefault(); closeTab(tab); }
+            });
+
+            list.appendChild(el);
+        });
+    }
+
+    // ----- Persistence -----
+    let persistDebounce = null;
+    function persistTabs() {
+        clearTimeout(persistDebounce);
+        persistDebounce = setTimeout(() => {
+            if (tabsReady) snapshotActiveTabFromDom();
+            const payload = {
+                version: TABS_STORAGE_VERSION,
+                activeTabId: activeTab ? activeTab.id : null,
+                tabs: tabs.map(t => ({ id: t.id, name: t.name, state: t.state })),
+            };
+            try {
+                localStorage.setItem(TABS_STORAGE_KEY, JSON.stringify(payload));
+            } catch (err) {
+                // QuotaExceeded is the realistic failure here. Drop traverseResult
+                // (the heaviest field) and retry once before giving up.
+                console.warn('Persisting tabs failed; dropping cached results:', err);
+                try {
+                    const lite = {
+                        version: TABS_STORAGE_VERSION,
+                        activeTabId: payload.activeTabId,
+                        tabs: payload.tabs.map(t => ({
+                            id: t.id, name: t.name,
+                            state: Object.assign({}, t.state, { traverseResult: null }),
+                        })),
+                    };
+                    localStorage.setItem(TABS_STORAGE_KEY, JSON.stringify(lite));
+                } catch (err2) {
+                    console.warn('Persisting tabs (lite) failed:', err2);
+                }
+            }
+        }, 200);
+    }
+
+    function loadTabsFromStorage() {
+        try {
+            const raw = localStorage.getItem(TABS_STORAGE_KEY);
+            if (!raw) return null;
+            const data = JSON.parse(raw);
+            if (!data || data.version !== TABS_STORAGE_VERSION) return null;
+            if (!Array.isArray(data.tabs) || data.tabs.length === 0) return null;
+            tabs = data.tabs.map(t => {
+                const def = makeDefaultTabState();
+                const state = Object.assign(def, t.state || {});
+                const id = t.id || ('tab-' + (tabSeq++));
+                const m = /tab-(\d+)/.exec(id);
+                if (m) tabSeq = Math.max(tabSeq, parseInt(m[1]) + 1);
+                return { id, name: t.name || 'Tab', state };
+            });
+            return data.activeTabId;
+        } catch (err) {
+            console.warn('Loading tabs failed; starting fresh:', err);
+            return null;
+        }
+    }
+
+    function initTabs() {
+        const savedActive = loadTabsFromStorage();
+        if (tabs.length === 0) {
+            tabs.push(makeTab('Tab 1'));
+        }
+        const target = tabs.find(t => t.id === savedActive) || tabs[0];
+        activeTab = null;
+        tabsReady = true;
+        activateTab(target);
+    }
+
+    document.getElementById('new-tab').addEventListener('click', newTab);
+
     document.getElementById('debug-cb').addEventListener('change', (e) => {
         debugMode = e.target.checked;
         draw();
         updateDebugRoute();
         updateRouteInfo();
+        persistTabs();
     });
 
     // Toggling Venus-flyby-disable re-plans the current start, so the new
     // routing constraint takes effect without the user having to click again.
     document.getElementById('no-venus-cb').addEventListener('change', () => {
         if (selectedNode) fireTraverse();
+        persistTabs();
     });
 
     // --- Search box: filter sites by name or id, focus map on pick ---
@@ -265,12 +603,13 @@ button:disabled { background: #555; cursor: not-allowed; }
                 .then(data => {
                     mapData = data;
                     document.getElementById('status').textContent = 'Loading map image...';
-                    addEngineBlock();
-                    // Load image after data is ready
-                    bgImg.onload = () => initCanvas();
+                    // Tabs are initialized after initCanvas() so the zoom transform
+                    // can be restored as part of the first activateTab().
+                    bgImg.onload = () => { initCanvas(); initTabs(); };
                     bgImg.onerror = () => {
                         document.getElementById('status').textContent = 'Image failed to load. Using plain canvas.';
                         initCanvas();
+                        initTabs();
                     };
                     bgImg.src = '/hf4.jpg';
                 })
@@ -293,6 +632,10 @@ button:disabled { background: #555; cursor: not-allowed; }
             .on('zoom', (event) => {
                 const {x, y, k} = event.transform;
                 mainEl.style.transform = `translate(${x}px,${y}px) scale(${k})`;
+                // User-driven pan/zoom updates the active tab's transform.
+                // sourceEvent is null when we set the transform programmatically
+                // during tab activation — skip those to avoid persistence churn.
+                if (event.sourceEvent && tabsReady) persistTabs();
             });
 
         zoomBehavior = z;
@@ -339,6 +682,7 @@ button:disabled { background: #555; cursor: not-allowed; }
                 draw();
                 updateDebugRoute();
                 updateRouteInfo();
+                persistTabs();
                 return;
             }
             return; // click on nothing — ignore (ESC to clear)
@@ -470,6 +814,7 @@ button:disabled { background: #555; cursor: not-allowed; }
             draw();
             updateDebugRoute();
             updateRouteInfo();
+            persistTabs();
             return;
         }
         const active = getActiveEndpoint();
@@ -483,12 +828,14 @@ button:disabled { background: #555; cursor: not-allowed; }
             draw();
             updateDebugRoute();
             updateRouteInfo();
+            persistTabs();
         } else if (e.key === 'ArrowLeft') {
             selectedRouteIndex = (selectedRouteIndex - 1 + ids.length) % ids.length;
             if (!pinnedEndpoint) { pinnedEndpoint = active; }
             draw();
             updateDebugRoute();
             updateRouteInfo();
+            persistTabs();
         }
     });
 
@@ -543,6 +890,7 @@ button:disabled { background: #555; cursor: not-allowed; }
         draw();
         updateDebugRoute();
         updateRouteInfo();
+        persistTabs();
     }
     document.getElementById('route-arrow-left')
             .addEventListener('click', () => cycleRoute(-1));
@@ -836,6 +1184,12 @@ button:disabled { background: #555; cursor: not-allowed; }
 
         document.getElementById('status').textContent = 'Planning routes...';
 
+        // Capture the tab + token at fire time. If the user switches tabs before
+        // the response arrives, we discard it so the new tab isn't overwritten
+        // and stale results don't get cached into the originating tab either.
+        const tabAtFire = activeTab;
+        const tokenAtFire = ++pendingFetchToken;
+
         fetch('/api/traverse', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -843,6 +1197,10 @@ button:disabled { background: #555; cursor: not-allowed; }
         })
         .then(r => r.json())
         .then(data => {
+            if (tokenAtFire !== pendingFetchToken || activeTab !== tabAtFire) {
+                console.log('Traverse response discarded (tab switched)');
+                return;
+            }
             console.log('Traverse response:', data.status,
                 'tree nodes:', data.tree ? 'yes' : 'no',
                 'endpoints:', data.endpoints ? Object.keys(data.endpoints).length : 0);
@@ -852,8 +1210,10 @@ button:disabled { background: #555; cursor: not-allowed; }
             const routeCount = data.endpoints ? Object.keys(data.endpoints).length : 0;
             document.getElementById('status').textContent = routeCount + ' sites reachable. Hover to see routes. [' + data.status + ']';
             draw();
+            persistTabs();
         })
         .catch(err => {
+            if (tokenAtFire !== pendingFetchToken || activeTab !== tabAtFire) return;
             console.error('Traverse error:', err);
             document.getElementById('status').textContent = 'Error: ' + err;
         });
@@ -868,12 +1228,16 @@ button:disabled { background: #555; cursor: not-allowed; }
         document.getElementById('add-engine').disabled = blocks.length >= cfgI('ui.engines.max', 4);
     }
 
-    function addEngineBlock() {
+    // initial: optional {netThrust, fuelConsumption, solarPowered, bonusPivots}.
+    // When called from a tab restore, suppressFire is true so we don't fire a
+    // traverse for every engine block being rebuilt.
+    function addEngineBlock(initial) {
         const blocks = document.querySelectorAll('.engine-block');
         if (blocks.length >= cfgI('ui.engines.max', 4)) return;
-        const thrustDef = cfgI('ui.engine.thrust.default', 3);
-        const fuelDef   = cfgI('ui.engine.fuel.default', 2);
-        const pivotsDef = cfgI('ui.engine.pivots.default', 0);
+        const thrustDef = (initial && initial.netThrust       != null) ? initial.netThrust       : cfgI('ui.engine.thrust.default', 3);
+        const fuelDef   = (initial && initial.fuelConsumption != null) ? initial.fuelConsumption : cfgI('ui.engine.fuel.default',   2);
+        const pivotsDef = (initial && initial.bonusPivots     != null) ? initial.bonusPivots     : cfgI('ui.engine.pivots.default', 0);
+        const solarDef  = !!(initial && initial.solarPowered);
         const div = document.createElement('div');
         div.className = 'engine-block';
         div.innerHTML = `
@@ -887,31 +1251,36 @@ button:disabled { background: #555; cursor: not-allowed; }
             </div>
             <div class="engine-row">
                 <div><label>Pivots:</label><input type="number" class="e-pivots" value="${pivotsDef}" min="0" max="5"></div>
-                <div><label><input type="checkbox" class="e-solar">Solar</label></div>
+                <div><label><input type="checkbox" class="e-solar"${solarDef ? ' checked' : ''}>Solar</label></div>
             </div>
         `;
         div.querySelector('.e-remove').addEventListener('click', () => {
             div.remove();
             renumberEngines();
             fireTraverse();
+            persistTabs();
         });
         div.querySelectorAll('input').forEach(inp => {
-            inp.addEventListener('change', fireTraverse);
+            inp.addEventListener('change', () => { fireTraverse(); persistTabs(); });
         });
         document.getElementById('engines-container').appendChild(div);
         renumberEngines();
-        fireTraverse();
+        if (!suppressFire) fireTraverse();
     }
 
-    document.getElementById('add-engine').addEventListener('click', addEngineBlock);
-    document.getElementById('fuel').addEventListener('change', fireTraverse);
+    document.getElementById('add-engine').addEventListener('click', () => {
+        addEngineBlock();
+        persistTabs();
+    });
+    document.getElementById('fuel').addEventListener('change', () => { fireTraverse(); persistTabs(); });
 
     // Site filter controls — redraw only (no re-traverse, since the filter is
     // purely a visual overlay on already-computed endpoints).
     document.querySelectorAll('.site-type-cb').forEach(cb => {
-        cb.addEventListener('change', draw);
+        cb.addEventListener('change', () => { draw(); persistTabs(); });
     });
-    document.getElementById('hydration-min').addEventListener('input', draw);
+    document.getElementById('hydration-min').addEventListener('input', () => { draw(); persistTabs(); });
+    document.getElementById('search-input').addEventListener('input', persistTabs);
 })();
 </script>
 </body>
