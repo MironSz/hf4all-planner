@@ -37,7 +37,7 @@ class BurnAndPivotRulesTest {
     void burnCostsOneFuelUnit() {
         SolarMap sub = MapSubgraph.extract(fullMap, "334", 4);
 
-        EngineSpec engine = new EngineSpec(3, 2, false, 0);
+        EngineSpec engine = new EngineSpec(5, 2, false, 0);
         TraverseResponse r = traverse(sub, "334", engine, FUEL_DEFAULT);
 
         assertEquals("ok", r.status());
@@ -65,7 +65,7 @@ class BurnAndPivotRulesTest {
 
         // thrust 3 gives enough burns to cover the pivot (2 burns);
         // fuelConsumption 2 means the pivot costs 4 fuel.
-        EngineSpec engine = new EngineSpec(3, 2, false, 0);
+        EngineSpec engine = new EngineSpec(5, 2, false, 0);
         TraverseResponse r = traverse(sub, "1", engine, FUEL_DEFAULT);
 
         assertEquals("ok", r.status());
@@ -88,7 +88,7 @@ class BurnAndPivotRulesTest {
     void loiterFreeOnHohmann() {
         SolarMap sub = MapSubgraph.extract(fullMap, "5", 2);
 
-        EngineSpec engine = new EngineSpec(3, 2, false, 0);
+        EngineSpec engine = new EngineSpec(5, 2, false, 0);
         TraverseResponse r = traverse(sub, "1", engine, FUEL_DEFAULT);
 
         assertEquals("ok", r.status());
@@ -100,19 +100,22 @@ class BurnAndPivotRulesTest {
 
     /**
      * H5d — entering a burn that costs more fuel than remains is blocked.
-     * From 334 with {@code fuelConsumption=2} and {@code fuel=1}, the burn
-     * node "257" must not be reachable (would require paying 2 fuel).
+     * Uses a fuelConsumption that exceeds the strip's fuel-step budget at
+     * (DRY_DEFAULT=4, fuel=1): stepsBetween(4,5)=3, so a burn costing 4 is
+     * unaffordable. (The original "fuel=1 < cost=2" framing assumed the
+     * old flat-budget model where 1 tank = 1 step.)
      */
     @Test
     void fuelExhaustionPreventsBurn() {
         SolarMap sub = MapSubgraph.extract(fullMap, "334", 2);
 
-        EngineSpec engine = new EngineSpec(3, 2, false, 0);
+        EngineSpec engine = new EngineSpec(5, 4, false, 0);
         TraverseResponse r = traverse(sub, "334", engine, 1);
 
         assertEquals("ok", r.status());
         assertFalse(reached(r, "257"),
-                "burn 257 must not be reachable with only 1 fuel (burn costs 2)");
+                "burn 257 must not be reachable: fuel-steps available = 3 (Dry 4 → Wet 5), "
+                + "burn cost = 4, so H5d should block the entry");
     }
 
     /**
@@ -125,7 +128,7 @@ class BurnAndPivotRulesTest {
         SolarMap sub = MapSubgraph.extract(fullMap, "334", 2);
 
         for (int cost : new int[] { 1, 2, 3, 5 }) {
-            EngineSpec engine = new EngineSpec(3, cost, false, 0);
+            EngineSpec engine = new EngineSpec(5, cost, false, 0);
             TraverseResponse r = traverse(sub, "334", engine, FUEL_DEFAULT);
             assertEquals("ok", r.status());
             String expected = cost + "|1|0|0";
@@ -144,7 +147,7 @@ class BurnAndPivotRulesTest {
     void pivotBlockedWhenThrustLow() {
         SolarMap sub = MapSubgraph.extract(fullMap, "5", 2);
 
-        EngineSpec engine = new EngineSpec(1, 2, false, 0);
+        EngineSpec engine = new EngineSpec(3, 2, false, 0);
         TraverseResponse r = traverse(sub, "1", engine, FUEL_DEFAULT);
 
         assertEquals("ok", r.status());
@@ -166,7 +169,7 @@ class BurnAndPivotRulesTest {
     void bonusPivotOverridesCost() {
         SolarMap sub = MapSubgraph.extract(fullMap, "5", 2);
 
-        EngineSpec engine = new EngineSpec(3, 2, false, 1);
+        EngineSpec engine = new EngineSpec(5, 2, false, 1);
         TraverseResponse r = traverse(sub, "1", engine, FUEL_DEFAULT);
 
         assertEquals("ok", r.status());
@@ -187,7 +190,7 @@ class BurnAndPivotRulesTest {
     void straightThroughHohmannCostsNothing() {
         SolarMap sub = MapSubgraph.extract(fullMap, "5", 3);
 
-        EngineSpec engine = new EngineSpec(3, 2, false, 0);
+        EngineSpec engine = new EngineSpec(5, 2, false, 0);
         TraverseResponse r = traverse(sub, "6", engine, FUEL_DEFAULT);
 
         assertEquals("ok", r.status());

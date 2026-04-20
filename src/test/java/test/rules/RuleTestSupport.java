@@ -16,17 +16,26 @@ import java.util.*;
  */
 final class RuleTestSupport {
 
-    /** Common low-thrust engine used when the test doesn't care about thrust specifics. */
-    static final EngineSpec ENGINE_LOW   = new EngineSpec(3, 2, false, 0);
-    /** Engine capable of powered landings on any mid-sized site. */
-    static final EngineSpec ENGINE_HIGH  = new EngineSpec(11, 2, false, 0);
+    /**
+     * Common low-thrust engine used when the test doesn't care about thrust
+     * specifics. {@code baseThrust=5} compensates for the default loadout's
+     * Tug-class -2 modifier so that net thrust = 3, matching the values
+     * these tests were originally calibrated against.
+     */
+    static final EngineSpec ENGINE_LOW   = new EngineSpec(5, 2, false, 0);
+    /** Engine capable of powered landings on mid-sized sites (net thrust 11 at Tug). */
+    static final EngineSpec ENGINE_HIGH  = new EngineSpec(13, 2, false, 0);
+
+    /** Default Dry Mass for tests that don't care about specific weight class. */
+    static final int DRY_DEFAULT  = 4;
+    /** Default fuel (water tanks loaded). With DRY_DEFAULT this gives Wet 24 (Tug class). */
     static final int FUEL_DEFAULT = 20;
 
     private RuleTestSupport() {}
 
     static TraverseResponse traverse(SolarMap map, String startId,
                                      List<EngineSpec> engines, int fuel) {
-        return Pathfinder.traverse(map, new TraverseRequest(startId, engines, fuel));
+        return Pathfinder.traverse(map, new TraverseRequest(startId, engines, DRY_DEFAULT, fuel));
     }
 
     static TraverseResponse traverse(SolarMap map, String startId, EngineSpec engine, int fuel) {

@@ -53,12 +53,16 @@ button:disabled { background: #555; cursor: not-allowed; }
 .tab .tab-action:hover { color: #fff; background: #1e4a7a; }
 #new-tab { padding: 2px 8px; background: #0f3460; color: #7ec8e3; border: 1px solid #555; border-radius: 4px; cursor: pointer; font-size: 14px; line-height: 1; margin: 0; flex: 0 0 auto; }
 #new-tab:hover { background: #1b3a70; color: #fff; }
+#copy-route-btn { display: none; margin-top: 6px; padding: 2px 8px; background: #143359; color: #7ec8e3; border: 1px solid #555; border-radius: 3px; cursor: pointer; font-family: monospace; font-size: 11px; line-height: 1; }
+#copy-route-btn:hover { background: #1e4a7a; color: #fff; }
+#copy-route-btn.copied { background: #1a5b2a; color: #b0f0b0; border-color: #2e7a3e; }
 </style>
 </head>
 <body>
 <div id="debug-toggle">
     <input type="checkbox" id="debug-cb"><label for="debug-cb">Debug</label>
     <input type="checkbox" id="no-venus-cb" style="margin-left:12px;"><label for="no-venus-cb">Disable Venus flyby</label>
+    <input type="checkbox" id="allow-jettison-cb" style="margin-left:12px;" checked><label for="allow-jettison-cb">Allow fuel jettison</label>
 </div>
 <div id="map-container">
     <div id="main">
@@ -91,13 +95,20 @@ button:disabled { background: #555; cursor: not-allowed; }
             <div id="route-info-cost"></div>
             <div id="route-info-haz"></div>
             <div id="route-info-id" style="color:#888;font-size:11px;margin-top:4px;display:none;"></div>
+            <button id="copy-route-btn" type="button" title="Copy full route details to clipboard">Copy route</button>
         </div>
         <div id="route-arrow-right" class="route-arrow" style="display:none;">►</div>
     </div>
 
-    <div>
-        <label>Starting Fuel (0-40):</label>
-        <input type="number" id="fuel" value="20" min="0" max="40">
+    <div class="engine-row">
+        <div>
+            <label>Dry Mass (1-23):</label>
+            <input type="number" id="dry-mass" value="4" min="1" max="23">
+        </div>
+        <div>
+            <label>Fuel (0-31):</label>
+            <input type="number" id="fuel" value="15" min="0" max="31">
+        </div>
     </div>
 
     <div id="engines-container"></div>
@@ -131,11 +142,48 @@ button:disabled { background: #555; cursor: not-allowed; }
     const cfgI = (k, d) => { const v = CONFIG[k]; return v != null ? parseInt(v)   : d; };
     const cfgF = (k, d) => { const v = CONFIG[k]; return v != null ? parseFloat(v) : d; };
 
+    // HF4A fuel strip intervals: indexed by Wet Mass position N, the value is
+    // the number of black-line fuel steps between WM N and WM N+1. Matches
+    // FuelStrip.INTERVALS on the backend. Indices 0 and 32 are unused.
+    const FUEL_STRIP_INTERVALS = [
+        0,                          // 0 (unused)
+        9, 6, 4, 3, 3,              //  1↔2 ..  5↔6
+        2, 2, 2, 2, 2,              //  6↔7 .. 10↔11
+        1, 1, 1, 1, 1, 1, 1, 1, 1,  // 11↔12 .. 19↔20
+        1, 1, 1, 1, 1, 1, 1, 1, 1,  // 20↔21 .. 28↔29
+        1, 1, 1                     // 29↔30 .. 31↔32
+    ];
+
+    // Express `fuelSteps` remaining above `dryMass` as a position on the fuel
+    // strip: "integer wet-mass jumps above dry" + "fraction of the current
+    // interval". Produces text like "5/9", "1 2/6", "3" — matching how the
+    // player reads the printed fuel strip.
+    function formatFuelOnStrip(dryMass, fuelSteps) {
+        let remaining = fuelSteps;
+        let pos = Math.max(1, dryMass | 0);
+        let complete = 0;
+        while (pos < 32 && remaining >= FUEL_STRIP_INTERVALS[pos]) {
+            remaining -= FUEL_STRIP_INTERVALS[pos];
+            complete++;
+            pos++;
+        }
+        const size = pos < 32 ? FUEL_STRIP_INTERVALS[pos] : 1;
+        let display;
+        if (remaining === 0)     display = String(complete);
+        else if (complete === 0) display = remaining + '/' + size;
+        else                     display = complete + ' ' + remaining + '/' + size;
+        return display + ' (' + fuelSteps + ' fuel steps total)';
+    }
+
     function applyConfigToForm() {
         const fuel = document.getElementById('fuel');
-        fuel.value = cfgI('ui.fuel.default', 20);
+        fuel.value = cfgI('ui.fuel.default', 15);
         fuel.min   = cfgI('ui.fuel.min', 0);
-        fuel.max   = cfgI('ui.fuel.max', 40);
+        fuel.max   = cfgI('ui.fuel.max', 31);
+        const dry = document.getElementById('dry-mass');
+        dry.value = cfgI('ui.dry.mass.default', 4);
+        dry.min   = cfgI('ui.dry.mass.min', 1);
+        dry.max   = cfgI('ui.dry.mass.max', 23);
         const hyd = document.getElementById('hydration-min');
         hyd.min = cfgI('ui.hydration.filter.min', 0);
         hyd.max = cfgI('ui.hydration.filter.max', 4);
@@ -182,14 +230,16 @@ button:disabled { background: #555; cursor: not-allowed; }
 
     function makeDefaultTabState() {
         return {
-            fuel: cfgI('ui.fuel.default', 20),
+            dryMass: cfgI('ui.dry.mass.default', 4),
+            fuel: cfgI('ui.fuel.default', 15),
             engines: [{
-                netThrust:        cfgI('ui.engine.thrust.default', 3),
+                baseThrust:       cfgI('ui.engine.thrust.default', 3),
                 fuelConsumption:  cfgI('ui.engine.fuel.default',   2),
                 solarPowered:     false,
                 bonusPivots:      cfgI('ui.engine.pivots.default', 0),
             }],
             disableVenusFlyby: false,
+            allowFuelJettison: true,
             debug:             false,
             siteFilter:        { types: [], minHydration: '' },
             searchQuery:       '',
@@ -213,17 +263,19 @@ button:disabled { background: #555; cursor: not-allowed; }
     function snapshotActiveTabFromDom() {
         if (!activeTab || !tabsReady) return;
         const s = activeTab.state;
+        s.dryMass = parseInt(document.getElementById('dry-mass').value) || 0;
         s.fuel = parseInt(document.getElementById('fuel').value) || 0;
         s.engines = [];
         document.querySelectorAll('.engine-block').forEach(b => {
             s.engines.push({
-                netThrust:       parseInt(b.querySelector('.e-thrust').value) || 0,
+                baseThrust:      parseInt(b.querySelector('.e-base-thrust').value) || 0,
                 fuelConsumption: parseInt(b.querySelector('.e-fuel').value)   || 0,
                 solarPowered:    b.querySelector('.e-solar').checked,
                 bonusPivots:     parseInt(b.querySelector('.e-pivots').value) || 0,
             });
         });
         s.disableVenusFlyby = document.getElementById('no-venus-cb').checked;
+        s.allowFuelJettison = document.getElementById('allow-jettison-cb').checked;
         s.debug             = document.getElementById('debug-cb').checked;
         const types = [];
         document.querySelectorAll('.site-type-cb').forEach(cb => { if (cb.checked) types.push(cb.value); });
@@ -255,8 +307,10 @@ button:disabled { background: #555; cursor: not-allowed; }
         if (!activeTab) return;
         const s = activeTab.state;
 
+        document.getElementById('dry-mass').value      = (s.dryMass != null) ? s.dryMass : cfgI('ui.dry.mass.default', 4);
         document.getElementById('fuel').value          = s.fuel;
-        document.getElementById('no-venus-cb').checked = !!s.disableVenusFlyby;
+        document.getElementById('no-venus-cb').checked       = !!s.disableVenusFlyby;
+        document.getElementById('allow-jettison-cb').checked = (s.allowFuelJettison !== false);
         document.getElementById('debug-cb').checked    = !!s.debug;
         debugMode = !!s.debug;
         document.getElementById('search-input').value  = s.searchQuery || '';
@@ -490,6 +544,11 @@ button:disabled { background: #555; cursor: not-allowed; }
     // Toggling Venus-flyby-disable re-plans the current start, so the new
     // routing constraint takes effect without the user having to click again.
     document.getElementById('no-venus-cb').addEventListener('change', () => {
+        if (selectedNode) fireTraverse();
+        persistTabs();
+    });
+
+    document.getElementById('allow-jettison-cb').addEventListener('change', () => {
         if (selectedNode) fireTraverse();
         persistTabs();
     });
@@ -860,16 +919,22 @@ button:disabled { background: #555; cursor: not-allowed; }
         const routeLabel = treeNodeIds.length > 1
                 ? `  [${idx + 1}/${treeNodeIds.length}]` : '';
         document.getElementById('route-info-name').textContent = name + routeLabel;
+        const dry = parseInt(document.getElementById('dry-mass').value) || cfgI('ui.dry.mass.default', 4);
         document.getElementById('route-info-cost').textContent =
-                'fuel: ' + endNode.fuelSpent + '  turns: ' + endNode.turns;
+                'fuel: ' + endNode.fuelSpent
+                + '  left: ' + formatFuelOnStrip(dry, endNode.fuelStepsRemaining)
+                + '  turns: ' + endNode.turns;
         document.getElementById('route-info-haz').textContent =
                 'haz: ' + endNode.hazards + '  rad: ' + endNode.worstRadRoll;
         const idEl = document.getElementById('route-info-id');
+        const copyBtn = document.getElementById('copy-route-btn');
         if (debugMode) {
             idEl.textContent = 'id: ' + active;
             idEl.style.display = 'block';
+            copyBtn.style.display = 'inline-block';
         } else {
             idEl.style.display = 'none';
+            copyBtn.style.display = 'none';
         }
         panel.style.display = 'flex';
         const showArrows = treeNodeIds.length > 1;
@@ -897,15 +962,13 @@ button:disabled { background: #555; cursor: not-allowed; }
     document.getElementById('route-arrow-right')
             .addEventListener('click', () => cycleRoute(+1));
 
-    function updateDebugRoute() {
-        const el = document.getElementById('debug-route');
+    // Builds the textual route dump rendered in the debug panel and copied to
+    // the clipboard. Returns null when there's no active endpoint.
+    function buildRouteDetailText() {
         const active = getActiveEndpoint();
-        if (!debugMode || !active) {
-            el.style.display = 'none';
-            return;
-        }
+        if (!active) return null;
         const treeNodeIds = getTreeNodeIds(active);
-        if (!treeNodeIds || treeNodeIds.length === 0) { el.style.display = 'none'; return; }
+        if (!treeNodeIds || treeNodeIds.length === 0) return null;
         const idx = getActiveRouteIndex();
         const pathNodes = getPathToRoot(treeNodeIds[idx]);
 
@@ -918,8 +981,47 @@ button:disabled { background: #555; cursor: not-allowed; }
                     ? ` e${n.engineIndex + 1}` : '';
             return `${i}) ${name} [${type}] t${n.turns} f${n.fuelSpent} h${n.hazards} r${n.worstRadRoll}${eng}`;
         });
-        el.textContent = header + '\n' + lines.join('\n');
+        return header + '\n' + lines.join('\n');
+    }
+
+    function updateDebugRoute() {
+        const el = document.getElementById('debug-route');
+        if (!debugMode) { el.style.display = 'none'; return; }
+        const text = buildRouteDetailText();
+        if (text == null) { el.style.display = 'none'; return; }
+        el.textContent = text;
         el.style.display = 'block';
+    }
+
+    // Copy-to-clipboard button (only shown in debug mode alongside route-info).
+    document.getElementById('copy-route-btn').addEventListener('click', () => {
+        const btn = document.getElementById('copy-route-btn');
+        const text = buildRouteDetailText();
+        if (text == null) return;
+        const onOk = () => {
+            const orig = btn.textContent;
+            btn.textContent = 'Copied!';
+            btn.classList.add('copied');
+            setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1200);
+        };
+        // navigator.clipboard is unavailable over plain http from non-localhost
+        // origins; fall back to a hidden textarea + execCommand.
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(onOk).catch(() => fallbackCopy(text, onOk));
+        } else {
+            fallbackCopy(text, onOk);
+        }
+    });
+
+    function fallbackCopy(text, onOk) {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); onOk(); } catch {}
+        document.body.removeChild(ta);
     }
 
     // --- Site filter ---
@@ -1117,6 +1219,32 @@ button:disabled { background: #555; cursor: not-allowed; }
                 }
                 ctx.restore();
 
+                // --- Jettison labels ---
+                // Each PathNode that started its turn with a fuel jettison
+                // gets a red "Jettison N" badge anchored to that node. The
+                // turn-start sits at the same map position as the previous
+                // turn's last node, so we anchor to the path node itself
+                // (offset below the engine label to avoid overlap).
+                ctx.save();
+                ctx.font = 'bold ' + cfgI('ui.engine.label.font.px', 14) + 'px monospace';
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'top';
+                for (let i = 0; i < pathNodes.length; i++) {
+                    const j = pathNodes[i].jettisonedHere;
+                    if (!j || j <= 0) continue;
+                    const p = points[pathNodes[i].nodeId];
+                    if (!p) continue;
+                    const lx = p.x * imgW + 10;
+                    const ly = p.y * imgH + 4;
+                    const label = 'Jettison ' + j;
+                    const w = ctx.measureText(label).width;
+                    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+                    ctx.fillRect(lx - 3, ly - 2, w + 6, 18);
+                    ctx.fillStyle = '#ff6b6b';
+                    ctx.fillText(label, lx, ly);
+                }
+                ctx.restore();
+
                 // Route info is rendered into the sidebar (above fuel input),
                 // not onto the canvas. See updateRouteInfo().
             }
@@ -1163,10 +1291,12 @@ button:disabled { background: #555; cursor: not-allowed; }
         const engines = [];
         document.querySelectorAll('.engine-block').forEach(block => {
             engines.push({
-                netThrust: parseInt(block.querySelector('.e-thrust').value) || 0,
-                fuelConsumption: parseInt(block.querySelector('.e-fuel').value) || 0,
+                baseThrust: parseInt(block.querySelector('.e-base-thrust').value) || 0,
+                fuelConsumptionNum: parseInt(block.querySelector('.e-fuel').value) || 0,
+                fuelConsumptionDen: 1,
                 solarPowered: block.querySelector('.e-solar').checked,
-                bonusPivots: parseInt(block.querySelector('.e-pivots').value) || 0
+                bonusPivots: parseInt(block.querySelector('.e-pivots').value) || 0,
+                afterburnFuelCost: 0
             });
         });
 
@@ -1178,8 +1308,10 @@ button:disabled { background: #555; cursor: not-allowed; }
         const request = {
             startNodeId: selectedNode,
             engines: engines,
+            dryMass: parseInt(document.getElementById('dry-mass').value) || 0,
             fuel: parseInt(document.getElementById('fuel').value) || 0,
-            disableVenusFlyby: document.getElementById('no-venus-cb').checked
+            disableVenusFlyby: document.getElementById('no-venus-cb').checked,
+            allowFuelJettison: document.getElementById('allow-jettison-cb').checked
         };
 
         document.getElementById('status').textContent = 'Planning routes...';
@@ -1189,6 +1321,9 @@ button:disabled { background: #555; cursor: not-allowed; }
         // and stale results don't get cached into the originating tab either.
         const tabAtFire = activeTab;
         const tokenAtFire = ++pendingFetchToken;
+        // Client-measured round-trip time (network + server); we don't block
+        // on the server producing its own measurement.
+        const startedAt = performance.now();
 
         fetch('/api/traverse', {
             method: 'POST',
@@ -1208,7 +1343,13 @@ button:disabled { background: #555; cursor: not-allowed; }
             treeIndex = data.tree ? buildTreeIndex(data.tree) : null;
             console.log('Tree index built, entries:', treeIndex ? Object.keys(treeIndex).length : 0);
             const routeCount = data.endpoints ? Object.keys(data.endpoints).length : 0;
-            document.getElementById('status').textContent = routeCount + ' sites reachable. Hover to see routes. [' + data.status + ']';
+            const elapsedMs = performance.now() - startedAt;
+            const elapsedStr = elapsedMs < 1000
+                    ? Math.round(elapsedMs) + ' ms'
+                    : (elapsedMs / 1000).toFixed(1) + ' s';
+            document.getElementById('status').textContent =
+                    routeCount + ' reachable sites found in ' + elapsedStr
+                    + '. Hover to see routes. [' + data.status + ']';
             draw();
             persistTabs();
         })
@@ -1228,13 +1369,15 @@ button:disabled { background: #555; cursor: not-allowed; }
         document.getElementById('add-engine').disabled = blocks.length >= cfgI('ui.engines.max', 4);
     }
 
-    // initial: optional {netThrust, fuelConsumption, solarPowered, bonusPivots}.
+    // initial: optional {baseThrust, fuelConsumption, solarPowered, bonusPivots}.
     // When called from a tab restore, suppressFire is true so we don't fire a
     // traverse for every engine block being rebuilt.
     function addEngineBlock(initial) {
         const blocks = document.querySelectorAll('.engine-block');
         if (blocks.length >= cfgI('ui.engines.max', 4)) return;
-        const thrustDef = (initial && initial.netThrust       != null) ? initial.netThrust       : cfgI('ui.engine.thrust.default', 3);
+        const thrustDef = (initial && initial.baseThrust      != null) ? initial.baseThrust
+                        : (initial && initial.netThrust       != null) ? initial.netThrust
+                        : cfgI('ui.engine.thrust.default', 3);
         const fuelDef   = (initial && initial.fuelConsumption != null) ? initial.fuelConsumption : cfgI('ui.engine.fuel.default',   2);
         const pivotsDef = (initial && initial.bonusPivots     != null) ? initial.bonusPivots     : cfgI('ui.engine.pivots.default', 0);
         const solarDef  = !!(initial && initial.solarPowered);
@@ -1246,7 +1389,7 @@ button:disabled { background: #555; cursor: not-allowed; }
                 <button class="e-remove" style="padding:2px 8px;font-size:11px;margin:0">X</button>
             </div>
             <div class="engine-row">
-                <div><label>Thrust:</label><input type="number" class="e-thrust" value="${thrustDef}" min="0" max="20"></div>
+                <div><label>Base Thrust:</label><input type="number" class="e-base-thrust" value="${thrustDef}" min="0" max="20"></div>
                 <div><label>Fuel/burn:</label><input type="number" class="e-fuel" value="${fuelDef}" min="0" max="20"></div>
             </div>
             <div class="engine-row">
@@ -1273,6 +1416,7 @@ button:disabled { background: #555; cursor: not-allowed; }
         persistTabs();
     });
     document.getElementById('fuel').addEventListener('change', () => { fireTraverse(); persistTabs(); });
+    document.getElementById('dry-mass').addEventListener('change', () => { fireTraverse(); persistTabs(); });
 
     // Site filter controls — redraw only (no re-traverse, since the filter is
     // purely a visual overlay on already-computed endpoints).

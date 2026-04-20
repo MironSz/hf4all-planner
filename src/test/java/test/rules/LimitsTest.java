@@ -37,7 +37,7 @@ class LimitsTest {
     void maxTurnsBudgetRespected() {
         SolarMap sub = MapSubgraph.extract(fullMap, "334", 8);
 
-        EngineSpec engine = new EngineSpec(3, 2, false, 0);
+        EngineSpec engine = new EngineSpec(5, 2, false, 0);
         TraverseResponse r = traverse(sub, "334", engine, FUEL_DEFAULT);
         assertEquals("ok", r.status());
 
@@ -54,7 +54,7 @@ class LimitsTest {
     void maxFuelBudgetRespected() {
         SolarMap sub = MapSubgraph.extract(fullMap, "334", 4);
 
-        EngineSpec engine = new EngineSpec(3, 2, false, 0);
+        EngineSpec engine = new EngineSpec(5, 2, false, 0);
         int fuel = 5;
         TraverseResponse r = traverse(sub, "334", engine, fuel);
         assertEquals("ok", r.status());

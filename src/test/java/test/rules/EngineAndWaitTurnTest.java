@@ -41,7 +41,7 @@ class EngineAndWaitTurnTest {
     void waitTurnResetsPerTurnResources() {
         SolarMap sub = MapSubgraph.extract(fullMap, "334", 5);
 
-        EngineSpec engine = new EngineSpec(1, 2, false, 0);
+        EngineSpec engine = new EngineSpec(3, 2, false, 0);
         TraverseResponse r = traverse(sub, "334", engine, FUEL_DEFAULT);
         assertEquals("ok", r.status());
 
@@ -60,9 +60,9 @@ class EngineAndWaitTurnTest {
     void engineSwitchOnWaitTurn() {
         SolarMap sub = MapSubgraph.extract(fullMap, "334", 4);
 
-        EngineSpec engineA = new EngineSpec(3, 2, false, 0);
-        EngineSpec engineB = new EngineSpec(6, 3, false, 0);
-        TraverseResponse r = traverse(sub, "334", List.of(engineA, engineB), 40);
+        EngineSpec engineA = new EngineSpec(5, 2, false, 0);
+        EngineSpec engineB = new EngineSpec(8, 3, false, 0);
+        TraverseResponse r = traverse(sub, "334", List.of(engineA, engineB), 28);
         assertEquals("ok", r.status());
 
         Set<Integer> engineIndices = collectEngineIndices(r.tree());

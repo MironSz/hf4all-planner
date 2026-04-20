@@ -44,7 +44,7 @@ class FlybyRulesTest {
     void flybyGrantsFreeBurns() {
         SolarMap sub = MapSubgraph.extract(fullMap, "445", 2);
 
-        EngineSpec engine = new EngineSpec(1, 2, false, 0);
+        EngineSpec engine = new EngineSpec(3, 2, false, 0);
         TraverseResponse r = traverse(sub, "37", engine, FUEL_DEFAULT);
         assertEquals("ok", r.status());
 
@@ -63,7 +63,7 @@ class FlybyRulesTest {
     void flybyReentryRejected() {
         SolarMap sub = MapSubgraph.extract(fullMap, "445", 4);
 
-        EngineSpec engine = new EngineSpec(3, 2, false, 0);
+        EngineSpec engine = new EngineSpec(5, 2, false, 0);
         TraverseResponse r = traverse(sub, "37", engine, FUEL_DEFAULT);
         assertEquals("ok", r.status());
 
@@ -159,16 +159,16 @@ class FlybyRulesTest {
     @Test
     void disableVenusFlybyBlocksVenus() {
         SolarMap sub = MapSubgraph.extract(fullMap, "40", 2);
-        EngineSpec engine = new EngineSpec(3, 2, false, 0);
+        EngineSpec engine = new EngineSpec(5, 2, false, 0);
 
         TraverseResponse enabled = Pathfinder.traverse(sub,
-                new TraverseRequest("40", List.of(engine), FUEL_DEFAULT, false));
+                new TraverseRequest("40", List.of(engine), DRY_DEFAULT, FUEL_DEFAULT, false, false));
         assertEquals("ok", enabled.status());
         assertTrue(reached(enabled, "33"),
                 "Venus (33) must be reachable from 40 when disableVenusFlyby=false");
 
         TraverseResponse disabled = Pathfinder.traverse(sub,
-                new TraverseRequest("40", List.of(engine), FUEL_DEFAULT, true));
+                new TraverseRequest("40", List.of(engine), DRY_DEFAULT, FUEL_DEFAULT, true, false));
         assertEquals("ok", disabled.status());
         assertFalse(reached(disabled, "33"),
                 "Venus (33) must be unreachable from 40 when disableVenusFlyby=true");

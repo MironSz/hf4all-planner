@@ -1,6 +1,8 @@
 package com.hf4all.planner.pathfinder;
 
 import com.hf4all.planner.config.Config;
+import com.hf4all.planner.model.Fraction;
+import com.hf4all.planner.model.FuelStrip;
 import com.hf4all.planner.model.MapNode;
 import com.hf4all.planner.model.SolarMap;
 import com.hf4all.planner.server.dto.*;
@@ -10,36 +12,54 @@ import java.util.*;
 /**
  * Multi-objective Pareto-optimal pathfinder for the HF4A solar map.
  *
- * <p>The search explores all reachable positions using a priority queue ordered by
- * (fuelSpent, hazards, turn). At each node the algorithm maintains a Pareto frontier
- * on 7 internal dimensions (fuel, turn, hazards, worstRadRoll, pivots, burns, freeBurns)
- * — gated by direction label and engine index. After the search, a second pass prunes
- * to the 4 output dimensions (fuelSpent, turns, hazards, worstRadRoll) at site nodes.
+ * <p>Mass-aware variant: the search tracks Wet Mass on the (non-linear)
+ * fuel strip. Net thrust is recomputed at the start of each movement
+ * (HF4A H3) using the engine's base thrust + the current weight-class
+ * modifier (H3c) + the heliocentric solar modifier (H3c). Fractional
+ * fuel consumption (H5b) accumulates across burns within a movement and
+ * is rounded up at end-of-movement. With {@code allowFuelJettison}, the
+ * player may dump fuel at the start of any turn to drop into a lighter
+ * weight class — branched in the search only at amounts that actually
+ * change the class (intermediate dumps are strictly Pareto-dominated).
  *
- * <p>The result is a search tree rooted at the starting position, plus an endpoint index
- * mapping each reachable site to the tree node IDs of its Pareto-optimal arrival states.
+ * <p>The result is a search tree rooted at the starting position, plus
+ * an endpoint index mapping each reachable site to the tree node IDs of
+ * its Pareto-optimal arrival states.
  */
 public final class Pathfinder {
 
     private final SolarMap map;
     private final List<EngineSpec> engines;
-    private final int maxFuel;
+    private final int dryMass;
+    private final int initialFuelSteps;
     private final boolean disableVenusFlyby;
+    private final boolean allowFuelJettison;
+
+    // Search-scoped mutable state — initialised in run(), shared with the
+    // lazy-jettison helpers so they can enqueue alternatives without
+    // threading the queue + frontier map through every call.
+    private Map<String, List<SearchState>> bestFound;
+    private PriorityQueue<SearchState> queue;
 
     private static final int MAX_TURNS = Config.searchMaxTurns();
     private static final int MAX_ITERATIONS = Config.searchMaxIterations();
 
-    /** Canonical ordering for the priority queue and the per-node Pareto frontier. */
+    /** Canonical ordering for the priority queue: more remaining fuel first
+     *  (cheaper plans), then fewer hazards, then earlier turns. */
     private static final Comparator<SearchState> BY_COST =
-            Comparator.comparingInt((SearchState s) -> s.fuelSpent)
+            Comparator.comparingInt((SearchState s) -> -s.fuelStepsRemaining)
                       .thenComparingInt(s -> s.hazards)
                       .thenComparingInt(s -> s.turn);
 
-    private Pathfinder(SolarMap map, List<EngineSpec> engines, int maxFuel, boolean disableVenusFlyby) {
+    private Pathfinder(SolarMap map, List<EngineSpec> engines,
+                       int dryMass, int initialFuelSteps,
+                       boolean disableVenusFlyby, boolean allowFuelJettison) {
         this.map = map;
         this.engines = engines;
-        this.maxFuel = maxFuel;
+        this.dryMass = dryMass;
+        this.initialFuelSteps = initialFuelSteps;
         this.disableVenusFlyby = disableVenusFlyby;
+        this.allowFuelJettison = allowFuelJettison;
     }
 
     // -------------------------------------------------------------------------
@@ -54,8 +74,15 @@ public final class Pathfinder {
         if (request.engines() == null || request.engines().isEmpty()) {
             return error(request.startNodeId(), "at least one engine required");
         }
-        return new Pathfinder(map, request.engines(), request.fuel(),
-                request.disableVenusFlyby()).run(start);
+        int initialSteps;
+        try {
+            initialSteps = FuelStrip.initialFuelSteps(request.dryMass(), request.fuel());
+        } catch (IllegalArgumentException e) {
+            return error(request.startNodeId(), e.getMessage());
+        }
+        return new Pathfinder(map, request.engines(),
+                request.dryMass(), initialSteps,
+                request.disableVenusFlyby(), request.allowFuelJettison()).run(start);
     }
 
     private static TraverseResponse error(String startId, String message) {
@@ -67,26 +94,30 @@ public final class Pathfinder {
     // -------------------------------------------------------------------------
 
     private TraverseResponse run(MapNode start) {
-        Map<String, List<SearchState>> bestFound = search(start);
-        Map<String, List<SearchState>> endpoints = finalPrune(bestFound);
+        bestFound = new HashMap<>();
+        queue = new PriorityQueue<>(BY_COST);
+        Map<String, List<SearchState>> result = search(start);
+        Map<String, List<SearchState>> endpoints = finalPrune(result);
         return buildResponse(start.id(), endpoints);
     }
 
     /** Phase 1 — Pareto-optimal BFS. */
     private Map<String, List<SearchState>> search(MapNode start) {
-        Map<String, List<SearchState>> bestFound = new HashMap<>();
-        PriorityQueue<SearchState> queue = new PriorityQueue<>(BY_COST);
 
-        // Seed: one initial state per engine (simulates waitTurn from prequel)
+        // Seed: one initial state per engine. Weight class derived from the
+        // user-supplied (dryMass, fuel); jettison at turn 1 is NOT a branch
+        // — the player committed to the starting load by entering it.
         for (int i = 0; i < engines.size(); i++) {
             EngineSpec engine = engines.get(i);
-            int thrust = effectiveThrustAt(i, start);
+            int thrust = effectiveThrust(i, start, initialFuelSteps);
             int burns  = Math.max(thrust, 0);
             SearchState initial = new SearchState(
                     start, null, i,
                     burns, engine.bonusPivots(), 0, thrust,
-                    0, 1, 0, 0,
-                    1, null, null, List.of());
+                    initialFuelSteps, Fraction.ZERO, 0,
+                    1, 0, 0,
+                    1, null, null, List.of(),
+                    null /* this IS a turn-start */);
             if (addIfBest(initial, bestFound)) {
                 queue.add(initial);
             }
@@ -102,8 +133,17 @@ public final class Pathfinder {
             // Expand to graph neighbors
             for (Neighbor neighbor : getNeighbors(current)) {
                 for (SearchState next : expandToNeighbor(current, neighbor)) {
-                    if (!isAllowed(current, next)) continue;
-                    if (next.fuelSpent > maxFuel || next.turn > MAX_TURNS) continue;
+                    if (!isAllowed(current, next)) {
+                        // Lazy-jettison trigger: if this transition was
+                        // blocked by a thrust gate, see if a jettison alt
+                        // at the current turn-start would have unblocked it.
+                        int req = requiredThrustForTransition(current.node, next.node);
+                        if (req > current.thrust) {
+                            maybeSpawnJettisonAlt(current);
+                        }
+                        continue;
+                    }
+                    if (next.turn > MAX_TURNS) continue;
                     if (addIfBest(next, bestFound)) queue.add(next);
                 }
             }
@@ -121,7 +161,7 @@ public final class Pathfinder {
     }
 
     /**
-     * Phase 2 — prune to the 4 output dimensions at every non-decorative node,
+     * Phase 2 — prune to the output dimensions at every non-decorative node,
      * then collapse states with identical output-cost vectors to the shortest
      * path so the UI shows one route per (cost, destination).
      */
@@ -138,7 +178,7 @@ public final class Pathfinder {
         return endpoints;
     }
 
-    /** Keep only states not strictly dominated on (fuel, turn, hazards, radRoll). */
+    /** Keep only states not strictly dominated on (fuelRemaining, turn, hazards, radRoll). */
     private static List<SearchState> paretoOnOutputCosts(List<SearchState> states) {
         List<SearchState> result = new ArrayList<>();
         for (SearchState s : states) {
@@ -151,12 +191,16 @@ public final class Pathfinder {
         return result;
     }
 
-    /** Strict Pareto dominance on the 4 output cost dimensions. */
+    /** Strict Pareto dominance on the 4 output cost dimensions. Higher
+     *  effective fuel remaining is better (cheaper); lower turns/hazards/
+     *  radRoll are better. */
     private static boolean outputDominates(SearchState a, SearchState b) {
-        boolean le = a.fuelSpent <= b.fuelSpent && a.turn <= b.turn
-                  && a.hazards   <= b.hazards   && a.worstRadRoll <= b.worstRadRoll;
-        boolean lt = a.fuelSpent <  b.fuelSpent || a.turn <  b.turn
-                  || a.hazards   <  b.hazards   || a.worstRadRoll <  b.worstRadRoll;
+        int aFuel = a.effectiveFuelStepsRemaining();
+        int bFuel = b.effectiveFuelStepsRemaining();
+        boolean le = aFuel >= bFuel && a.turn <= b.turn
+                  && a.hazards <= b.hazards && a.worstRadRoll <= b.worstRadRoll;
+        boolean lt = aFuel >  bFuel || a.turn <  b.turn
+                  || a.hazards <  b.hazards || a.worstRadRoll <  b.worstRadRoll;
         return le && lt;
     }
 
@@ -167,7 +211,8 @@ public final class Pathfinder {
     private static List<SearchState> keepShortestPerCostVector(List<SearchState> states) {
         Map<String, SearchState> bestPerCost = new LinkedHashMap<>();
         for (SearchState s : states) {
-            String key = s.fuelSpent + ":" + s.turn + ":" + s.hazards + ":" + s.worstRadRoll;
+            String key = s.effectiveFuelStepsRemaining() + ":" + s.turn
+                       + ":" + s.hazards + ":" + s.worstRadRoll;
             SearchState existing = bestPerCost.get(key);
             if (existing == null || s.visitedNodes < existing.visitedNodes) {
                 bestPerCost.put(key, s);
@@ -204,7 +249,13 @@ public final class Pathfinder {
         // Root: merged representation of all initial states (all share the same output costs).
         // engineIndex = -1 marks "no engine in use yet" — used at the starting node before any move.
         int nextId = 0;
-        PathNode root = new PathNode(nextId++, startNodeId, 0, 1, 0, 0, -1);
+        int rootWetMass = FuelStrip.wetMassAt(dryMass, initialFuelSteps);
+        PathNode root = new PathNode(nextId++, startNodeId,
+                initialFuelSteps, /* fuelSpent = */ 0,
+                /* remainNum */ initialFuelSteps, /* remainDen */ 1,
+                /* spentNum */  0, /* spentDen */  1,
+                rootWetMass, 0,
+                1, 0, 0, -1);
 
         Map<SearchState, PathNode> stateToNode = new IdentityHashMap<>();
         Deque<SearchState> buildQueue = new ArrayDeque<>();
@@ -219,8 +270,32 @@ public final class Pathfinder {
             SearchState current = buildQueue.poll();
             PathNode currentPN = stateToNode.get(current);
             for (SearchState child : childrenMap.getOrDefault(current, List.of())) {
+                int eff = child.effectiveFuelStepsRemaining();
+                int wm  = FuelStrip.wetMassAt(dryMass, eff);
+                int spent = initialFuelSteps - eff;
+
+                // Exact rational remaining / spent, preserving fractional
+                // partial-consumption info before H5b end-of-move rounding.
+                // remaining = fuelStepsRemaining - partialStepsThisMove
+                // spent     = initialFuelSteps - remaining
+                Fraction remainFrac = Fraction.of(child.fuelStepsRemaining)
+                        .subtract(child.partialStepsThisMove);
+                Fraction spentFrac  = Fraction.of(initialFuelSteps)
+                        .subtract(remainFrac);
+
+                // jettisonedAtTurnStart is inherited by every mid-turn
+                // descendant. Report it on the PathNode ONLY at the actual
+                // turn-start (where the event occurred) so the UI doesn't
+                // splash the "Jettison N" badge across the whole turn.
+                boolean isTurnStart = (child.turnStart == null);
+                int jettisonedOnNode = isTurnStart ? child.jettisonedAtTurnStart : 0;
+
                 PathNode childPN = new PathNode(nextId++, child.node.id(),
-                        child.fuelSpent, child.turn, child.hazards, child.worstRadRoll,
+                        eff, spent,
+                        remainFrac.numerator(), remainFrac.denominator(),
+                        spentFrac.numerator(),  spentFrac.denominator(),
+                        wm, jettisonedOnNode,
+                        child.turn, child.hazards, child.worstRadRoll,
                         child.engineIndex);
                 currentPN.addChild(childPN);
                 stateToNode.put(child, childPN);
@@ -278,7 +353,6 @@ public final class Pathfinder {
         List<Neighbor> neighbors = new ArrayList<>();
 
         // Part 1: Same-node direction changes (Hohmann pivots).
-        //   At a Hohmann node, we can switch to any other direction label present.
         Set<String> seenLabels = new HashSet<>();
         for (int i = 0; i < n; i++) {
             String label = labelFromNode[i];
@@ -290,12 +364,9 @@ public final class Pathfinder {
 
         // Part 2: Cross-node moves.
         for (int i = 0; i < n; i++) {
-            // One-way block: if the edge at adj pointing toward us is "0", skip
             String labelAtAdjI = labelAtAdj[i];
             if ("0".equals(labelAtAdjI)) continue;
 
-            // Direction compatibility:
-            //   Allow if: node has no labels, OR no label on this edge, OR label matches dir
             String labelFromNodeI = labelFromNode[i];
             if (nodeHasLabels && labelFromNodeI != null && dir != null
                     && !labelFromNodeI.equals(dir)) {
@@ -303,10 +374,8 @@ public final class Pathfinder {
             }
 
             MapNode adj = adjList.get(i);
-            // Arrival direction at adj = the label at adj pointing toward node
             String arrivalDir = labelAtAdjI;
 
-            // Prevent degenerate self-loop: same node, had a direction, losing it
             if (node.equals(adj) && dir != null && arrivalDir == null) continue;
 
             neighbors.add(new Neighbor(adj, arrivalDir));
@@ -333,8 +402,6 @@ public final class Pathfinder {
             return List.of();
         }
 
-        // For same-node moves we preserve previousNodeId; for cross-node moves
-        // we record the node we just left (enables the no-U-turn rule).
         String prevNode = sameNode ? current.previousNodeId : current.node.id();
 
         // Crossing a one-way edge (aerobrake-style) consumes all free burns:
@@ -371,39 +438,61 @@ public final class Pathfinder {
     private List<SearchState> expandBurn(SearchState current, Neighbor neighbor,
                                          String prevNode, boolean oneWay) {
         MapNode dest = neighbor.node;
-        // Entering a burn space requires an operational thruster. For solar engines
-        // in outer zones, effective thrust at dest can drop to ≤ 0 — no burns possible.
-        int destThrust = effectiveThrustAt(current.engineIndex, dest);
-        if (destThrust <= 0) return List.of();
+        // Operational check at destination: solar engines in outer zones may
+        // have effective thrust ≤ 0. Note: per H3, the thrust used FOR THE
+        // BURN was snapshotted at turn start; this check just gates entry.
+        int destThrust = effectiveThrust(current.engineIndex, dest, current.fuelStepsRemaining);
+        if (destThrust <= 0) {
+            // Solar engine non-operational at destination zone. Jettison
+            // would lift wet mass → improve weight class → possibly raise
+            // thrust. Trigger lazy alt.
+            maybeSpawnJettisonAlt(current);
+            return List.of();
+        }
 
         List<SearchState> out = new ArrayList<>(2);
         boolean isHazard  = dest.hazard();
         boolean isLanding = !dest.landing().isZero();
         int newHazards   = current.hazards + (isHazard ? 1 : 0);
         int newRadRoll   = updatedRadRoll(current.worstRadRoll, dest, destThrust);
-        int fuelCost     = engines.get(current.engineIndex).fuelConsumption();
+        Fraction burnCost = engines.get(current.engineIndex).fuelConsumption();
         int visitedInc   = dest.isDecorative() ? 0 : 1;
+
+        Fraction newPartial = current.partialStepsThisMove.add(burnCost);
+        Fraction fuelCap    = Fraction.of(current.fuelStepsRemaining);
 
         // Option A: free burn (not allowed on a landing approach)
         if (current.freeBurns > 0 && !isLanding) {
             out.add(new SearchState(
                     dest, neighbor.direction, current.engineIndex,
                     current.burnsRemaining, current.pivotsRemaining,
-                    oneWay ? 0 : current.freeBurns - 1, destThrust,
-                    current.fuelSpent, current.turn, newHazards, newRadRoll,
+                    oneWay ? 0 : current.freeBurns - 1, current.thrust,
+                    current.fuelStepsRemaining, current.partialStepsThisMove,
+                    current.jettisonedAtTurnStart,
+                    current.turn, newHazards, newRadRoll,
                     current.visitedNodes + visitedInc, prevNode, current,
-                    current.bonusSites));
+                    current.bonusSites,
+                    current.turnStart()));
         }
-        // Option B: paid burn
-        if (current.burnsRemaining > 0) {
+        // Option B: paid burn — H5d gate: fractional partial ≤ remaining
+        if (current.burnsRemaining > 0 && !newPartial.isGreaterThan(fuelCap)) {
             out.add(new SearchState(
                     dest, neighbor.direction, current.engineIndex,
                     current.burnsRemaining - 1, current.pivotsRemaining,
-                    oneWay ? 0 : current.freeBurns, destThrust,
-                    current.fuelSpent + fuelCost, current.turn, newHazards, newRadRoll,
+                    oneWay ? 0 : current.freeBurns, current.thrust,
+                    current.fuelStepsRemaining, newPartial,
+                    current.jettisonedAtTurnStart,
+                    current.turn, newHazards, newRadRoll,
                     current.visitedNodes + visitedInc, prevNode, current,
-                    current.bonusSites));
+                    current.bonusSites,
+                    current.turnStart()));
         }
+        // Note: we deliberately do NOT trigger lazy jettison when we simply
+        // ran out of burns this turn (burnsRemaining == 0). That fires for
+        // almost every multi-burn path and the alt's extra burn rarely
+        // unlocks anything the no-jet sibling couldn't reach over more
+        // turns. Real thrust-failure triggers (destThrust ≤ 0 here, the
+        // landing/liftoff gates in isAllowed) are more selective.
         return out;
     }
 
@@ -412,26 +501,43 @@ public final class Pathfinder {
         List<SearchState> out = new ArrayList<>(2);
         MapNode dest = neighbor.node;
 
-        // Option A: use a pivot
+        // Option A: use a pivot (free, no fuel)
         if (current.pivotsRemaining > 0) {
             out.add(new SearchState(
                     dest, neighbor.direction, current.engineIndex,
                     current.burnsRemaining, current.pivotsRemaining - 1,
                     current.freeBurns, current.thrust,
-                    current.fuelSpent, current.turn, current.hazards, current.worstRadRoll,
+                    current.fuelStepsRemaining, current.partialStepsThisMove,
+                    current.jettisonedAtTurnStart,
+                    current.turn, current.hazards, current.worstRadRoll,
                     current.visitedNodes, prevNode, current,
-                    current.bonusSites));
+                    current.bonusSites,
+                    current.turnStart()));
         }
         // Option B: force-turn via 2 paid burns (requires an operational thruster)
         if (current.burnsRemaining > 1 && current.thrust > 0) {
-            int fuelCost = engines.get(current.engineIndex).fuelConsumption() * 2;
-            out.add(new SearchState(
-                    dest, neighbor.direction, current.engineIndex,
-                    current.burnsRemaining - 2, current.pivotsRemaining,
-                    current.freeBurns, current.thrust,
-                    current.fuelSpent + fuelCost, current.turn, current.hazards, current.worstRadRoll,
-                    current.visitedNodes, prevNode, current,
-                    current.bonusSites));
+            Fraction twoBurns = engines.get(current.engineIndex).fuelConsumption().multiply(2);
+            Fraction newPartial = current.partialStepsThisMove.add(twoBurns);
+            Fraction fuelCap = Fraction.of(current.fuelStepsRemaining);
+            if (!newPartial.isGreaterThan(fuelCap)) {
+                out.add(new SearchState(
+                        dest, neighbor.direction, current.engineIndex,
+                        current.burnsRemaining - 2, current.pivotsRemaining,
+                        current.freeBurns, current.thrust,
+                        current.fuelStepsRemaining, newPartial,
+                        current.jettisonedAtTurnStart,
+                        current.turn, current.hazards, current.worstRadRoll,
+                        current.visitedNodes, prevNode, current,
+                        current.bonusSites,
+                        current.turnStart()));
+            }
+        } else if (current.thrust <= 0) {
+            // Engine non-operational (e.g. solar in deep outer zone). Free
+            // pivot may still work (Option A above) but force-turn is dead.
+            // Jettison would lift wet mass → improve weight class → revive
+            // the engine. (We don't trigger on burnsRemaining < 2 alone:
+            // that's just running out of budget this turn.)
+            maybeSpawnJettisonAlt(current);
         }
         return out;
     }
@@ -442,7 +548,9 @@ public final class Pathfinder {
         MapNode dest = neighbor.node;
         // For cross-node moves, recompute effective thrust at the destination
         // (solar engines change thrust as they cross heliocentric zones).
-        int newThrust    = sameNode ? current.thrust : effectiveThrustAt(current.engineIndex, dest);
+        int newThrust    = sameNode
+                ? current.thrust
+                : effectiveThrust(current.engineIndex, dest, current.fuelStepsRemaining);
         boolean isHazard = !sameNode && dest.hazard();
         int newHazards   = current.hazards + (isHazard ? 1 : 0);
         int newRadRoll   = sameNode
@@ -463,46 +571,160 @@ public final class Pathfinder {
                 dest, neighbor.direction, current.engineIndex,
                 current.burnsRemaining, current.pivotsRemaining,
                 newFreeBurns, newThrust,
-                current.fuelSpent, current.turn, newHazards, newRadRoll,
+                current.fuelStepsRemaining, current.partialStepsThisMove,
+                current.jettisonedAtTurnStart,
+                current.turn, newHazards, newRadRoll,
                 current.visitedNodes + visitedInc,
-                prevNode, current, newBonusSites));
+                prevNode, current, newBonusSites,
+                current.turnStart()));
     }
 
     /**
-     * End the current turn: increment turn counter, reset per-turn resources,
-     * optionally switch engine. Produces one state per available engine.
+     * End the current turn: round up partial fuel use (H5b) and start the
+     * next movement with the freshly-computed weight-class-modified net
+     * thrust.
+     *
+     * <p>Spawns only the no-jettison branch. Jettison alternatives are
+     * generated lazily by {@link #maybeSpawnJettisonAlt(SearchState)} when
+     * a downstream transition fails for thrust reasons that a class drop
+     * would resolve. Eagerly spawning all class-change alternatives floods
+     * the search with branches that get strictly dominated at the output
+     * Pareto step (less fuel, same other dims) unless they actually unblock
+     * something — which only the search itself can determine.
      */
     private List<SearchState> waitTurn(SearchState current) {
+        // Apply end-of-move rounding (H5b) to settle the chit.
+        int settledFuel = current.fuelStepsRemaining
+                        - current.partialStepsThisMove.ceilToInt();
+        if (settledFuel < 0) settledFuel = 0; // defensive; H5d should have prevented
+
         List<SearchState> results = new ArrayList<>(engines.size());
-        for (int i = 0; i < engines.size(); i++) {
-            EngineSpec engine = engines.get(i);
-            int thrust = effectiveThrustAt(i, current.node);
-            int burns  = Math.max(thrust, 0);
-            results.add(new SearchState(
-                    current.node, null, i,
-                    burns, engine.bonusPivots(), 0, thrust,
-                    current.fuelSpent, current.turn + 1,
-                    current.hazards, current.worstRadRoll,
-                    current.visitedNodes, null, current, List.of()));
-        }
+        addTurnStartStates(results, current, settledFuel, 0,
+                /* turn = */ current.turn + 1, /* parent = */ current);
         return results;
     }
 
     /**
-     * Effective net thrust for an engine at a given node. For solar-powered
-     * engines, adds the node's heliocentric-zone modifier (can go negative →
-     * engine is non-operational there; ship can coast but cannot burn or
-     * force-turn). For non-solar engines, just returns the engine's base thrust.
+     * Spawn one fresh-turn state per available engine, given the settled
+     * fuel level. Used by both {@link #waitTurn} (for the standard turn
+     * boundary) and {@link #maybeSpawnJettisonAlt} (for lazy jettison
+     * alternatives at the SAME turn boundary as an existing turn-start).
      */
-    private int effectiveThrustAt(int engineIndex, MapNode node) {
+    private void addTurnStartStates(List<SearchState> out, SearchState current,
+                                    int newFuelSteps, int jettisoned,
+                                    int turn, SearchState parent) {
+        for (int i = 0; i < engines.size(); i++) {
+            EngineSpec engine = engines.get(i);
+            int thrust = effectiveThrust(i, current.node, newFuelSteps);
+            int burns  = Math.max(thrust, 0);
+            out.add(new SearchState(
+                    current.node, null, i,
+                    burns, engine.bonusPivots(), 0, thrust,
+                    newFuelSteps, Fraction.ZERO, jettisoned,
+                    turn,
+                    current.hazards, current.worstRadRoll,
+                    current.visitedNodes, null, parent, List.of(),
+                    null /* this IS a turn-start */));
+        }
+    }
+
+    /**
+     * Effective net thrust for an engine at a given node, with current Wet
+     * Mass derived from {@code fuelStepsRemaining}:
+     * {@code baseThrust + weightClassMod(WM) + (solar ? node.solarMod : 0)}.
+     *
+     * <p>Reserved future term: afterburn (H3a) — adds +1 once per move,
+     * for {@code engine.afterburnFuelCost} fuel steps. Currently ignored.
+     */
+    private int effectiveThrust(int engineIndex, MapNode node, int fuelStepsRemaining) {
         EngineSpec engine = engines.get(engineIndex);
-        int base = engine.netThrust();
-        return engine.solarPowered() ? base + node.solarMod() : base;
+        int wm = FuelStrip.wetMassAt(dryMass, fuelStepsRemaining);
+        int weightMod = FuelStrip.weightClassModForWetMass(wm);
+        int solar = engine.solarPowered() ? node.solarMod() : 0;
+        return engine.baseThrust() + weightMod + solar;
     }
 
     /** True while the state is a mid-turn position (reached by burn/turn/cruise, not waitTurn). */
     private static boolean isMidTurn(SearchState s) {
         return s.parent != null && s.turn == s.parent.turn;
+    }
+
+    // -------------------------------------------------------------------------
+    // Lazy jettison (HF4A F3d / G1f)
+    //
+    // Eager jettison branching at every waitTurn floods the search with
+    // siblings that are strictly dominated at output-Pareto time (less fuel,
+    // same other dims) UNLESS they actually unlock a transition the no-jet
+    // sibling can't make. The methods below spawn jettison alternatives
+    // only when a forward expansion blocks for thrust reasons that a
+    // class-drop would resolve.
+    // -------------------------------------------------------------------------
+
+    /**
+     * Look at the most recent turn-start ancestor of {@code current} and
+     * lazily enqueue its smallest jettison alternative whose post-jettison
+     * thrust strictly exceeds the no-jet sibling's. Caller is responsible
+     * for invoking this only when the current state was blocked by thrust
+     * (or burns, which is a downstream consequence of thrust at turn start).
+     *
+     * <p>The alt is spawned at the same node and turn as the original
+     * turn-start; the BFS will explore its subtree from there. Duplicate
+     * spawns are deduped by the standard Pareto frontier check inside
+     * {@link #addIfBest}, so the trigger may fire multiple times for the
+     * same alt without correctness impact.
+     */
+    private void maybeSpawnJettisonAlt(SearchState current) {
+        if (!allowFuelJettison) return;
+        SearchState ts = current.turnStart();
+        int[] alts = FuelStrip.jettisonAmountsForClassChange(dryMass, ts.fuelStepsRemaining);
+        for (int alt : alts) {
+            int newFuelSteps = ts.fuelStepsRemaining - alt;
+            int altThrust = effectiveThrust(ts.engineIndex, ts.node, newFuelSteps);
+            if (altThrust > ts.thrust) {
+                // Smallest alt that produces strictly more thrust than no-jet.
+                // Spawn it as a sibling turn-start of ts (same parent, same turn).
+                List<SearchState> spawned = new ArrayList<>(engines.size());
+                addTurnStartStates(spawned, ts, newFuelSteps, alt, ts.turn, ts.parent);
+                for (SearchState s : spawned) {
+                    if (addIfBest(s, bestFound)) queue.add(s);
+                }
+                return;
+            }
+        }
+    }
+
+    /**
+     * Minimum {@code thrust} a transition would need to clear the thrust
+     * gates inside {@link #isAllowed} (landing-burn, site-landing, site-
+     * liftoff). Returns 0 when the transition has no thrust gate.
+     *
+     * <p>Used by the search loop to decide whether an {@code isAllowed}
+     * rejection was thrust-related (and therefore a candidate for lazy
+     * jettison) vs. structural (no-U-turn, flyby reentry, etc.).
+     */
+    private int requiredThrustForTransition(MapNode from, MapNode to) {
+        int required = 0;
+        // Landing-burn gate (≥)
+        if (!to.landing().isZero() && to.thrustRequired() > 0) {
+            required = Math.max(required, to.thrustRequired());
+        }
+        // Powered-landing gate (>), modulo aerobrake bypass for size ≥ 6
+        if (to.isSite()) {
+            int siteReq = to.thrustRequired();
+            if (siteReq > 0) {
+                boolean viaDecChain = from.isDecorative();
+                boolean viaOneWayIn = "0".equals(map.edgeLabel(from, to));
+                boolean aerobrakeEligible = (viaDecChain || viaOneWayIn) && siteReq >= 6;
+                if (!aerobrakeEligible) {
+                    required = Math.max(required, siteReq + 1);
+                }
+            }
+        }
+        // Liftoff gate (>)
+        if (from.isSite() && from.thrustRequired() > 0) {
+            required = Math.max(required, from.thrustRequired() + 1);
+        }
+        return required;
     }
 
     // -------------------------------------------------------------------------

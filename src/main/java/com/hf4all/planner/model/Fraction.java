@@ -75,6 +75,20 @@ public final class Fraction implements Comparable<Fraction> {
         return (double) numerator / denominator;
     }
 
+    /**
+     * Smallest integer ≥ this fraction. Used for end-of-movement rounding
+     * of fractional fuel consumption (HF4A rule H5b).
+     */
+    public int ceilToInt() {
+        // Integer division of non-negative n/d truncates toward zero (= floor),
+        // so ceil(n/d) = (n + d - 1) / d. For negative numerators, fall back
+        // to the explicit formula.
+        if (numerator >= 0) {
+            return (numerator + denominator - 1) / denominator;
+        }
+        return -((-numerator) / denominator);
+    }
+
     @Override
     public int compareTo(Fraction other) {
         // a/b vs c/d  →  a*d vs c*b

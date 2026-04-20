@@ -37,13 +37,13 @@ class LandingRulesTest {
     void poweredLandingRequiresThrustStrictlyGreaterThanSize() {
         SolarMap sub = MapSubgraph.extract(fullMap, "969", 2);
 
-        EngineSpec belowThreshold = new EngineSpec(1, 2, false, 0);
+        EngineSpec belowThreshold = new EngineSpec(3, 2, false, 0);
         TraverseResponse low = traverse(sub, "969", belowThreshold, FUEL_DEFAULT);
         assertEquals("ok", low.status());
         assertFalse(reached(low, "4"),
                 "Eureka (size 1) must not be reachable with thrust=1: rule requires strict >");
 
-        EngineSpec atThreshold = new EngineSpec(2, 2, false, 0);
+        EngineSpec atThreshold = new EngineSpec(4, 2, false, 0);
         TraverseResponse ok = traverse(sub, "969", atThreshold, FUEL_DEFAULT);
         assertEquals("ok", ok.status());
         assertTrue(reached(ok, "4"),
@@ -59,13 +59,13 @@ class LandingRulesTest {
     void liftoffRequiresThrustGreaterThanSize() {
         SolarMap sub = MapSubgraph.extract(fullMap, "4", 2);
 
-        EngineSpec belowThreshold = new EngineSpec(1, 2, false, 0);
+        EngineSpec belowThreshold = new EngineSpec(3, 2, false, 0);
         TraverseResponse low = traverse(sub, "4", belowThreshold, FUEL_DEFAULT);
         assertEquals("ok", low.status());
         assertFalse(reached(low, "969"),
                 "Eureka liftoff must fail with thrust=1 (not strictly greater than size 1)");
 
-        EngineSpec atThreshold = new EngineSpec(2, 2, false, 0);
+        EngineSpec atThreshold = new EngineSpec(4, 2, false, 0);
         TraverseResponse ok = traverse(sub, "4", atThreshold, FUEL_DEFAULT);
         assertEquals("ok", ok.status());
         assertTrue(reached(ok, "969"),
@@ -82,14 +82,14 @@ class LandingRulesTest {
     void landingBurnGateEnforced() {
         SolarMap sub = MapSubgraph.extract(fullMap, "334", 2);
 
-        EngineSpec belowThreshold = new EngineSpec(10, 2, false, 0);
+        EngineSpec belowThreshold = new EngineSpec(12, 2, false, 0);
         TraverseResponse low = traverse(sub, "334", belowThreshold, FUEL_DEFAULT);
         assertEquals("ok", low.status());
         assertFalse(reached(low, "339"),
                 "landing burn 339 (thrustRequired=11) must not be enterable with thrust=10");
 
-        EngineSpec atThreshold = new EngineSpec(11, 2, false, 0);
-        TraverseResponse ok = traverse(sub, "334", atThreshold, 40);
+        EngineSpec atThreshold = new EngineSpec(13, 2, false, 0);
+        TraverseResponse ok = traverse(sub, "334", atThreshold, 28);
         assertEquals("ok", ok.status());
         assertTrue(reached(ok, "339"),
                 "landing burn 339 must be enterable with thrust=11");
@@ -104,8 +104,8 @@ class LandingRulesTest {
     void cannotEndTurnOnLandingBurn() {
         SolarMap sub = MapSubgraph.extract(fullMap, "334", 3);
 
-        EngineSpec engine = new EngineSpec(11, 2, false, 0);
-        TraverseResponse r = traverse(sub, "334", engine, 40);
+        EngineSpec engine = new EngineSpec(13, 2, false, 0);
+        TraverseResponse r = traverse(sub, "334", engine, 28);
         assertEquals("ok", r.status());
 
         assertFalse(treeContainsNodeWithMinTurn(r.tree(), "339", 2),
@@ -122,7 +122,7 @@ class LandingRulesTest {
     void cannotEndTurnOnDecorative() {
         SolarMap sub = MapSubgraph.extract(fullMap, "334", 3);
 
-        EngineSpec engine = new EngineSpec(3, 2, false, 0);
+        EngineSpec engine = new EngineSpec(5, 2, false, 0);
         TraverseResponse r = traverse(sub, "334", engine, FUEL_DEFAULT);
         assertEquals("ok", r.status());
 
@@ -142,7 +142,7 @@ class LandingRulesTest {
     void cannotLiftoffBelowSizeEvenViaAerobrake() {
         SolarMap sub = MapSubgraph.extract(fullMap, "340", 2);
 
-        EngineSpec lowThrust = new EngineSpec(3, 2, false, 0);
+        EngineSpec lowThrust = new EngineSpec(5, 2, false, 0);
         TraverseResponse r = traverse(sub, "340", lowThrust, FUEL_DEFAULT);
         assertEquals("ok", r.status());
 

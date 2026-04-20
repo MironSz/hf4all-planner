@@ -69,10 +69,22 @@ public final class TraverseHandler implements HttpHandler {
         if (request.engines() == null || request.engines().isEmpty()) return "at least one engine required";
         int maxEngines = Config.requestMaxEngines();
         if (request.engines().size() > maxEngines) return "at most " + maxEngines + " engines allowed";
+
+        int minDry = Config.dryMassMin();
+        int maxDry = Config.requestMaxDryMass();
+        if (request.dryMass() < minDry || request.dryMass() > maxDry) {
+            return "dryMass must be between " + minDry + " and " + maxDry;
+        }
         int minFuel = Config.fuelMin();
         int maxFuel = Config.requestMaxFuel();
         if (request.fuel() < minFuel || request.fuel() > maxFuel) {
             return "fuel must be between " + minFuel + " and " + maxFuel;
+        }
+        // Wet Mass cap (HF4A F3a). Caught again inside Pathfinder, but a
+        // friendlier 400 here than burying the error in a 200 response body.
+        int wet = request.dryMass() + request.fuel();
+        if (wet > 32) {
+            return "wetMass (dryMass + fuel) = " + wet + " exceeds the 32 cap (HF4A F3a)";
         }
         return null;
     }

@@ -34,7 +34,7 @@ class MovementConstraintsTest {
     void noUTurnInTreePaths() {
         SolarMap sub = MapSubgraph.extract(fullMap, "334", 4);
 
-        EngineSpec engine = new EngineSpec(3, 2, false, 0);
+        EngineSpec engine = new EngineSpec(5, 2, false, 0);
         TraverseResponse r = traverse(sub, "334", engine, FUEL_DEFAULT);
         assertEquals("ok", r.status());
 
@@ -99,7 +99,7 @@ class MovementConstraintsTest {
     void oneWayEdgeConsumesFreeBurns() {
         SolarMap sub = MapSubgraph.extract(fullMap, "252", 3);
 
-        EngineSpec engine = new EngineSpec(1, 2, false, 0);
+        EngineSpec engine = new EngineSpec(3, 2, false, 0);
         TraverseResponse r = traverse(sub, "147", engine, FUEL_DEFAULT);
         assertEquals("ok", r.status());
 
@@ -114,7 +114,7 @@ class MovementConstraintsTest {
     void cannotTraverseAerobrakeBackwards() {
         SolarMap sub = MapSubgraph.extract(fullMap, "793", 2);
 
-        EngineSpec engine = new EngineSpec(3, 2, false, 0);
+        EngineSpec engine = new EngineSpec(5, 2, false, 0);
         TraverseResponse r = traverse(sub, "793", engine, FUEL_DEFAULT);
         assertEquals("ok", r.status());
 

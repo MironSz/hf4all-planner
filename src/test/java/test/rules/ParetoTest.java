@@ -35,7 +35,7 @@ class ParetoTest {
     void finalPruneDropsDecoratives() {
         SolarMap sub = MapSubgraph.extract(fullMap, "334", 6);
 
-        EngineSpec engine = new EngineSpec(3, 2, false, 0);
+        EngineSpec engine = new EngineSpec(5, 2, false, 0);
         TraverseResponse r = traverse(sub, "334", engine, FUEL_DEFAULT);
         assertEquals("ok", r.status());
 
@@ -58,9 +58,9 @@ class ParetoTest {
         // Radius 6 covers the LEO/GEO cluster adequately.
         SolarMap sub = MapSubgraph.extract(fullMap, "90", 6);
 
-        EngineSpec low  = new EngineSpec(3, 2, false, 0);
-        EngineSpec high = new EngineSpec(10, 10, false, 0);
-        TraverseResponse r = traverse(sub, "90", java.util.List.of(low, high), 40);
+        EngineSpec low  = new EngineSpec(5, 2, false, 0);
+        EngineSpec high = new EngineSpec(12, 10, false, 0);
+        TraverseResponse r = traverse(sub, "90", java.util.List.of(low, high), 28);
         assertEquals("ok", r.status());
 
         Set<String> costs = costVectorsAt(r, "96");
@@ -77,8 +77,8 @@ class ParetoTest {
     void paretoFrontierHasNoDominatedVectors() {
         SolarMap sub = MapSubgraph.extract(fullMap, "334", 6);
 
-        EngineSpec engine = new EngineSpec(3, 2, false, 0);
-        TraverseResponse r = traverse(sub, "334", engine, 40);
+        EngineSpec engine = new EngineSpec(5, 2, false, 0);
+        TraverseResponse r = traverse(sub, "334", engine, 28);
         assertEquals("ok", r.status());
 
         for (String id : r.endpoints().keySet()) {
