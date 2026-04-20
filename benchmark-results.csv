@@ -1,0 +1,4 @@
+datetime,duration_ms,tree_nodes,endpoints,description
+2026-04-20T18:30:55,90119,23119,900,baseline
+2026-04-20T18:36:24,90727,23119,900,test
+2026-04-20T18:40:05,90791,23119,900,bench.sh sanity run
