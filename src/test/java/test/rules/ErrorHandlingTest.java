@@ -1,0 +1,60 @@
+package test.rules;
+
+import com.hf4all.planner.io.MapLoader;
+import com.hf4all.planner.model.SolarMap;
+import com.hf4all.planner.pathfinder.Pathfinder;
+import com.hf4all.planner.server.dto.EngineSpec;
+import com.hf4all.planner.server.dto.TraverseRequest;
+import com.hf4all.planner.server.dto.TraverseResponse;
+
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+
+import test.MapSubgraph;
+
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+/**
+ * Error-path tests for {@link Pathfinder#traverse}.
+ *
+ * <p>These tests use a tiny subgraph (radius 2) because they don't need to
+ * search anything — they only exercise the input-validation branches.
+ */
+class ErrorHandlingTest {
+
+    private static SolarMap sub;
+
+    @BeforeAll
+    static void load() {
+        sub = MapSubgraph.extract(MapLoader.loadDefault(), "334", 2);
+    }
+
+    @Test
+    void unknownStartNodeReturnsError() {
+        TraverseRequest req = new TraverseRequest(
+                "this-node-does-not-exist",
+                List.of(new EngineSpec(3, 2, false, 0)),
+                20);
+
+        TraverseResponse r = Pathfinder.traverse(sub, req);
+
+        assertNotEquals("ok", r.status(), "unknown start node must not yield status=ok");
+        assertNull(r.tree(), "tree must be null on error");
+        assertTrue(r.status() != null && r.status().contains("unknown node"),
+                "error message should mention 'unknown node'; got: " + r.status());
+    }
+
+    @Test
+    void emptyEngineListReturnsError() {
+        TraverseRequest req = new TraverseRequest("334", List.of(), 20);
+
+        TraverseResponse r = Pathfinder.traverse(sub, req);
+
+        assertNotEquals("ok", r.status(), "empty engine list must not yield status=ok");
+        assertNull(r.tree(), "tree must be null on error");
+        assertTrue(r.status() != null && r.status().contains("engine"),
+                "error message should mention 'engine'; got: " + r.status());
+    }
+}
