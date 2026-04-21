@@ -979,7 +979,8 @@ button:disabled { background: #555; cursor: not-allowed; }
             const type = (p && p.type) ? p.type : '?';
             const eng = (n.engineIndex != null && n.engineIndex >= 0)
                     ? ` e${n.engineIndex + 1}` : '';
-            return `${i}) ${name} [${type}] t${n.turns} f${n.fuelSpent} h${n.hazards} r${n.worstRadRoll}${eng}`;
+            const jet = (n.jettisonedHere > 0) ? ` JETT${n.jettisonedHere}` : '';
+            return `${i}) ${name} [${type}] t${n.turns} f${n.fuelSpent} h${n.hazards} r${n.worstRadRoll}${eng}${jet}`;
         });
         return header + '\n' + lines.join('\n');
     }
