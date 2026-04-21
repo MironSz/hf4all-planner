@@ -7,3 +7,4 @@ datetime,duration_ms,tree_nodes,endpoints,description
 2026-04-21T09:19:37,92803,23119,900,phase-1 reverted; back to baseline
 2026-04-21T09:38:51,96751,23119,900,profile pass — counters + phase timers
 2026-04-21T09:45:39,28097,23164,900,phase-2 frontier keyed by comparability context
+2026-04-21T12:14:39,26072,23164,900,phase-2 cleanup; stats stripped; context early-returns removed

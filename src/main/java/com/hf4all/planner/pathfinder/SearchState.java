@@ -105,20 +105,18 @@ final class SearchState {
 
     /**
      * Returns true if {@code other} does NOT dominate this state.
-     * Two states can only dominate each other when they share the same
-     * direction label, engine, and previous node (so they're comparable
-     * in terms of legal future moves).
+     *
+     * <p>Callers (the Pathfinder's Pareto frontier) invoke this only on
+     * states that already share the comparability context — same direction
+     * label, same engine, same previous node — by virtue of the compound
+     * frontier key. Context discriminators are therefore intentionally not
+     * re-checked here; any call with mismatched context is a caller bug.
      *
      * <p>Domination means: other is ≥ on all benefit dimensions and ≤ on
      * all cost dimensions (with at least one strict inequality, checked
      * externally via {@link #equalState}).
      */
     boolean notDominatedBy(SearchState other) {
-        // Incomparable contexts
-        if (!Objects.equals(this.entryLabel, other.entryLabel)) return true;
-        if (this.engineIndex != other.engineIndex) return true;
-        if (!Objects.equals(this.previousNodeId, other.previousNodeId)) return true;
-
         // If other is worse on any cost dimension, it cannot dominate this
         if (other.fuelStepsRemaining < this.fuelStepsRemaining) return true;
         if (other.partialStepsThisMove.isGreaterThan(this.partialStepsThisMove)) return true;

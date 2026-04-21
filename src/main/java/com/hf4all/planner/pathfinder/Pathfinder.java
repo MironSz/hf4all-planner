@@ -39,13 +39,13 @@ public final class Pathfinder {
     // lazy-jettison helpers so they can enqueue alternatives without
     // threading the queue + frontier map through every call.
     //
-    // Phase 2: frontier is keyed by the full comparability context
+    // The frontier is keyed by the full comparability context
     // (nodeId, engineIndex, entryLabel, previousNodeId) so every bucket
     // contains only states that are directly comparable via notDominatedBy.
-    // Pre-Phase-2 profiling showed the single-key-by-nodeId bucket grew to
-    // avg ~676 entries / max 4882 with ~70% of notDominatedBy calls
-    // returning immediately on context mismatch — 2.5B wasted compares per
-    // search. The compound key eliminates that entire class of work.
+    // Keying on just nodeId would fold incomparable states together and
+    // force every dominance check to re-test the context discriminators —
+    // a large class of wasted work on maps with multi-engine / labelled-
+    // edge traffic.
     private Map<FrontierKey, List<SearchState>> bestFound;
     private PriorityQueue<SearchState> queue;
 
@@ -57,14 +57,6 @@ public final class Pathfinder {
     private static FrontierKey keyOf(SearchState s) {
         return new FrontierKey(s.node.id(), s.engineIndex, s.entryLabel, s.previousNodeId);
     }
-
-    // --- Diagnostic counters (Phase-plan profiling pass) ---------------------
-    // Reset in run(); printed by run() at the end. Single-threaded per search.
-    private long statEnqueued, statPolled, statStalePolls;
-    private long statAddIfBestCalls, statAddIfBestAccepted, statAddIfBestRejected;
-    private long statEvictions, statNotDominatedByCalls;
-    private long statJettisonTriggers, statJettisonSpawns;
-    private long statIsStillBestCalls;
 
     private static final int MAX_TURNS = Config.searchMaxTurns();
     private static final int MAX_ITERATIONS = Config.searchMaxIterations();
@@ -121,86 +113,9 @@ public final class Pathfinder {
     private TraverseResponse run(MapNode start) {
         bestFound = new HashMap<>();
         queue = new PriorityQueue<>(BY_COST);
-
-        long t0 = System.nanoTime();
         Map<FrontierKey, List<SearchState>> result = search(start);
-        long t1 = System.nanoTime();
         Map<String, List<SearchState>> endpoints = finalPrune(result);
-        long t2 = System.nanoTime();
-        TraverseResponse response = buildResponse(start.id(), endpoints);
-        long t3 = System.nanoTime();
-
-        printStats(t1 - t0, t2 - t1, t3 - t2);
-        return response;
-    }
-
-    /** One-shot diagnostic summary. Only prints on measured runs (the second
-     *  call per JVM); skips warmups to keep the bench output clean. */
-    private static int runCount = 0;
-    private void printStats(long searchNs, long finalPruneNs, long buildNs) {
-        runCount++;
-        if (runCount < 2) return; // warmup
-
-        // bestFound bucket-size histogram (post-Phase-2: one bucket per
-        // (nodeId, engineIndex, entryLabel, previousNodeId) context).
-        int bucketCount = bestFound.size();
-        long totalEntries = 0;
-        int maxBucket = 0;
-        int[] sizes = new int[bucketCount];
-        int idx = 0;
-        Set<String> distinctNodes = new HashSet<>();
-        for (var entry : bestFound.entrySet()) {
-            int sz = entry.getValue().size();
-            sizes[idx++] = sz;
-            totalEntries += sz;
-            if (sz > maxBucket) maxBucket = sz;
-            distinctNodes.add(entry.getKey().nodeId());
-        }
-        java.util.Arrays.sort(sizes);
-        int p50 = bucketCount == 0 ? 0 : sizes[bucketCount / 2];
-        int p90 = bucketCount == 0 ? 0 : sizes[Math.min(bucketCount - 1, (bucketCount * 90) / 100)];
-        int p99 = bucketCount == 0 ? 0 : sizes[Math.min(bucketCount - 1, (bucketCount * 99) / 100)];
-
-        long totalNs = searchNs + finalPruneNs + buildNs;
-        System.err.println("[PF-STATS]");
-        System.err.printf("  phase wall-times:%n");
-        System.err.printf("    search        = %,d ms (%.1f%%)%n",
-                searchNs / 1_000_000, 100.0 * searchNs / totalNs);
-        System.err.printf("    finalPrune    = %,d ms (%.1f%%)%n",
-                finalPruneNs / 1_000_000, 100.0 * finalPruneNs / totalNs);
-        System.err.printf("    buildResponse = %,d ms (%.1f%%)%n",
-                buildNs / 1_000_000, 100.0 * buildNs / totalNs);
-        System.err.printf("  queue:%n");
-        System.err.printf("    enqueued      = %,d%n", statEnqueued);
-        System.err.printf("    polled        = %,d%n", statPolled);
-        System.err.printf("    stale polls   = %,d (%.1f%% of polls)%n",
-                statStalePolls, statPolled == 0 ? 0 : 100.0 * statStalePolls / statPolled);
-        System.err.printf("  addIfBest:%n");
-        System.err.printf("    calls         = %,d%n", statAddIfBestCalls);
-        System.err.printf("    accepted      = %,d (%.1f%%)%n",
-                statAddIfBestAccepted,
-                statAddIfBestCalls == 0 ? 0 : 100.0 * statAddIfBestAccepted / statAddIfBestCalls);
-        System.err.printf("    rejected      = %,d (%.1f%%)%n",
-                statAddIfBestRejected,
-                statAddIfBestCalls == 0 ? 0 : 100.0 * statAddIfBestRejected / statAddIfBestCalls);
-        System.err.printf("    evictions     = %,d%n", statEvictions);
-        System.err.printf("  dominance:%n");
-        System.err.printf("    notDominatedBy calls = %,d%n", statNotDominatedByCalls);
-        System.err.printf("    per-accepted state   = %.1f%n",
-                statAddIfBestAccepted == 0 ? 0.0
-                        : (double) statNotDominatedByCalls / statAddIfBestAccepted);
-        System.err.printf("  jettison:%n");
-        System.err.printf("    triggers      = %,d%n", statJettisonTriggers);
-        System.err.printf("    spawns        = %,d (%.1f%%)%n",
-                statJettisonSpawns,
-                statJettisonTriggers == 0 ? 0 : 100.0 * statJettisonSpawns / statJettisonTriggers);
-        System.err.printf("  bestFound buckets:%n");
-        System.err.printf("    distinct nodes   = %,d%n", distinctNodes.size());
-        System.err.printf("    context buckets  = %,d%n", bucketCount);
-        System.err.printf("    total entries    = %,d (avg %.2f per bucket)%n",
-                totalEntries, bucketCount == 0 ? 0.0 : (double) totalEntries / bucketCount);
-        System.err.printf("    bucket size max / p99 / p90 / p50 = %d / %d / %d / %d%n",
-                maxBucket, p99, p90, p50);
+        return buildResponse(start.id(), endpoints);
     }
 
     /** Phase 1 — Pareto-optimal BFS. */
@@ -221,7 +136,7 @@ public final class Pathfinder {
                     1, null, null, List.of(),
                     null /* this IS a turn-start */);
             if (addIfBest(initial, bestFound)) {
-                queue.add(initial); statEnqueued++;
+                queue.add(initial);
             }
         }
 
@@ -229,8 +144,8 @@ public final class Pathfinder {
         while (!queue.isEmpty()) {
             if (++iterations > MAX_ITERATIONS) break;
 
-            SearchState current = queue.poll(); statPolled++;
-            if (!isStillBest(current, bestFound)) { statStalePolls++; continue; }
+            SearchState current = queue.poll();
+            if (!isStillBest(current, bestFound)) continue;
 
             // Expand to graph neighbors
             for (Neighbor neighbor : getNeighbors(current)) {
@@ -246,7 +161,7 @@ public final class Pathfinder {
                         continue;
                     }
                     if (next.turn > MAX_TURNS) continue;
-                    if (addIfBest(next, bestFound)) { queue.add(next); statEnqueued++; }
+                    if (addIfBest(next, bestFound)) queue.add(next);
                 }
             }
 
@@ -255,7 +170,7 @@ public final class Pathfinder {
                 for (SearchState wait : waitTurn(current)) {
                     if (!isAllowed(current, wait)) continue;
                     if (wait.turn > MAX_TURNS) continue;
-                    if (addIfBest(wait, bestFound)) { queue.add(wait); statEnqueued++; }
+                    if (addIfBest(wait, bestFound)) queue.add(wait);
                 }
             }
         }
@@ -787,7 +702,6 @@ public final class Pathfinder {
      */
     private void maybeSpawnJettisonAlt(SearchState current) {
         if (!allowFuelJettison) return;
-        statJettisonTriggers++;
         SearchState ts = current.turnStart();
         int[] alts = FuelStrip.jettisonAmountsForClassChange(dryMass, ts.fuelStepsRemaining);
         for (int alt : alts) {
@@ -799,7 +713,7 @@ public final class Pathfinder {
                 List<SearchState> spawned = new ArrayList<>(engines.size());
                 addTurnStartStates(spawned, ts, newFuelSteps, alt, ts.turn, ts.parent);
                 for (SearchState s : spawned) {
-                    if (addIfBest(s, bestFound)) { queue.add(s); statEnqueued++; statJettisonSpawns++; }
+                    if (addIfBest(s, bestFound)) queue.add(s);
                 }
                 return;
             }
@@ -921,32 +835,26 @@ public final class Pathfinder {
     /**
      * Attempts to insert {@code state} into the Pareto frontier at its
      * comparability-context bucket. Returns true (and updates the frontier)
-     * if the state is non-dominated. Post-Phase-2: bucket members are
-     * guaranteed to share (nodeId, engineIndex, entryLabel, previousNodeId),
+     * if the state is non-dominated. Bucket members are guaranteed to share
+     * (nodeId, engineIndex, entryLabel, previousNodeId) by construction,
      * so {@link SearchState#notDominatedBy}'s context early-returns are
      * structurally dead here — every call exercises only the cost dims.
      */
-    private boolean addIfBest(SearchState state, Map<FrontierKey, List<SearchState>> bestFound) {
-        statAddIfBestCalls++;
+    private static boolean addIfBest(SearchState state, Map<FrontierKey, List<SearchState>> bestFound) {
         FrontierKey key = keyOf(state);
         List<SearchState> existing = bestFound.computeIfAbsent(key, k -> new ArrayList<>());
 
         // Reject if any existing state dominates or equals the new state.
         for (SearchState e : existing) {
-            statNotDominatedByCalls++;
             if (!state.notDominatedBy(e) || state.equalState(e)) {
-                statAddIfBestRejected++;
                 return false;
             }
         }
 
         // Evict any existing states now dominated by the new state.
-        int before = existing.size();
-        existing.removeIf(e -> { statNotDominatedByCalls++; return !e.notDominatedBy(state); });
-        statEvictions += (before - existing.size());
+        existing.removeIf(e -> !e.notDominatedBy(state));
 
         existing.add(state);
-        statAddIfBestAccepted++;
         // No sort needed — the priority queue governs expansion order; this list
         // is only scanned for dominance/identity, both order-independent.
         return true;
@@ -956,8 +864,7 @@ public final class Pathfinder {
      * Returns true if the state is still present in its comparability-context
      * bucket (it may have been evicted by a state enqueued after it).
      */
-    private boolean isStillBest(SearchState state, Map<FrontierKey, List<SearchState>> bestFound) {
-        statIsStillBestCalls++;
+    private static boolean isStillBest(SearchState state, Map<FrontierKey, List<SearchState>> bestFound) {
         List<SearchState> best = bestFound.get(keyOf(state));
         if (best == null) return false;
         for (SearchState s : best) {
