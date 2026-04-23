@@ -154,10 +154,11 @@ button:disabled { background: #555; cursor: not-allowed; }
         1, 1, 1                     // 29↔30 .. 31↔32
     ];
 
-    // Express `fuelSteps` remaining above `dryMass` as a position on the fuel
-    // strip: "integer wet-mass jumps above dry" + "fraction of the current
-    // interval". Produces text like "5/9", "1 2/6", "3" — matching how the
-    // player reads the printed fuel strip.
+    // Express `fuelSteps` remaining above `dryMass` as
+    //   "<full wet-mass jumps> + <steps into current jump>/<size of current jump>
+    //    (total steps <fuelSteps>)"
+    // so the player can read both the strip position and the raw total.
+    // Example: 1 step above dry mass 4 → "0 + 1/3 (total steps 1)".
     function formatFuelOnStrip(dryMass, fuelSteps) {
         let remaining = fuelSteps;
         let pos = Math.max(1, dryMass | 0);
@@ -168,11 +169,8 @@ button:disabled { background: #555; cursor: not-allowed; }
             pos++;
         }
         const size = pos < 32 ? FUEL_STRIP_INTERVALS[pos] : 1;
-        let display;
-        if (remaining === 0)     display = String(complete);
-        else if (complete === 0) display = remaining + '/' + size;
-        else                     display = complete + ' ' + remaining + '/' + size;
-        return display + ' (' + fuelSteps + ' fuel steps total)';
+        return complete + ' + ' + remaining + '/' + size
+                + ' (total steps ' + fuelSteps + ')';
     }
 
     function applyConfigToForm() {
@@ -687,7 +685,11 @@ button:disabled { background: #555; cursor: not-allowed; }
         const z = d3.zoom()
             .scaleExtent([cfgF('ui.zoom.min', 0.1), cfgF('ui.zoom.max', 1.5)])
             .translateExtent([[0, 0], [imgW, imgH]])
-            .filter((event) => !event.ctrlKey && !event.button)
+            // Allow wheel even with ctrlKey so d3-zoom captures and preventDefaults
+            // the event — otherwise the browser's native page zoom kicks in and
+            // scales the sidebar too. Trackpad pinch gestures also fire wheel
+            // events with ctrlKey=true, and this routes them to map zoom.
+            .filter((event) => !event.button)
             .on('zoom', (event) => {
                 const {x, y, k} = event.transform;
                 mainEl.style.transform = `translate(${x}px,${y}px) scale(${k})`;
@@ -921,11 +923,12 @@ button:disabled { background: #555; cursor: not-allowed; }
         document.getElementById('route-info-name').textContent = name + routeLabel;
         const dry = parseInt(document.getElementById('dry-mass').value) || cfgI('ui.dry.mass.default', 4);
         document.getElementById('route-info-cost').textContent =
-                'fuel: ' + endNode.fuelSpent
-                + '  left: ' + formatFuelOnStrip(dry, endNode.fuelStepsRemaining)
-                + '  turns: ' + endNode.turns;
+                'fuel spent: ' + endNode.fuelSpent
+                + '  fuel left: ' + formatFuelOnStrip(dry, endNode.fuelStepsRemaining);
         document.getElementById('route-info-haz').textContent =
-                'haz: ' + endNode.hazards + '  rad: ' + endNode.worstRadRoll;
+                'turns: ' + endNode.turns
+                + '  haz: ' + endNode.hazards
+                + '  rad: ' + endNode.worstRadRoll;
         const idEl = document.getElementById('route-info-id');
         const copyBtn = document.getElementById('copy-route-btn');
         if (debugMode) {

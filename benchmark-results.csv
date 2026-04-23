@@ -11,3 +11,4 @@ datetime,duration_ms,tree_nodes,endpoints,description
 2026-04-21T12:27:55,39130,22700,900,phase-3 admissible hTurns + turn-budget prune + f-cost PQ
 2026-04-21T12:31:55,26836,23164,900,phase-3 pruning-only; static BY_COST
 2026-04-21T12:35:25,26037,23164,900,phase-3 reverted; back to post-cleanup baseline
+2026-04-23T15:13:58,14215,23164,900,correctness verify; expect endpoints=900 tree=23164

@@ -200,6 +200,75 @@ class PathfinderTest {
     }
 
     /**
+     * The (dryMass, fuelStepsRemaining) overload walks the non-linear fuel
+     * strip: INTERVALS[1..31] = {9, 6, 4, 3, 3, 2, 2, 2, 2, 2, 1, 1, …}.
+     * For dry=1 the class bands (in fuel steps) are:
+     *   Wisp      = WM=1    = [ 0,  8]   (9 steps of interval 1↔2)
+     *   Probe     = WM=2    = [ 9, 14]   (6 steps of interval 2↔3)
+     *   Scout     = WM=3    = [15, 18]   (4 steps of interval 3↔4)
+     *   Transport = WM=4..5 = [19, 24]   (3 + 3 steps)
+     *   Tug       = WM=6..  = [25,   ]
+     * Tests each band's first step and last step to catch off-by-ones.
+     */
+    @Test
+    void weightClassModDryOneBoundaries() {
+        assertEquals(+2, FuelStrip.weightClassMod(1,  0), "dry=1, fuel=0 → Wisp");
+        assertEquals(+2, FuelStrip.weightClassMod(1,  8), "dry=1, fuel=8 (last Wisp step) → Wisp");
+        assertEquals(+1, FuelStrip.weightClassMod(1,  9), "dry=1, fuel=9 (first Probe step) → Probe");
+        assertEquals(+1, FuelStrip.weightClassMod(1, 14), "dry=1, fuel=14 (last Probe step) → Probe");
+        assertEquals( 0, FuelStrip.weightClassMod(1, 15), "dry=1, fuel=15 (first Scout step) → Scout");
+        assertEquals( 0, FuelStrip.weightClassMod(1, 18), "dry=1, fuel=18 (last Scout step) → Scout");
+        assertEquals(-1, FuelStrip.weightClassMod(1, 19), "dry=1, fuel=19 (WM=4) → Transport");
+        assertEquals(-1, FuelStrip.weightClassMod(1, 24), "dry=1, fuel=24 (last Transport step) → Transport");
+        assertEquals(-2, FuelStrip.weightClassMod(1, 25), "dry=1, fuel=25 (first Tug step) → Tug");
+    }
+
+    /**
+     * The starting class when fuel=0 is determined by dryMass alone (Wet
+     * Mass = Dry Mass). Steps between class boundaries from each dryMass
+     * are probed to catch off-by-ones in the strip walk.
+     */
+    @Test
+    void weightClassModFuelZeroAndBoundaries() {
+        // Note the correction of the third requested case: dry=2 fuel=0 gives
+        // Wet Mass = 2 → Probe (+1), NOT Scout. Scout needs WM=3.
+        assertEquals(+1, FuelStrip.weightClassMod(2, 0), "dry=2, fuel=0 → Probe");
+        assertEquals(+1, FuelStrip.weightClassMod(2, 5), "dry=2, fuel=5 (last Probe step) → Probe");
+        assertEquals( 0, FuelStrip.weightClassMod(2, 6), "dry=2, fuel=6 (first Scout step) → Scout");
+
+        assertEquals( 0, FuelStrip.weightClassMod(3, 0), "dry=3, fuel=0 → Scout");
+        assertEquals( 0, FuelStrip.weightClassMod(3, 3), "dry=3, fuel=3 (last Scout step) → Scout");
+        assertEquals(-1, FuelStrip.weightClassMod(3, 4), "dry=3, fuel=4 (first Transport step) → Transport");
+
+        assertEquals(-1, FuelStrip.weightClassMod(4, 0), "dry=4, fuel=0 → Transport");
+        assertEquals(-1, FuelStrip.weightClassMod(4, 5), "dry=4, fuel=5 (last Transport step) → Transport");
+        assertEquals(-2, FuelStrip.weightClassMod(4, 6), "dry=4, fuel=6 (first Tug step) → Tug");
+
+        assertEquals(-1, FuelStrip.weightClassMod(5, 0), "dry=5, fuel=0 → Transport");
+        assertEquals(-1, FuelStrip.weightClassMod(5, 2), "dry=5, fuel=2 (last Transport step) → Transport");
+        assertEquals(-2, FuelStrip.weightClassMod(5, 3), "dry=5, fuel=3 (first Tug step) → Tug");
+    }
+
+    /**
+     * Tug-range edge cases: dryMass ≥ 6 is Tug regardless of fuel load, and
+     * the chit never leaves Tug no matter how much it climbs. Also exercises
+     * the MAX_WET_MASS boundary and max dry mass.
+     */
+    @Test
+    void weightClassModTugAndMaxBoundaries() {
+        assertEquals(-2, FuelStrip.weightClassMod( 6,  0), "dry=6, fuel=0 → Tug");
+        assertEquals(-2, FuelStrip.weightClassMod(10,  0), "dry=10, fuel=0 → Tug");
+        assertEquals(-2, FuelStrip.weightClassMod(23,  0), "dry=MAX_DRY(23), fuel=0 → Tug");
+
+        // Max Wet Mass = 32: dry=1 + full strip traversal.
+        assertEquals(-2, FuelStrip.weightClassMod( 1, 56), "dry=1, full strip (WM=32) → Tug");
+        assertEquals(-2, FuelStrip.weightClassMod(31,  1), "dry=31, fuel=1 step (WM=32) → Tug");
+
+        // Tug ship with some fuel stays Tug (large wet mass region).
+        assertEquals(-2, FuelStrip.weightClassMod( 6, 10), "dry=6, fuel=10 (WM=11) → Tug");
+    }
+
+    /**
      * Jettison ladder shape: from a Tug-class state, the only class-changing
      * jettison is the one that drops into Transport (WM ≤ 5). Lower targets
      * (Scout/Probe/Wisp) are unreachable when dryMass > those thresholds.
