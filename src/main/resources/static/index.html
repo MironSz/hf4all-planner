@@ -56,6 +56,37 @@ button:disabled { background: #555; cursor: not-allowed; }
 #copy-route-btn { display: none; margin-top: 6px; padding: 2px 8px; background: #143359; color: #7ec8e3; border: 1px solid #555; border-radius: 3px; cursor: pointer; font-family: monospace; font-size: 11px; line-height: 1; }
 #copy-route-btn:hover { background: #1e4a7a; color: #fff; }
 #copy-route-btn.copied { background: #1a5b2a; color: #b0f0b0; border-color: #2e7a3e; }
+
+/* ---- Site filter panel ---- */
+#site-filter { margin-top: 10px; padding: 0; background: #0f3460; border-radius: 4px; font-size: 12px; color: #ccc; }
+.site-filter-header { display: flex; align-items: center; gap: 6px; padding: 8px; cursor: pointer; user-select: none; }
+.site-filter-header:hover { background: #143359; border-radius: 4px; }
+.site-filter-toggle { display: inline-block; width: 10px; color: #7ec8e3; font-size: 10px; transition: transform 0.15s; }
+.site-filter-toggle.open { transform: rotate(90deg); }
+.site-filter-summary { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.site-filter-summary .match-count { color: #888; margin-left: 6px; }
+.site-filter-reset { background: transparent; color: #888; border: none; padding: 0 4px; cursor: pointer; font-size: 14px; line-height: 1; margin: 0; display: none; }
+.site-filter-reset.show { display: inline-block; }
+.site-filter-reset:hover { color: #fff; background: #1e4a7a; border-radius: 2px; }
+.site-filter-body { padding: 4px 8px 8px; display: none; }
+.site-filter-body.open { display: block; }
+.filter-section { padding: 6px 0; border-top: 1px solid #1a3758; }
+.filter-section:first-child { border-top: none; }
+.filter-section .filter-label { font-size: 11px; color: #7ec8e3; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 6px; }
+.mode-toggle { background: #143359; color: #7ec8e3; border: 1px solid #2a4a72; padding: 1px 6px; font-size: 10px; text-transform: none; border-radius: 3px; margin: 0; line-height: 1.3; cursor: pointer; letter-spacing: 0; font-family: monospace; }
+.mode-toggle:hover { background: #1e4a7a; color: #fff; }
+.filter-section .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.filter-section .chips label { font-size: 12px; margin: 0; color: #ccc; }
+.shortcut-row { display: flex; gap: 6px; margin-top: 4px; }
+.shortcut-row button { background: #143359; color: #7ec8e3; border: 1px solid #2a4a72; padding: 2px 8px; font-size: 11px; border-radius: 3px; margin: 0; }
+.shortcut-row button:hover { background: #1e4a7a; color: #fff; }
+.range-row { display: flex; align-items: center; gap: 6px; }
+.range-row input[type="number"] { width: 70px; padding: 3px 6px; font-size: 12px; }
+.range-row .sep { color: #666; }
+.flag-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; }
+.flag-cb-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #ccc; margin: 0; cursor: pointer; }
+.flag-cb-row input { margin: 0; }
+select { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #555; color: #eee; font-family: monospace; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -115,19 +146,55 @@ button:disabled { background: #555; cursor: not-allowed; }
 
     <button id="add-engine" type="button">+ Add Engine</button>
 
-    <div id="site-filter" style="margin-top:10px;padding:8px;background:#0f3460;border-radius:4px;">
-        <div style="font-size:12px;color:#ccc;margin-bottom:6px;">Site type filter</div>
-        <div id="site-type-checks" style="display:flex;flex-wrap:wrap;gap:8px;font-size:12px;color:#ccc;">
-            <label><input type="checkbox" class="site-type-cb" value="S"> S</label>
-            <label><input type="checkbox" class="site-type-cb" value="M"> M</label>
-            <label><input type="checkbox" class="site-type-cb" value="C"> C</label>
-            <label><input type="checkbox" class="site-type-cb" value="V"> V</label>
-            <label><input type="checkbox" class="site-type-cb" value="D"> D</label>
-            <label><input type="checkbox" class="site-type-cb" value="H"> H</label>
+    <div id="site-filter">
+        <div class="site-filter-header" id="site-filter-header" title="Click or press F to toggle">
+            <span class="site-filter-toggle" id="site-filter-toggle">▶</span>
+            <span class="site-filter-summary" id="site-filter-summary">Filter: off</span>
+            <button type="button" class="site-filter-reset" id="site-filter-reset"
+                    title="Reset all filters (Shift+F)">✕</button>
         </div>
-        <div style="margin-top:8px;display:flex;align-items:center;gap:8px;font-size:12px;color:#ccc;">
-            <label for="hydration-min">Min hydration (0-4):</label>
-            <input type="number" id="hydration-min" value="" min="0" max="4" placeholder="" style="width:60px;">
+        <div class="site-filter-body" id="site-filter-body">
+            <div class="filter-section">
+                <div class="filter-label">Spectral type</div>
+                <div class="chips" id="site-type-checks">
+                    <label><input type="checkbox" class="site-type-cb" value="S"> S</label>
+                    <label><input type="checkbox" class="site-type-cb" value="M"> M</label>
+                    <label><input type="checkbox" class="site-type-cb" value="C"> C</label>
+                    <label><input type="checkbox" class="site-type-cb" value="V"> V</label>
+                    <label><input type="checkbox" class="site-type-cb" value="D"> D</label>
+                    <label><input type="checkbox" class="site-type-cb" value="H"> H</label>
+                </div>
+                <div class="shortcut-row">
+                    <button type="button" id="site-type-none">Clear</button>
+                </div>
+            </div>
+
+            <div class="filter-section">
+                <div class="filter-label">Min hydration</div>
+                <div class="range-row">
+                    <input type="number" id="hydration-min" min="0" max="4" placeholder="0–4">
+                </div>
+            </div>
+
+            <div class="filter-section">
+                <div class="filter-label">
+                    Modifiers
+                    <button type="button" id="flags-mode-toggle" class="mode-toggle"
+                            title="Toggle between ANY-OF and ALL-OF">(any-of)</button>
+                </div>
+                <div class="flag-grid" id="site-flag-grid"></div>
+            </div>
+
+            <div class="filter-section">
+                <div class="filter-label">Synodic comet</div>
+                <select id="synodic-filter">
+                    <option value="any">Any</option>
+                    <option value="none">Non-synodic only</option>
+                    <option value="Blue">Blue</option>
+                    <option value="Yellow">Yellow</option>
+                    <option value="Red">Red</option>
+                </select>
+            </div>
         </div>
     </div>
 
@@ -226,6 +293,57 @@ button:disabled { background: #555; cursor: not-allowed; }
     let suppressFire = false;   // skip fireTraverse during DOM rebuilds
     let tabsReady = false;      // gate snapshots until first activate
 
+    // Boolean site modifiers shown as tri-state controls in the filter panel.
+    // Keys match the corresponding JSON flags on site nodes.
+    const SITE_FLAG_KEYS = [
+        { key: 'atmospheric',   label: 'atmospheric'   },
+        { key: 'astrobiology',  label: 'astrobiology'  },
+        { key: 'submarine',     label: 'submarine'     },
+        { key: 'push',          label: 'push (powersat)' },
+    ];
+
+    function makeDefaultSiteFilter() {
+        return {
+            types: [],
+            minHydration: '',
+            flags: [],           // list of flag keys the user has switched on
+            flagsMode: 'any',    // 'any' (OR) or 'all' (AND) across selected flags
+            synodic: 'any',
+        };
+    }
+
+    // Upgrade persisted state from older shapes into the current filter record
+    // without losing the user's prior selection.
+    function migrateSiteFilter(raw) {
+        const def = makeDefaultSiteFilter();
+        if (!raw || typeof raw !== 'object') return def;
+        // hydration.min → minHydration; drop max.
+        let minHydration = '';
+        if (typeof raw.minHydration === 'string' || typeof raw.minHydration === 'number') {
+            minHydration = String(raw.minHydration);
+        } else if (raw.hydration && typeof raw.hydration === 'object') {
+            minHydration = raw.hydration.min != null ? String(raw.hydration.min) : '';
+        }
+        // flags: older tri-state shape was { key: null|true|false } — keep only
+        // the "on" (true) entries, drop the "must-be-false" ones. Newer shape
+        // is already a list of enabled flag keys.
+        let flags = [];
+        if (Array.isArray(raw.flags)) {
+            flags = raw.flags.filter(k => SITE_FLAG_KEYS.some(f => f.key === k));
+        } else if (raw.flags && typeof raw.flags === 'object') {
+            flags = SITE_FLAG_KEYS
+                .filter(f => raw.flags[f.key] === true)
+                .map(f => f.key);
+        }
+        return {
+            types:        Array.isArray(raw.types) ? raw.types.slice() : [],
+            minHydration,
+            flags,
+            flagsMode:    raw.flagsMode === 'all' ? 'all' : 'any',
+            synodic:      typeof raw.synodic === 'string' ? raw.synodic : 'any',
+        };
+    }
+
     function makeDefaultTabState() {
         return {
             dryMass: cfgI('ui.dry.mass.default', 4),
@@ -239,7 +357,7 @@ button:disabled { background: #555; cursor: not-allowed; }
             disableVenusFlyby: false,
             allowFuelJettison: true,
             debug:             false,
-            siteFilter:        { types: [], minHydration: '' },
+            siteFilter:        makeDefaultSiteFilter(),
             searchQuery:       '',
             selectedNode:      null,
             pinnedEndpoint:    null,
@@ -275,12 +393,7 @@ button:disabled { background: #555; cursor: not-allowed; }
         s.disableVenusFlyby = document.getElementById('no-venus-cb').checked;
         s.allowFuelJettison = document.getElementById('allow-jettison-cb').checked;
         s.debug             = document.getElementById('debug-cb').checked;
-        const types = [];
-        document.querySelectorAll('.site-type-cb').forEach(cb => { if (cb.checked) types.push(cb.value); });
-        s.siteFilter = {
-            types,
-            minHydration: document.getElementById('hydration-min').value,
-        };
+        s.siteFilter = readSiteFilterFromDom();
         s.searchQuery       = document.getElementById('search-input').value;
         s.selectedNode      = selectedNode;
         s.pinnedEndpoint    = pinnedEndpoint;
@@ -312,11 +425,8 @@ button:disabled { background: #555; cursor: not-allowed; }
         document.getElementById('debug-cb').checked    = !!s.debug;
         debugMode = !!s.debug;
         document.getElementById('search-input').value  = s.searchQuery || '';
-        document.getElementById('hydration-min').value = (s.siteFilter && s.siteFilter.minHydration) || '';
-        const ft = (s.siteFilter && s.siteFilter.types) || [];
-        document.querySelectorAll('.site-type-cb').forEach(cb => {
-            cb.checked = ft.indexOf(cb.value) >= 0;
-        });
+        s.siteFilter = migrateSiteFilter(s.siteFilter);
+        writeSiteFilterToDom(s.siteFilter);
 
         // Rebuild engine blocks without firing traverse for each
         document.getElementById('engines-container').innerHTML = '';
@@ -506,6 +616,7 @@ button:disabled { background: #555; cursor: not-allowed; }
             tabs = data.tabs.map(t => {
                 const def = makeDefaultTabState();
                 const state = Object.assign(def, t.state || {});
+                state.siteFilter = migrateSiteFilter(state.siteFilter);
                 const id = t.id || ('tab-' + (tabSeq++));
                 const m = /tab-(\d+)/.exec(id);
                 if (m) tabSeq = Math.max(tabSeq, parseInt(m[1]) + 1);
@@ -1029,47 +1140,175 @@ button:disabled { background: #555; cursor: not-allowed; }
     }
 
     // --- Site filter ---
-    /**
-     * Reads the sidebar site filter. The filter is "active" only when at
-     * least one site type is checked OR a hydration number is entered; when
-     * both are empty the filter is off and no rings are drawn.
-     */
-    function readSiteFilter() {
-        const checks = document.querySelectorAll('.site-type-cb');
-        const types = new Set();
-        checks.forEach(cb => { if (cb.checked) types.add(cb.value); });
-        const hydrationInput = document.getElementById('hydration-min');
-        const raw = (hydrationInput.value || '').trim();
-        const hasHydration = raw !== '';
-        const minHydration = hasHydration
-                ? Math.max(cfgI('ui.hydration.filter.min', 0),
-                           Math.min(cfgI('ui.hydration.filter.max', 4), parseInt(raw) || 0))
-                : null;
-        const active = types.size > 0 || hasHydration;
-        return { active, types, minHydration };
+
+    // Pull the filter DOM controls into the filter state shape.
+    function readSiteFilterFromDom() {
+        const types = [];
+        document.querySelectorAll('.site-type-cb').forEach(cb => {
+            if (cb.checked) types.push(cb.value);
+        });
+        const flags = SITE_FLAG_KEYS
+            .filter(f => {
+                const cb = document.getElementById('flag-cb-' + f.key);
+                return cb && cb.checked;
+            })
+            .map(f => f.key);
+        const synSel = document.getElementById('synodic-filter');
+        const modeBtn = document.getElementById('flags-mode-toggle');
+        return {
+            types,
+            minHydration: document.getElementById('hydration-min').value,
+            flags,
+            flagsMode: modeBtn && modeBtn.dataset.mode === 'all' ? 'all' : 'any',
+            synodic: synSel ? synSel.value : 'any',
+        };
     }
 
-    /**
-     * A site matches the filter when its size-class letter is in the selected
-     * type set (or no types are selected) AND its siteWater rating meets the
-     * minimum hydration (or no hydration was entered). Inactive filter never
-     * matches.
-     */
+    // Push a filter state into the DOM controls without firing change events.
+    function writeSiteFilterToDom(f) {
+        const types = f.types || [];
+        document.querySelectorAll('.site-type-cb').forEach(cb => {
+            cb.checked = types.indexOf(cb.value) >= 0;
+        });
+        document.getElementById('hydration-min').value = f.minHydration || '';
+        const on = new Set(f.flags || []);
+        SITE_FLAG_KEYS.forEach(fd => {
+            const cb = document.getElementById('flag-cb-' + fd.key);
+            if (cb) cb.checked = on.has(fd.key);
+        });
+        setFlagsMode(f.flagsMode === 'all' ? 'all' : 'any');
+        const synSel = document.getElementById('synodic-filter');
+        if (synSel) synSel.value = (f.synodic || 'any');
+        updateFilterHeader();
+    }
+
+    function setFlagsMode(mode) {
+        const btn = document.getElementById('flags-mode-toggle');
+        if (!btn) return;
+        btn.dataset.mode = (mode === 'all') ? 'all' : 'any';
+        btn.textContent = (mode === 'all') ? '(all-of)' : '(any-of)';
+    }
+
+    // Normalise the filter state into a compiled predicate context.
+    // Returns {active, match(point)}; active means at least one constraint is set.
+    // Selected modifier flags combine by the flagsMode toggle: 'any' (OR) means
+    // the site needs at least one of the selected flags; 'all' (AND) means it
+    // must carry every selected flag. When no flags are selected the modifier
+    // test is skipped entirely.
+    function compileSiteFilter(f) {
+        f = f || makeDefaultSiteFilter();
+        const types = f.types && f.types.length ? new Set(f.types) : null;
+        const hMin  = numOrNull(f.minHydration);
+        const flagKeys = Array.isArray(f.flags) ? f.flags.slice() : [];
+        const flagsMode = f.flagsMode === 'all' ? 'all' : 'any';
+        const synodic = f.synodic || 'any';
+        const active = !!(types || hMin !== null
+                          || flagKeys.length > 0
+                          || synodic !== 'any');
+        const match = (p) => {
+            if (!p || p.type !== 'site') return false;
+            // spectral type
+            if (types) {
+                const letter = sizeClassLetter(p.siteSize);
+                if (!types.has(letter)) return false;
+            }
+            // hydration (siteWater is string in JSON)
+            if (hMin !== null) {
+                const water = parseInt(p.siteWater) || 0;
+                if (water < hMin) return false;
+            }
+            // modifiers — OR or AND across selected flags depending on mode
+            if (flagKeys.length > 0) {
+                if (flagsMode === 'all') {
+                    for (let i = 0; i < flagKeys.length; i++) {
+                        if (!p[flagKeys[i]]) return false;
+                    }
+                } else {
+                    let any = false;
+                    for (let i = 0; i < flagKeys.length; i++) {
+                        if (p[flagKeys[i]]) { any = true; break; }
+                    }
+                    if (!any) return false;
+                }
+            }
+            // synodic
+            if (synodic === 'none') {
+                if (p.synodic) return false;
+            } else if (synodic !== 'any') {
+                if (p.synodic !== synodic) return false;
+            }
+            return true;
+        };
+        return { active, match };
+    }
+
+    // Legacy helpers — kept so existing call-sites below need no rewrite.
+    function readSiteFilter() {
+        const raw = readSiteFilterFromDom();
+        const compiled = compileSiteFilter(raw);
+        return { active: compiled.active, raw, match: compiled.match };
+    }
     function siteMatchesFilter(point, filter) {
         if (!filter.active) return false;
-        // Extract trailing size-class letter from siteSize (e.g. "10C" -> "C").
-        const sizeStr = point.siteSize || '';
-        let letter = '';
+        return filter.match(point);
+    }
+
+    function numOrNull(v) {
+        if (v == null) return null;
+        const s = String(v).trim();
+        if (s === '') return null;
+        const n = Number(s);
+        return Number.isFinite(n) ? n : null;
+    }
+    function sizeClassLetter(sizeStr) {
+        sizeStr = sizeStr || '';
         for (let i = sizeStr.length - 1; i >= 0; i--) {
             const ch = sizeStr.charAt(i);
-            if (ch >= 'A' && ch <= 'Z') { letter = ch; break; }
+            if (ch >= 'A' && ch <= 'Z') return ch;
         }
-        const typeOk = filter.types.size === 0 || filter.types.has(letter);
-        // siteWater is stored as a string in the JSON; coerce to int.
-        const water = parseInt(point.siteWater) || 0;
-        const hydrationOk = filter.minHydration === null
-                || water >= filter.minHydration;
-        return typeOk && hydrationOk;
+        return '';
+    }
+    // Refresh the collapsed filter summary line + reset-button visibility.
+    function updateFilterHeader() {
+        const raw = readSiteFilterFromDom();
+        const compiled = compileSiteFilter(raw);
+        const summary = document.getElementById('site-filter-summary');
+        const resetBtn = document.getElementById('site-filter-reset');
+        let text;
+        if (!compiled.active) {
+            text = 'Filter: off';
+            resetBtn.classList.remove('show');
+        } else {
+            const bits = [];
+            if (raw.types.length) bits.push(raw.types.join('/'));
+            if (raw.minHydration !== '') {
+                bits.push('H₂O ≥ ' + raw.minHydration);
+            }
+            if (raw.flags.length) {
+                const sep = raw.flagsMode === 'all' ? '&' : '|';
+                bits.push(raw.flags.join(sep));
+            }
+            if (raw.synodic && raw.synodic !== 'any') {
+                bits.push(raw.synodic === 'none' ? 'non-synodic' : 'syn=' + raw.synodic);
+            }
+            // Count matches across all site nodes (not just reachable) so the
+            // summary reflects the filter itself, independent of the current
+            // traverse result.
+            let total = 0, hit = 0;
+            if (mapData && mapData.points) {
+                for (const k in mapData.points) {
+                    const pt = mapData.points[k];
+                    if (pt.type === 'site') {
+                        total++;
+                        if (compiled.match(pt)) hit++;
+                    }
+                }
+            }
+            text = 'Filter: ' + bits.join(', ')
+                 + ' <span class="match-count">(' + hit + '/' + total + ')</span>';
+            resetBtn.classList.add('show');
+        }
+        summary.innerHTML = text;
     }
 
     // --- Drawing ---
@@ -1093,27 +1332,34 @@ button:disabled { background: #555; cursor: not-allowed; }
             ctx.stroke();
         }
 
-        // Draw reachable site indicators (small dots for all reachable sites)
+        // Compile filter once per draw so each site is only evaluated once.
+        const filter = readSiteFilter();
+
+        // Draw reachable site indicators (small dots for all reachable sites).
+        // When a filter is active, dim non-matching reachable sites so the
+        // matching set stands out.
         if (traverseResult && traverseResult.endpoints) {
             for (const nodeId of Object.keys(traverseResult.endpoints)) {
                 if (nodeId === selectedNode) continue;
                 const p = points[nodeId];
                 if (!p) continue;
+                const filterOk = !filter.active || siteMatchesFilter(p, filter);
                 ctx.beginPath();
                 ctx.arc(p.x * imgW, p.y * imgH, cfgI('ui.reachable.indicator.radius', 6), 0, Math.PI * 2);
-                ctx.fillStyle = 'rgba(46, 204, 113, 0.6)';
+                ctx.fillStyle = filterOk
+                        ? 'rgba(46, 204, 113, 0.6)'
+                        : 'rgba(46, 204, 113, 0.15)';
                 ctx.fill();
-                ctx.strokeStyle = 'white';
+                ctx.strokeStyle = filterOk ? 'white' : 'rgba(255,255,255,0.15)';
                 ctx.lineWidth = 1;
                 ctx.stroke();
             }
         }
 
-        // Draw filter-matching rings: reachable sites whose type/hydration match
-        // the sidebar site filter get a translucent green disc with a solid
-        // green ring around them.
-        if (traverseResult && traverseResult.endpoints) {
-            const filter = readSiteFilter();
+        // Draw filter-matching rings: reachable sites that match the active
+        // filter get a translucent green disc with a solid green ring around
+        // them.
+        if (traverseResult && traverseResult.endpoints && filter.active) {
             ctx.lineWidth = 3;
             for (const nodeId of Object.keys(traverseResult.endpoints)) {
                 const p = points[nodeId];
@@ -1434,11 +1680,96 @@ button:disabled { background: #555; cursor: not-allowed; }
 
     // Site filter controls — redraw only (no re-traverse, since the filter is
     // purely a visual overlay on already-computed endpoints).
+
+    // Build the modifier checkbox grid.
+    (function buildFlagGrid() {
+        const host = document.getElementById('site-flag-grid');
+        SITE_FLAG_KEYS.forEach(f => {
+            const row = document.createElement('label');
+            row.className = 'flag-cb-row';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.id = 'flag-cb-' + f.key;
+            cb.addEventListener('change', onFilterChanged);
+            const label = document.createElement('span');
+            label.textContent = f.label;
+            row.appendChild(cb);
+            row.appendChild(label);
+            host.appendChild(row);
+        });
+    })();
+
+    function onFilterChanged() {
+        updateFilterHeader();
+        draw();
+        persistTabs();
+    }
+
     document.querySelectorAll('.site-type-cb').forEach(cb => {
-        cb.addEventListener('change', () => { draw(); persistTabs(); });
+        cb.addEventListener('change', onFilterChanged);
     });
-    document.getElementById('hydration-min').addEventListener('input', () => { draw(); persistTabs(); });
+    document.getElementById('site-type-none').addEventListener('click', () => {
+        document.querySelectorAll('.site-type-cb').forEach(cb => { cb.checked = false; });
+        onFilterChanged();
+    });
+
+    document.getElementById('hydration-min').addEventListener('input', onFilterChanged);
+    document.getElementById('synodic-filter').addEventListener('change', onFilterChanged);
+    // Initialise and wire the ANY/ALL modifier-mode toggle.
+    setFlagsMode('any');
+    document.getElementById('flags-mode-toggle').addEventListener('click', (e) => {
+        e.stopPropagation();
+        const btn = e.currentTarget;
+        setFlagsMode(btn.dataset.mode === 'all' ? 'any' : 'all');
+        onFilterChanged();
+    });
+
+    // Accordion open/close
+    function setFilterOpen(open) {
+        document.getElementById('site-filter-body').classList.toggle('open', open);
+        document.getElementById('site-filter-toggle').classList.toggle('open', open);
+    }
+    document.getElementById('site-filter-header').addEventListener('click', (e) => {
+        // Don't toggle when the user clicked the inline reset button.
+        if (e.target.closest('#site-filter-reset')) return;
+        const body = document.getElementById('site-filter-body');
+        setFilterOpen(!body.classList.contains('open'));
+    });
+
+    // Reset all filters back to defaults.
+    function resetSiteFilter() {
+        writeSiteFilterToDom(makeDefaultSiteFilter());
+        onFilterChanged();
+    }
+    document.getElementById('site-filter-reset').addEventListener('click', (e) => {
+        e.stopPropagation();
+        resetSiteFilter();
+    });
+
+    // Keyboard: F toggles the panel, Shift+F resets filters.
+    // Ignored while typing in any input/textarea/contenteditable.
+    document.addEventListener('keydown', (e) => {
+        if (e.ctrlKey || e.altKey || e.metaKey) return;
+        const t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA'
+                  || t.tagName === 'SELECT' || t.isContentEditable)) return;
+        if (e.key === 'F') {           // Shift+F
+            e.preventDefault();
+            resetSiteFilter();
+        } else if (e.key === 'f') {    // bare F
+            e.preventDefault();
+            const body = document.getElementById('site-filter-body');
+            setFilterOpen(!body.classList.contains('open'));
+        }
+    });
+
     document.getElementById('search-input').addEventListener('input', persistTabs);
+
+    // Keep the header summary current once the map has loaded (counts need points).
+    (function waitForMap() {
+        if (mapData) { updateFilterHeader(); return; }
+        setTimeout(waitForMap, 100);
+    })();
 })();
 </script>
 </body>
