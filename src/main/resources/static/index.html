@@ -87,14 +87,39 @@ button:disabled { background: #555; cursor: not-allowed; }
 .flag-cb-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #ccc; margin: 0; cursor: pointer; }
 .flag-cb-row input { margin: 0; }
 select { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #555; color: #eee; font-family: monospace; font-size: 12px; }
+
+/* ---- Help-tip "?" glyph with hover tooltip ---- */
+.tip { display: inline-block; width: 14px; height: 14px; line-height: 13px; text-align: center; border-radius: 50%; background: #143359; color: #7ec8e3; border: 1px solid #2a4a72; font-size: 10px; font-weight: bold; font-family: monospace; cursor: help; margin-left: 4px; position: relative; vertical-align: middle; user-select: none; }
+.tip:hover { background: #1e4a7a; color: #fff; }
+.tip::after { content: attr(data-tip); display: none; position: absolute; left: 50%; top: calc(100% + 6px); transform: translateX(-50%); width: 220px; padding: 6px 8px; background: #0a1a30; color: #eee; border: 1px solid #2a4a72; border-radius: 4px; font-size: 11px; font-family: monospace; font-weight: normal; line-height: 1.4; white-space: normal; text-align: left; z-index: 200; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,0.5); }
+.tip:hover::after { display: block; }
+/* Debug bar sits at the bottom — open tooltip upward */
+#debug-toggle .tip::after { top: auto; bottom: calc(100% + 6px); }
+
+/* ---- Sidebar collapse toggle ---- */
+#sidebar-toggle { position: fixed; top: 12px; right: 12px; z-index: 110; width: 28px; height: 28px; padding: 0; margin: 0; background: #0f3460; color: #7ec8e3; border: 1px solid #555; border-radius: 4px; cursor: pointer; font-size: 14px; line-height: 1; display: flex; align-items: center; justify-content: center; }
+#sidebar-toggle:hover { background: #1b3a70; color: #fff; }
+body.sidebar-collapsed #sidebar { display: none; }
+#sidebar-clear, #sidebar-prev, #sidebar-next { position: fixed; right: 48px; z-index: 110; height: 28px; padding: 0 10px; margin: 0; background: #0f3460; color: #7ec8e3; border: 1px solid #555; border-radius: 4px; cursor: pointer; font-size: 12px; line-height: 1; display: none; }
+#sidebar-clear:hover, #sidebar-prev:hover, #sidebar-next:hover { background: #1b3a70; color: #fff; }
+#sidebar-clear { top: 12px; }
+#sidebar-prev  { top: 48px; right: 144px; }
+#sidebar-next  { top: 48px; }
+body.sidebar-collapsed #sidebar-clear,
+body.sidebar-collapsed #sidebar-prev,
+body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center; }
 </style>
 </head>
 <body>
 <div id="debug-toggle">
     <input type="checkbox" id="debug-cb"><label for="debug-cb">Debug</label>
-    <input type="checkbox" id="no-venus-cb" style="margin-left:12px;"><label for="no-venus-cb">Disable Venus flyby</label>
-    <input type="checkbox" id="allow-jettison-cb" style="margin-left:12px;" checked><label for="allow-jettison-cb">Allow fuel jettison</label>
+    <input type="checkbox" id="no-venus-cb" style="margin-left:12px;"><label for="no-venus-cb">Disable Venus flyby</label><span class="tip" data-tip="Exclude Venus gravity-assist flybys from planned routes.">?</span>
+    <input type="checkbox" id="allow-jettison-cb" style="margin-left:12px;" checked><label for="allow-jettison-cb">Allow fuel jettison</label><span class="tip" data-tip="Allow planner to drop fuel mid-route to improve thrust. May cause finding routes to take longer.">?</span>
 </div>
+<button id="sidebar-toggle" type="button" title="Hide / show side panel">»</button>
+<button id="sidebar-clear" type="button" title="Clear selected routes (Esc)">Clear routes</button>
+<button id="sidebar-prev" type="button" title="Previous route (←)">◄ Prev route</button>
+<button id="sidebar-next" type="button" title="Next route (→)">Next route ►</button>
 <div id="map-container">
     <div id="main">
         <img id="bg" alt="HF4A Map">
@@ -133,11 +158,11 @@ select { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #
 
     <div class="engine-row">
         <div>
-            <label>Dry Mass (1-23):</label>
+            <label>Dry Mass (1-23): <span class="tip" data-tip="Ship mass without fuel, on the HF4A Wet-Mass strip (1–23). Higher total mass causes smaller thrust.">?</span></label>
             <input type="number" id="dry-mass" value="4" min="1" max="23">
         </div>
         <div>
-            <label>Fuel (0-31):</label>
+            <label>Fuel (0-31): <span class="tip" data-tip="Fuel steps on the Wet-Mass strip above dry mass (0–31). One step is consumed per burn; strip intervals shrink as mass drops. Higher total mass causes smaller thrust.">?</span></label>
             <input type="number" id="fuel" value="15" min="0" max="31">
         </div>
     </div>
@@ -181,6 +206,7 @@ select { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #
                     Modifiers
                     <button type="button" id="flags-mode-toggle" class="mode-toggle"
                             title="Toggle between ANY-OF and ALL-OF">(any-of)</button>
+                    <span class="tip" data-tip="ANY-OF: match sites with at least one selected modifier. ALL-OF: match only sites that have every selected modifier.">?</span>
                 </div>
                 <div class="flag-grid" id="site-flag-grid"></div>
             </div>
@@ -226,6 +252,23 @@ select { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #
     //    (total steps <fuelSteps>)"
     // so the player can read both the strip position and the raw total.
     // Example: 1 step above dry mass 4 → "0 + 1/3 (total steps 1)".
+    // Mirrors FuelStrip.weightClassModForWetMass on the backend (HF4A H3c).
+    function weightClassMod(wetMass) {
+        if (wetMass <= 1) return +2;
+        if (wetMass === 2) return +1;
+        if (wetMass === 3) return 0;
+        if (wetMass <= 5) return -1;
+        return -2;
+    }
+    // HF4A weight class name for a given Wet Mass.
+    function weightClassName(wetMass) {
+        if (wetMass <= 1) return 'Wisp';
+        if (wetMass === 2) return 'Probe';
+        if (wetMass === 3) return 'Scout';
+        if (wetMass <= 5) return 'Transport';
+        return 'Tug';
+    }
+
     function formatFuelOnStrip(dryMass, fuelSteps) {
         let remaining = fuelSteps;
         let pos = Math.max(1, dryMass | 0);
@@ -971,22 +1014,26 @@ select { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #
         if (needsDraw) draw();
     }
 
+    function clearRoutes() {
+        selectedNode = null;
+        pinnedEndpoint = null;
+        hoveredNode = null;
+        selectedRouteIndex = 0;
+        traverseResult = null;
+        treeIndex = null;
+        reachableNodes = null;
+        document.getElementById('node-info').textContent = 'Click a node on the map to select start';
+        document.getElementById('status').textContent = '';
+        draw();
+        updateDebugRoute();
+        updateRouteInfo();
+        persistTabs();
+    }
+
     // --- Keyboard: ESC clears selection, arrows cycle routes ---
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
-            selectedNode = null;
-            pinnedEndpoint = null;
-            hoveredNode = null;
-            selectedRouteIndex = 0;
-            traverseResult = null;
-            treeIndex = null;
-            reachableNodes = null;
-            document.getElementById('node-info').textContent = 'Click a node on the map to select start';
-            document.getElementById('status').textContent = '';
-            draw();
-            updateDebugRoute();
-            updateRouteInfo();
-            persistTabs();
+            clearRoutes();
             return;
         }
         const active = getActiveEndpoint();
@@ -1086,7 +1133,37 @@ select { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #
         const idx = getActiveRouteIndex();
         const pathNodes = getPathToRoot(treeNodeIds[idx]);
 
-        const header = `Route ${idx + 1}/${treeNodeIds.length} to ${active.substring(0, 12)}`;
+        // Ship config — read fresh from DOM so the dump matches the current
+        // form values (these are also what the last /api/traverse used).
+        const dryMass = parseInt(document.getElementById('dry-mass').value) || 0;
+        const fuel    = parseInt(document.getElementById('fuel').value)     || 0;
+        const engines = Array.from(document.querySelectorAll('.engine-block')).map(b => ({
+            baseThrust:   parseInt(b.querySelector('.e-base-thrust').value) || 0,
+            fuel:         parseInt(b.querySelector('.e-fuel').value)        || 0,
+            pivots:       parseInt(b.querySelector('.e-pivots').value)      || 0,
+            solar:        b.querySelector('.e-solar').checked,
+        }));
+
+        // Pretty names for start / end nodes.
+        const labelOf = (id) => {
+            const p = mapData && mapData.points && mapData.points[id];
+            if (!p) return id;
+            const nm = p.siteName ? p.siteName : id;
+            return `${nm} [${p.type || '?'}] (id=${id})`;
+        };
+
+        const header = [
+            `Route ${idx + 1}/${treeNodeIds.length}`,
+            `Start:  ${labelOf(selectedNode)}`,
+            `End:    ${labelOf(active)}`,
+            `Mass:   dry=${dryMass}, fuel=${fuel}`,
+            `Engines (${engines.length}):`,
+            ...engines.map((e, i) =>
+                `  e${i + 1}: thrust=${e.baseThrust}, fuel/burn=${e.fuel}, pivots=${e.pivots}` +
+                (e.solar ? ', solar' : '')),
+            ''
+        ].join('\n');
+
         const lines = pathNodes.map((n, i) => {
             const p = mapData.points[n.nodeId];
             const name = (p && p.siteName) ? p.siteName : n.nodeId.substring(0, 12);
@@ -1096,7 +1173,7 @@ select { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #
             const jet = (n.jettisonedHere > 0) ? ` JETT${n.jettisonedHere}` : '';
             return `${i}) ${name} [${type}] t${n.turns} f${n.fuelSpent} h${n.hazards} r${n.worstRadRoll}${eng}${jet}`;
         });
-        return header + '\n' + lines.join('\n');
+        return header + lines.join('\n');
     }
 
     function updateDebugRoute() {
@@ -1446,22 +1523,38 @@ select { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #
                 // (the ship resets its burn budget), so a label is drawn at
                 // every turn boundary AND at every engine switch, not only at
                 // the start of the trip.
+                // Snapshot engine config once per render so each segment label
+                // can show the effective thrust (base + weight-class + solar).
+                const engineCfgs = Array.from(document.querySelectorAll('.engine-block')).map(b => ({
+                    baseThrust:   parseInt(b.querySelector('.e-base-thrust').value) || 0,
+                    solarPowered: b.querySelector('.e-solar').checked,
+                }));
+
+                // Pre-pass: locate segment-start indices (engine swap or turn
+                // boundary) so we know each segment's end when computing how
+                // many burns it contains.
+                const segStarts = [];
+                {
+                    let lastEng = -2, lastT = -1;
+                    for (let i = 1; i < pathNodes.length; i++) {
+                        const ei = pathNodes[i].engineIndex;
+                        const tn = pathNodes[i].turns;
+                        if (ei >= 0 && (ei !== lastEng || tn !== lastT)) segStarts.push(i);
+                        lastEng = ei;
+                        lastT   = tn;
+                    }
+                }
+
                 ctx.save();
                 ctx.font = 'bold ' + cfgI('ui.engine.label.font.px', 14) + 'px monospace';
                 ctx.textAlign = 'left';
                 ctx.textBaseline = 'bottom';
-                let lastEngine = -2; // -1 is the root sentinel; use -2 so first move always triggers a label
-                let lastTurn   = -1;
-                const drawnAt  = new Set(); // dedupe labels that land on the same map node
-                for (let i = 1; i < pathNodes.length; i++) {
-                    const ei   = pathNodes[i].engineIndex;
+                const drawnAt = new Set(); // dedupe labels that land on the same map node
+                for (let s = 0; s < segStarts.length; s++) {
+                    const i = segStarts[s];
+                    const ei = pathNodes[i].engineIndex;
                     const turn = pathNodes[i].turns;
-                    const engineChanged = ei !== lastEngine;
-                    const turnChanged   = turn !== lastTurn;
-                    lastEngine = ei;
-                    lastTurn   = turn;
-                    if (!engineChanged && !turnChanged) continue;
-                    if (ei < 0) continue;
+                    const segEnd = (s + 1 < segStarts.length) ? segStarts[s + 1] : pathNodes.length;
                     const anchor = pathNodes[i - 1];
                     const p = points[anchor.nodeId];
                     if (!p) continue;
@@ -1470,38 +1563,81 @@ select { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #
                     drawnAt.add(key);
                     const lx = p.x * imgW + 10;
                     const ly = p.y * imgH - 10;
-                    const label = 'Engine ' + (ei + 1);
-                    const w = ctx.measureText(label).width;
-                    ctx.fillStyle = 'rgba(0,0,0,0.75)';
-                    ctx.fillRect(lx - 3, ly - 16, w + 6, 18);
-                    ctx.fillStyle = '#ffe066';
-                    ctx.fillText(label, lx, ly);
-                }
-                ctx.restore();
+                    // Use the post-jettison wet mass when this segment starts a
+                    // turn that jettisoned fuel — otherwise the segment-start
+                    // mass is just the anchor's mass (mid-turn engine swap or
+                    // turn-boundary with no jettison).
+                    const jettisoned   = pathNodes[i].jettisonedHere || 0;
+                    const wmForSegment = jettisoned > 0 ? pathNodes[i].wetMass : anchor.wetMass;
+                    // Fuel-step "anchor" for this segment also shifts past any
+                    // turn-start jettison: jettisoned fuel is reported as
+                    // fuelSpent on the post-jettison node, which we exclude
+                    // from the segment's burn-fuel total.
+                    const segStartFuelSpent = jettisoned > 0
+                            ? pathNodes[i].fuelSpent
+                            : anchor.fuelSpent;
+                    // Effective thrust at the start of the segment:
+                    //   baseThrust + weightClassMod(wetMass) + (solar ? node.solarMod : 0)
+                    const eng = engineCfgs[ei];
+                    let thrustStr = '?';
+                    if (eng) {
+                        const solarMod = eng.solarPowered ? (p.solarMod || 0) : 0;
+                        thrustStr = String(eng.baseThrust + weightClassMod(wmForSegment) + solarMod);
+                    }
+                    const line1 = 'Engine ' + (ei + 1) + ' - ' + weightClassName(wmForSegment) + ' - Thrust ' + thrustStr;
 
-                // --- Jettison labels ---
-                // Each PathNode that started its turn with a fuel jettison
-                // gets a red "Jettison N" badge anchored to that node. The
-                // turn-start sits at the same map position as the previous
-                // turn's last node, so we anchor to the path node itself
-                // (offset below the engine label to avoid overlap).
-                ctx.save();
-                ctx.font = 'bold ' + cfgI('ui.engine.label.font.px', 14) + 'px monospace';
-                ctx.textAlign = 'left';
-                ctx.textBaseline = 'top';
-                for (let i = 0; i < pathNodes.length; i++) {
-                    const j = pathNodes[i].jettisonedHere;
-                    if (!j || j <= 0) continue;
-                    const p = points[pathNodes[i].nodeId];
-                    if (!p) continue;
-                    const lx = p.x * imgW + 10;
-                    const ly = p.y * imgH + 4;
-                    const label = 'Jettison ' + j;
-                    const w = ctx.measureText(label).width;
+                    // Burns within this segment.
+                    //   • Standard burn: move into a burn-type node from a
+                    //     different node — counts as 1 (free or paid).
+                    //   • Forced turn at a Hohmann intersection: same-node,
+                    //     same-turn move that consumed fuel — counts as 2,
+                    //     since a force-turn is a 2-burn manoeuvre.
+                    //   • Free pivots / cruise / waitTurn — count as 0.
+                    // Skip the jettison-creation edge (pn[i-1] → pn[i]) when this
+                    // segment starts with a jettison node — that edge changes
+                    // fuelSpent but is NOT a burn or forced turn.
+                    const burnLoopStart = jettisoned > 0 ? i + 1 : i;
+                    let burns = 0;
+                    for (let k = burnLoopStart; k < segEnd; k++) {
+                        const prev = pathNodes[k - 1];
+                        const cur  = pathNodes[k];
+                        const dst  = points[cur.nodeId];
+                        if (!dst) continue;
+                        const sameNode = (prev.nodeId === cur.nodeId);
+                        const sameTurn = (prev.turns  === cur.turns);
+                        if (!sameNode && dst.type === 'burn') {
+                            burns++;
+                        } else if (sameNode && sameTurn && cur.fuelSpent > prev.fuelSpent) {
+                            burns += 2;
+                        }
+                    }
+                    const fuelSteps = pathNodes[segEnd - 1].fuelSpent - segStartFuelSpent;
+                    // Afterburn count — backend telemetry not yet implemented;
+                    // wired here so the line shows up automatically once it is.
+                    const afterburns = 0;
+                    let line2 = 'Burns ' + burns + ' - Fuel Steps ' + fuelSteps;
+                    if (afterburns > 0) line2 += ' - Afterburn ' + afterburns;
+                    const line3 = jettisoned > 0 ? 'Jettison ' + jettisoned : null;
+
+                    const fontPx = cfgI('ui.engine.label.font.px', 14);
+                    const w1 = ctx.measureText(line1).width;
+                    const w2 = ctx.measureText(line2).width;
+                    const w3 = line3 ? ctx.measureText(line3).width : 0;
+                    const w  = Math.max(w1, w2, w3);
+                    const lineH = fontPx + 4;
+                    const numLines = line3 ? 3 : 2;
+                    // Box covers all stacked lines; bottom line sits where the
+                    // original single-line label used to be.
                     ctx.fillStyle = 'rgba(0,0,0,0.75)';
-                    ctx.fillRect(lx - 3, ly - 2, w + 6, 18);
-                    ctx.fillStyle = '#ff6b6b';
-                    ctx.fillText(label, lx, ly);
+                    ctx.fillRect(lx - 3, ly - 16 - (numLines - 1) * lineH, w + 6, 18 + (numLines - 1) * lineH);
+                    ctx.fillStyle = '#ffe066';
+                    ctx.fillText(line1, lx, ly - (numLines - 1) * lineH);
+                    ctx.fillStyle = '#eee';
+                    ctx.fillText(line2, lx, ly - (line3 ? lineH : 0));
+                    if (line3) {
+                        ctx.fillStyle = '#ff6b6b';
+                        ctx.fillText(line3, lx, ly);
+                    }
                 }
                 ctx.restore();
 
@@ -1525,6 +1661,33 @@ select { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #
                 ctx.fillText('thrustReq: ' + dp.thrustRequired, tx, ty);
                 ctx.restore();
             }
+        }
+
+        // Draw "NOT REACHABLE" badge over EVERY site that's not in reachableNodes,
+        // once a traverse has run. Width = 1.15 × diameter of the green filter
+        // ring so the badge is always wider than the reachable indicator.
+        if (reachableNodes) {
+            ctx.save();
+            const targetWidth = cfgI('ui.filter.ring.radius', 42) * 2 * 1.15;
+            let fontPx = 14;
+            ctx.font = 'bold ' + fontPx + 'px monospace';
+            const baseW = ctx.measureText('NOT REACHABLE').width;
+            fontPx = Math.max(8, Math.round(fontPx * targetWidth / baseW));
+            ctx.font = 'bold ' + fontPx + 'px monospace';
+            const w = ctx.measureText('NOT REACHABLE').width;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            for (const [id, p] of Object.entries(points)) {
+                if (p.type !== 'site') continue;
+                if (id in reachableNodes) continue;
+                const x = p.x * imgW;
+                const y = p.y * imgH;
+                ctx.fillStyle = 'rgba(0,0,0,0.85)';
+                ctx.fillRect(x - w / 2 - 4, y - fontPx / 2 - 3, w + 8, fontPx + 6);
+                ctx.fillStyle = '#ff3a3a';
+                ctx.fillText('NOT REACHABLE', x, y);
+            }
+            ctx.restore();
         }
 
         // Draw selected start node highlight
@@ -1649,12 +1812,12 @@ select { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #
                 <button class="e-remove" style="padding:2px 8px;font-size:11px;margin:0">X</button>
             </div>
             <div class="engine-row">
-                <div><label>Base Thrust:</label><input type="number" class="e-base-thrust" value="${thrustDef}" min="0" max="20"></div>
-                <div><label>Fuel/burn:</label><input type="number" class="e-fuel" value="${fuelDef}" min="0" max="20"></div>
+                <div><label>Base Thrust: <span class="tip" data-tip="Engine thrust per burn before adjustments.">?</span></label><input type="number" class="e-base-thrust" value="${thrustDef}" min="0" max="20"></div>
+                <div><label>Fuel/burn: <span class="tip" data-tip="Fuel steps this engine consumes per burn. Most engines are 1–2; high-thrust engines cost more.">?</span></label><input type="number" class="e-fuel" value="${fuelDef}" min="0" max="20"></div>
             </div>
             <div class="engine-row">
-                <div><label>Pivots:</label><input type="number" class="e-pivots" value="${pivotsDef}" min="0" max="5"></div>
-                <div><label><input type="checkbox" class="e-solar"${solarDef ? ' checked' : ''}>Solar</label></div>
+                <div><label>Pivots: <span class="tip" data-tip="Lets you turn at non-Lagrange nodes without ending the turn or performing double burn.">?</span></label><input type="number" class="e-pivots" value="${pivotsDef}" min="0" max="5"></div>
+                <div><label><input type="checkbox" class="e-solar"${solarDef ? ' checked' : ''}>Solar <span class="tip" data-tip="Solar-powered engine: thrust scales with distance from the Sun.">?</span></label></div>
             </div>
         `;
         div.querySelector('.e-remove').addEventListener('click', () => {
@@ -1677,6 +1840,27 @@ select { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #
     });
     document.getElementById('fuel').addEventListener('change', () => { fireTraverse(); persistTabs(); });
     document.getElementById('dry-mass').addEventListener('change', () => { fireTraverse(); persistTabs(); });
+
+    // Sidebar collapse toggle. Persisted to localStorage so the choice sticks
+    // across reloads.
+    (function() {
+        const SIDEBAR_KEY = 'hf4a-sidebar-collapsed';
+        const btn = document.getElementById('sidebar-toggle');
+        function apply(collapsed) {
+            document.body.classList.toggle('sidebar-collapsed', collapsed);
+            btn.textContent = collapsed ? '\u00ab' : '\u00bb';
+            btn.title = collapsed ? 'Show side panel' : 'Hide side panel';
+        }
+        apply(localStorage.getItem(SIDEBAR_KEY) === '1');
+        btn.addEventListener('click', () => {
+            const collapsed = !document.body.classList.contains('sidebar-collapsed');
+            apply(collapsed);
+            try { localStorage.setItem(SIDEBAR_KEY, collapsed ? '1' : '0'); } catch (e) {}
+        });
+        document.getElementById('sidebar-clear').addEventListener('click', clearRoutes);
+        document.getElementById('sidebar-prev').addEventListener('click', () => cycleRoute(-1));
+        document.getElementById('sidebar-next').addEventListener('click', () => cycleRoute(+1));
+    })();
 
     // Site filter controls — redraw only (no re-traverse, since the filter is
     // purely a visual overlay on already-computed endpoints).

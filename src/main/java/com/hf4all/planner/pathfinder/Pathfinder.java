@@ -288,7 +288,30 @@ public final class Pathfinder {
         Deque<SearchState> buildQueue = new ArrayDeque<>();
         for (SearchState s : onPath) {
             if (s.parent == null) {
-                stateToNode.put(s, root);
+                if (s.jettisonedAtTurnStart > 0) {
+                    // Lazy turn-1 jettison alts are parent-null SearchStates with
+                    // a non-zero jettison amount. They MUST get their own
+                    // PathNode (attached under the real root) so jettisonedHere
+                    // surfaces in the response — collapsing them into the
+                    // shared root would silently drop the jettison badge.
+                    int eff   = s.effectiveFuelStepsRemaining();
+                    int wm    = FuelStrip.wetMassAt(dryMass, eff);
+                    int spent = initialFuelSteps - eff;
+                    Fraction remainFrac = Fraction.of(s.fuelStepsRemaining)
+                            .subtract(s.partialStepsThisMove);
+                    Fraction spentFrac  = Fraction.of(initialFuelSteps)
+                            .subtract(remainFrac);
+                    PathNode jetRoot = new PathNode(nextId++, s.node.id(),
+                            eff, spent,
+                            remainFrac.numerator(), remainFrac.denominator(),
+                            spentFrac.numerator(),  spentFrac.denominator(),
+                            wm, s.jettisonedAtTurnStart,
+                            s.turn, s.hazards, s.worstRadRoll, s.engineIndex);
+                    root.addChild(jetRoot);
+                    stateToNode.put(s, jetRoot);
+                } else {
+                    stateToNode.put(s, root);
+                }
                 buildQueue.add(s);
             }
         }
