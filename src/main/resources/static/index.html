@@ -18,7 +18,10 @@
 body { display: flex; height: 100vh; background: #1a1a2e; color: #eee; font-family: monospace; overflow: hidden; }
 #map-container { flex: 1; position: relative; overflow: hidden; }
 #main { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
-#main img { display: block; }
+#main img { display: block; transition: filter 180ms ease-out; }
+/* Dim + desaturate the printed map while a site filter is active, so the
+   bright cyan filter rings drawn on the canvas stand out. */
+body.filter-active #main img { filter: brightness(0.8) saturate(0.825); }
 #main canvas { position: absolute; top: 0; left: 0; }
 #sidebar { width: 300px; background: #16213e; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; border-left: 1px solid #333; }
 h2 { font-size: 14px; color: #7ec8e3; margin-bottom: 4px; }
@@ -1411,6 +1414,13 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
 
         // Compile filter once per draw so each site is only evaluated once.
         const filter = readSiteFilter();
+        // Solution C: dim the underlying map image while a filter is active
+        // (CSS-driven, so route lines and badges drawn on the canvas stay
+        // full brightness). Only kicks in once a traverse has produced
+        // matchable endpoints — otherwise dimming with no visible matches is
+        // just confusing.
+        document.body.classList.toggle('filter-active',
+                filter.active && !!(traverseResult && traverseResult.endpoints));
 
         // Draw reachable site indicators (small dots for all reachable sites).
         // When a filter is active, dim non-matching reachable sites so the
@@ -1433,23 +1443,10 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
             }
         }
 
-        // Draw filter-matching rings: reachable sites that match the active
-        // filter get a translucent green disc with a solid green ring around
-        // them.
-        if (traverseResult && traverseResult.endpoints && filter.active) {
-            ctx.lineWidth = 3;
-            for (const nodeId of Object.keys(traverseResult.endpoints)) {
-                const p = points[nodeId];
-                if (!p || p.type !== 'site') continue;
-                if (!siteMatchesFilter(p, filter)) continue;
-                ctx.beginPath();
-                ctx.arc(p.x * imgW, p.y * imgH, cfgI('ui.filter.ring.radius', 42), 0, Math.PI * 2);
-                ctx.fillStyle = 'rgba(46, 204, 113, 0.25)';
-                ctx.fill();
-                ctx.strokeStyle = 'rgba(46, 204, 113, 1.0)';
-                ctx.stroke();
-            }
-        }
+        // Filter-matching rings: rendered AFTER routes + NOT REACHABLE badges
+        // (see the block lower down) so they can't be occluded by competing
+        // overlays. The drawing logic itself lives in drawFilterRings(); call
+        // it here only as a no-op placeholder for layering reference.
 
         // Draw highlighted route path (for active endpoint: pinned or hovered)
         const activeEp = getActiveEndpoint();
@@ -1688,6 +1685,44 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
                 ctx.fillText('NOT REACHABLE', x, y);
             }
             ctx.restore();
+        }
+
+        // Filter-matching rings — high-contrast version, drawn LAST so nothing
+        // sits on top of them. Each match gets:
+        //   • dark 6 px outer halo (separates the ring from the busy map)
+        //   • bright green 3 px inner ring + 40 % green fill
+        //   • a 3 px solid green dot at the centre, so the eye anchors even
+        //     when the ring spills off-screen.
+        if (traverseResult && traverseResult.endpoints && filter.active) {
+            const ringR = cfgI('ui.filter.ring.radius', 42);
+            const ringColor = 'rgba(50, 230, 110, 1.0)';
+            const ringFill  = 'rgba(50, 230, 110, 0.40)';
+            const haloColor = 'rgba(0, 0, 0, 0.85)';
+            for (const nodeId of Object.keys(traverseResult.endpoints)) {
+                const p = points[nodeId];
+                if (!p || p.type !== 'site') continue;
+                if (!siteMatchesFilter(p, filter)) continue;
+                const cx = p.x * imgW, cy = p.y * imgH;
+                // Dark halo
+                ctx.beginPath();
+                ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
+                ctx.lineWidth = 6;
+                ctx.strokeStyle = haloColor;
+                ctx.stroke();
+                // Bright ring + translucent fill
+                ctx.beginPath();
+                ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
+                ctx.fillStyle = ringFill;
+                ctx.fill();
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = ringColor;
+                ctx.stroke();
+                // Centre anchor dot
+                ctx.beginPath();
+                ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+                ctx.fillStyle = ringColor;
+                ctx.fill();
+            }
         }
 
         // Draw selected start node highlight
