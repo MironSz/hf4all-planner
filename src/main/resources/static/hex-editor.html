@@ -83,6 +83,9 @@
   <label class="numfield" title="Mask is drawn this many times the hex size (1.0 = exact, 1.2 = 20 % bigger).">scale
     <input id="mask-scale-input" type="number" min="1" max="2" step="0.05">
   </label>
+  <label class="numfield" title="Gaussian blur radius (px) applied to the painted mask. Larger = smoother gradient between the 6 sampled side-colours.">blur
+    <input id="mask-blur-input" type="number" min="0" max="40" step="1">
+  </label>
   <button id="reload">Reload</button>
   <button id="save" class="primary">Save</button>
   <span id="status">Loading…</span>
@@ -168,10 +171,13 @@ async function loadHexes() {
       if (!isNaN(s) && s > 0) MASK_SCALE = s;
       const o = parseFloat(cfg['ui.hex.hide.mask.opacity']);
       if (!isNaN(o) && o >= 0 && o <= 1) MASK_OPACITY = o;
+      const blr = parseFloat(cfg['ui.hex.hide.mask.blur']);
+      if (!isNaN(blr) && blr >= 0) MASK_BLUR = blr;
     }
     // Sync the input fields in the toolbar to whichever values won.
     $('mask-opacity-input').value = MASK_OPACITY;
     $('mask-scale-input').value   = MASK_SCALE;
+    $('mask-blur-input').value    = MASK_BLUR;
     neighbors = nbResp.ok    ? await nbResp.json()   : {};
     bodies    = bodyResp.ok  ? await bodyResp.json() : {};
     dirty.clear();
@@ -284,21 +290,28 @@ function pointInsideAnyNeighbor(x, y, shapes) {
   return false;
 }
 
-/** Median RGB of pixels in a small box outside `(midX, midY)` along normal
- *  `(nx, ny)`, skipping any pixel that falls inside a neighbour shape.
+/** Median RGB of pixels just outside the hex side `(c1 → c2)`, sampled along
+ *  the full length of the side (corner-to-corner) and a few pixels deep,
+ *  skipping any pixel inside a neighbour shape.
  *
- *  `dStart` is the offset (in pixels) from the original side midpoint at
- *  which sampling begins — set to just past the expanded mask edge so the
- *  median reflects the colour right next to the painted region rather than
- *  averaging in pixels the mask itself will overpaint.
+ *  `dStart` is the depth (px) at which sampling begins — set to just past the
+ *  expanded mask edge so the median reflects the colour the painted region
+ *  butts up against, not pixels the mask itself will overpaint.
  *
- *  Returns null if every candidate sample fell inside a neighbour. */
-function sampleSideMedian(midX, midY, nx, ny, neighborShapes, dStart) {
+ *  Returns null if every candidate fell inside a neighbour (or out of bounds). */
+function sampleSideMedian(c1, c2, nx, ny, neighborShapes, dStart) {
+  const midX = (c1[0] + c2[0]) / 2;
+  const midY = (c1[1] + c2[1]) / 2;
+  const sideLen = Math.hypot(c2[0] - c1[0], c2[1] - c1[1]);
+  // Tangent direction along the side (perpendicular to outward normal).
+  const tx = -ny, ty = nx;
+  // Sample along the side, leaving 4 px clear of each corner so we don't
+  // accidentally pull in colour from the adjacent side's region.
+  const tangentMax  = Math.max(0, sideLen / 2 - 4);
+  const tangentStep = Math.max(1, Math.floor(sideLen / 12));
   const reds = [], greens = [], blues = [];
-  const dEnd = dStart + 8;
-  for (let d = dStart; d <= dEnd; d += 2) {
-    for (let off = -8; off <= 8; off += 4) {
-      const tx = -ny, ty = nx;
+  for (let d = dStart; d <= dStart + 6; d += 1) {
+    for (let off = -tangentMax; off <= tangentMax; off += tangentStep) {
       const x = Math.round(midX + nx * d + tx * off);
       const y = Math.round(midY + ny * d + ty * off);
       if (x < 0 || x >= imgW || y < 0 || y >= imgH) continue;
@@ -316,10 +329,13 @@ function sampleSideMedian(midX, midY, nx, ny, neighborShapes, dStart) {
 
 // Mask is drawn slightly larger than the hex so it comfortably overpaints any
 // anti-aliased pixels right at the printed border, and at less than full
-// opacity so a hint of the underlying site artwork shows through. Both values
-// are overridden by /api/config when loadHexes() runs.
+// opacity so a hint of the underlying site artwork shows through. The blur
+// stdDeviation softens the boundaries between the 6 colour-sampled triangles
+// so they read as a smooth gradient instead of a sharp pinwheel. All three
+// values are overridden by /api/config when loadHexes() runs.
 let MASK_SCALE   = 1.20;
 let MASK_OPACITY = 0.5;
+let MASK_BLUR    = 6;     // Gaussian stdDeviation in pixels; 0 disables.
 
 /** Lazily-created shared <defs> element for SVG <mask> definitions. */
 function ensureDefs() {
@@ -331,27 +347,50 @@ function ensureDefs() {
   return defs;
 }
 
-/** Build a <mask> that paints WHITE everywhere except the neighbour shapes
- *  (drawn BLACK), so any group referencing it via mask=url(#id) won't render
- *  pixels that fall inside a neighbour. Returns the mask id, or null when
- *  there are no neighbours to exclude. */
+/** Single shared Gaussian-blur filter used by every hide-mask group. The
+ *  stdDeviation tracks MASK_BLUR; we update it in place when the user
+ *  changes the input field rather than recreating the filter element. */
+function ensureBlurFilter() {
+  const id = 'hex-mask-blur';
+  let f = ensureDefs().querySelector('#' + id);
+  if (!f) {
+    f = document.createElementNS(SVG_NS, 'filter');
+    f.id = id;
+    // Generous bounds so the blur isn't clipped against the filter region;
+    // the SVG <mask> still constrains the painted area in the end.
+    f.setAttribute('x', '-20%');  f.setAttribute('y', '-20%');
+    f.setAttribute('width', '140%'); f.setAttribute('height', '140%');
+    const b = document.createElementNS(SVG_NS, 'feGaussianBlur');
+    b.setAttribute('stdDeviation', String(MASK_BLUR));
+    f.appendChild(b);
+    ensureDefs().appendChild(f);
+  } else {
+    f.querySelector('feGaussianBlur')?.setAttribute('stdDeviation', String(MASK_BLUR));
+  }
+  return id;
+}
+
+/** Build a <mask> that paints WHITE everywhere except the shapes we must
+ *  never paint over — every celestial body and every neighbouring hex.
+ *  The mask has NO white restoration polygon for the painted hex itself,
+ *  so a site that sits inside a body (Mars/Callisto/…) does not render
+ *  the painted region over the body. The rule "never paint over planets"
+ *  is absolute. */
 function buildNeighborMask(id) {
-  const nb = neighbors[id];
-  if (!nb || ((nb.sites || []).length === 0 && (nb.bodies || []).length === 0)) return null;
+  const nb = neighbors[id] || { sites: [], bodies: [] };
   const defs = ensureDefs();
   const maskId = 'nbmask-' + id;
-  // Replace any existing definition.
   defs.querySelector('#' + CSS.escape(maskId))?.remove();
   const m = document.createElementNS(SVG_NS, 'mask');
   m.id = maskId;
   m.setAttribute('maskUnits', 'userSpaceOnUse');
-  // Full-image white rect = paint by default.
+  // White rect = paint by default.
   const rect = document.createElementNS(SVG_NS, 'rect');
   rect.setAttribute('x', 0); rect.setAttribute('y', 0);
   rect.setAttribute('width', imgW); rect.setAttribute('height', imgH);
   rect.setAttribute('fill', 'white');
   m.appendChild(rect);
-  // Black neighbour-site polygons → carve out.
+  // Black neighbour-hex polygons → carve out.
   for (const sid of nb.sites || []) {
     const nh = hexes[sid];
     if (!nh) continue;
@@ -361,9 +400,9 @@ function buildNeighborMask(id) {
     p.setAttribute('fill', 'black');
     m.appendChild(p);
   }
-  // Black neighbour-body circles → carve out.
-  for (const bname of nb.bodies || []) {
-    const b = bodies[bname];
+  // Black ALL bodies → carve out. Never paint over any planet/moon, even
+  // ones whose 30 % neighbour test didn't tag this hex.
+  for (const [, b] of Object.entries(bodies)) {
     if (!b || b.removed) continue;
     const c = document.createElementNS(SVG_NS, 'circle');
     c.setAttribute('cx', b.cx * imgW);
@@ -393,10 +432,14 @@ function drawMask(id) {
   g.id = 'mask-' + id;
   g.setAttribute('class', 'hide-mask');
   g.setAttribute('opacity', MASK_OPACITY);
-  // If this hex has neighbours, point the SVG `mask` attribute at a
-  // black-cutouts mask so we don't paint over those neighbours.
-  const nbMaskId = buildNeighborMask(id);
-  if (nbMaskId) g.setAttribute('mask', `url(#${nbMaskId})`);
+  // Apply the cutout mask. It carves out every celestial body plus the
+  // neighbour hexes — never paint over planets, even where this hex would
+  // otherwise sit on top of one. Sites fully inside a body therefore
+  // render no paint at all.
+  g.setAttribute('mask', `url(#${buildNeighborMask(id)})`);
+  // Apply the shared blur filter so adjacent triangle colours melt into
+  // each other instead of meeting at sharp seams at the centroid.
+  if (MASK_BLUR > 0) g.setAttribute('filter', `url(#${ensureBlurFilter()})`);
 
   // Pass 1 — sample colour for each side, skipping pixels that fall inside
   // any neighbour. Sides where every candidate pixel was a neighbour leave
@@ -414,7 +457,7 @@ function drawMask(id) {
     // area the mask will visually butt up against, not pixels the mask
     // itself will overpaint.
     const dStart = Math.max(2, len * (MASK_SCALE - 1) + 2);
-    colours[k] = sampleSideMedian(midX, midY, dx / len, dy / len, neighborShapes, dStart);
+    colours[k] = sampleSideMedian(c1, c2, dx / len, dy / len, neighborShapes, dStart);
   }
   // Pass 2 — borrow opposite-side colour for any blocked side; if even the
   // opposite was blocked, fall back to neutral grey.
@@ -719,6 +762,16 @@ $('mask-scale-input').addEventListener('input', e => {
   const v = parseFloat(e.target.value);
   if (!isNaN(v) && v > 0) {
     MASK_SCALE = v;
+    redrawAllMasks();
+  }
+});
+$('mask-blur-input').addEventListener('input', e => {
+  const v = parseFloat(e.target.value);
+  if (!isNaN(v) && v >= 0) {
+    MASK_BLUR = v;
+    // The shared blur filter is updated in place by ensureBlurFilter; just
+    // re-apply it so existing masks pick up the new stdDeviation.
+    ensureBlurFilter();
     redrawAllMasks();
   }
 });
