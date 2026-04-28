@@ -11,6 +11,9 @@
   #topbar { display: flex; align-items: center; gap: 14px; padding: 8px 14px;
             background: #16213e; border-bottom: 1px solid #333; flex: 0 0 auto; }
   #topbar h2 { font-size: 13px; color: #7ec8e3; font-weight: 600; }
+  #topbar label.numfield { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: #aaa; }
+  #topbar label.numfield input { width: 60px; padding: 3px 5px; background: #0f3460;
+    border: 1px solid #2a4a7a; color: #eee; font-family: inherit; font-size: 12px; border-radius: 3px; }
   button { padding: 5px 10px; background: #0f3460; color: #eee; border: 1px solid #2a4a7a;
            cursor: pointer; font-family: inherit; font-size: 12px; border-radius: 3px; }
   button:hover  { background: #1e4a7a; }
@@ -39,6 +42,14 @@
   .corner.dragging { fill: #f00; }
   .corner.anchor   { fill: #2af; stroke: #fff; stroke-width: 2; }
   button.toggle.on { background: #1e7a3a; border-color: #2aa050; }
+  /* Mask group covers the hex with 6 colour-sampled triangles; corners hidden. */
+  .hide-mask polygon { stroke: none; }
+  .hex-poly.hidden, .corner.hidden { display: none; }
+  .hex-row.hidden span:first-child { color: #888; text-decoration: line-through; }
+  .hex-row button.hide-toggle { padding: 1px 6px; font-size: 10px; margin-left: 6px;
+                                background: #3a2a4a; border-color: #5a3a7a; }
+  .hex-row button.hide-toggle:hover { background: #5a3a7a; }
+  .hex-row.hidden button.hide-toggle { background: #1e4a3a; border-color: #2a6a4a; }
   #sidebar { width: 240px; flex: 0 0 240px; background: #16213e; border-left: 1px solid #333;
              display: flex; flex-direction: column; min-height: 0; }
   #sidebar-head { padding: 8px 12px; font-size: 11px; color: #7ec8e3;
@@ -47,11 +58,13 @@
             color: #eee; font-family: inherit; font-size: 12px; border-radius: 3px; margin-top: 4px; }
   #hex-list { flex: 1; overflow-y: auto; }
   .hex-row { padding: 4px 12px; cursor: pointer; font-size: 11px; border-bottom: 1px solid #1f2942;
-             display: flex; justify-content: space-between; gap: 8px; }
+             display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   .hex-row:hover { background: #0f3460; }
   .hex-row.selected { background: #1e4a7a; }
   .hex-row.dirty   { color: #ffd400; }
   .hex-row .meta   { color: #888; font-size: 10px; }
+  .hex-row .name   { color: #ddd; font-size: 11px; }
+  .hex-row .id     { color: #7ec8e3; font-size: 10px; margin-right: 4px; }
 </style>
 </head>
 <body>
@@ -62,7 +75,14 @@
   <button id="zoom-reset">100%</button>
   <button id="zoom-in">+</button>
   <button id="fit">Fit</button>
-  <button id="regular-mode" class="toggle on" title="When on, dragging a corner keeps the opposite corner fixed and reshapes the hex to remain regular.">Regular mode: ON</button>
+  <button id="hide-all" title="Hide every site (paint over all hexes).">Hide all</button>
+  <button id="show-all" title="Restore every site (remove all masks).">Show all</button>
+  <label class="numfield" title="Mask opacity for hidden hexes (0 transparent — 1 opaque).">opacity
+    <input id="mask-opacity-input" type="number" min="0" max="1" step="0.05">
+  </label>
+  <label class="numfield" title="Mask is drawn this many times the hex size (1.0 = exact, 1.2 = 20 % bigger).">scale
+    <input id="mask-scale-input" type="number" min="1" max="2" step="0.05">
+  </label>
   <button id="reload">Reload</button>
   <button id="save" class="primary">Save</button>
   <span id="status">Loading…</span>
@@ -78,7 +98,7 @@
   <div id="sidebar">
     <div id="sidebar-head">
       Sites — click to focus
-      <input id="search" placeholder="filter (id or partial)…">
+      <input id="search" placeholder="filter by name or id…">
     </div>
     <div id="hex-list"></div>
   </div>
@@ -88,13 +108,17 @@
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const HEXES_URL = '/hex-editor/hexes';
 const SAVE_URL  = '/hex-editor/save';
+const MAP_URL   = '/api/map';
 
 let hexes = {};                 // { sid: hexObj } — corners are normalised [0..1]
+let siteNames = {};             // { sid: siteName } — joined in from /api/map
+let neighbors = {};             // { sid: { sites: [...], bodies: [...] } }
+let bodies = {};                // { name: { cx, cy, r, ... } } — for masking-out
 let imgW = 0, imgH = 0;
 let zoom = 1;
 let dirty = new Set();
 let selectedId = null;
-let regularMode = true;         // when on, dragging a corner keeps the opposite corner fixed
+let imgPixels = null;           // Uint8ClampedArray of the entire board (RGBA). Lazy-init on first hide.
 
 const $ = id => document.getElementById(id);
 const stage    = $('stage');
@@ -121,9 +145,35 @@ board.addEventListener('load', async () => {
 async function loadHexes() {
   setStatus('Loading hexes…');
   try {
-    const r = await fetch(HEXES_URL, { cache: 'no-store' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    hexes = await r.json();
+    const [hexResp, mapResp, cfgResp, nbResp, bodyResp] = await Promise.all([
+      fetch(HEXES_URL,  { cache: 'no-store' }),
+      fetch(MAP_URL,    { cache: 'no-store' }),
+      fetch('/api/config', { cache: 'no-store' }),
+      fetch('/hex-editor/neighbors', { cache: 'no-store' }),
+      fetch('/celestial-body-editor/bodies', { cache: 'no-store' }),
+    ]);
+    if (!hexResp.ok) throw new Error('hexes HTTP ' + hexResp.status);
+    hexes = await hexResp.json();
+    siteNames = {};
+    if (mapResp.ok) {
+      const map = await mapResp.json();
+      const points = map.points || {};
+      for (const [sid, p] of Object.entries(points)) {
+        if (p.siteName) siteNames[sid] = p.siteName;
+      }
+    }
+    if (cfgResp.ok) {
+      const cfg = await cfgResp.json();
+      const s = parseFloat(cfg['ui.hex.hide.mask.scale']);
+      if (!isNaN(s) && s > 0) MASK_SCALE = s;
+      const o = parseFloat(cfg['ui.hex.hide.mask.opacity']);
+      if (!isNaN(o) && o >= 0 && o <= 1) MASK_OPACITY = o;
+    }
+    // Sync the input fields in the toolbar to whichever values won.
+    $('mask-opacity-input').value = MASK_OPACITY;
+    $('mask-scale-input').value   = MASK_SCALE;
+    neighbors = nbResp.ok    ? await nbResp.json()   : {};
+    bodies    = bodyResp.ok  ? await bodyResp.json() : {};
     dirty.clear();
     drawAll();
     setStatus(`Loaded ${Object.keys(hexes).length} hexes`, 'ok');
@@ -151,9 +201,12 @@ function drawAll() {
 function drawHex(id) {
   const h = hexes[id];
   const pts = pixelCorners(h);
+  const polyClasses = ['hex-poly'];
+  if (dirty.has(id)) polyClasses.push('dirty');
+  if (h.hidden)      polyClasses.push('hidden');
   const poly = document.createElementNS(SVG_NS, 'polygon');
   poly.id = 'poly-' + id;
-  poly.setAttribute('class', 'hex-poly' + (dirty.has(id) ? ' dirty' : ''));
+  poly.setAttribute('class', polyClasses.join(' '));
   poly.setAttribute('points', pts.map(p => p.join(',')).join(' '));
   poly.addEventListener('click', () => selectHex(id));
   overlay.appendChild(poly);
@@ -161,7 +214,7 @@ function drawHex(id) {
     const [x, y] = pts[i];
     const c = document.createElementNS(SVG_NS, 'circle');
     c.id = `c-${id}-${i}`;
-    c.setAttribute('class', 'corner');
+    c.setAttribute('class', 'corner' + (h.hidden ? ' hidden' : ''));
     c.setAttribute('cx', x);
     c.setAttribute('cy', y);
     c.setAttribute('r', 6);
@@ -170,6 +223,240 @@ function drawHex(id) {
     c.addEventListener('mousedown', startDrag);
     overlay.appendChild(c);
   }
+  if (h.hidden) drawMask(id);
+}
+
+// --- Hide / mask -------------------------------------------------------------
+
+/** Cache the entire board image into a flat RGBA buffer the first time
+ *  someone needs to sample it. ~78 MB at 5400×3619 — done once. */
+function ensureImagePixels() {
+  if (imgPixels) return;
+  const cv = document.createElement('canvas');
+  cv.width = imgW;
+  cv.height = imgH;
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(board, 0, 0);
+  imgPixels = ctx.getImageData(0, 0, imgW, imgH).data;
+}
+
+/** Ray-casting point-in-polygon test (poly = array of [x, y] in pixel space). */
+function pointInPolygon(x, y, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i][0], yi = poly[i][1];
+    const xj = poly[j][0], yj = poly[j][1];
+    if ((yi > y) !== (yj > y) &&
+        (x < (xj - xi) * (y - yi) / ((yj - yi) || 1e-12) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/** Resolve the precomputed neighbour list for a hex into pixel-space shapes
+ *  (polygons + circles) we can run point-in-shape tests against. */
+function getNeighborShapes(id) {
+  const nb = neighbors[id];
+  const polys = [], circles = [];
+  if (!nb) return { polys, circles };
+  for (const sid of nb.sites || []) {
+    const nh = hexes[sid];
+    if (!nh) continue;
+    polys.push(nh.corners.map(([x, y]) => [x * imgW, y * imgH]));
+  }
+  for (const bname of nb.bodies || []) {
+    const b = bodies[bname];
+    if (!b || b.removed) continue;
+    circles.push({ cx: b.cx * imgW, cy: b.cy * imgH, r2: (b.r * imgW) ** 2 });
+  }
+  return { polys, circles };
+}
+
+function pointInsideAnyNeighbor(x, y, shapes) {
+  for (const poly of shapes.polys) {
+    if (pointInPolygon(x, y, poly)) return true;
+  }
+  for (const c of shapes.circles) {
+    const dx = x - c.cx, dy = y - c.cy;
+    if (dx * dx + dy * dy <= c.r2) return true;
+  }
+  return false;
+}
+
+/** Median RGB of pixels in a small box outside `(midX, midY)` along normal
+ *  `(nx, ny)`, skipping any pixel that falls inside a neighbour shape.
+ *
+ *  `dStart` is the offset (in pixels) from the original side midpoint at
+ *  which sampling begins — set to just past the expanded mask edge so the
+ *  median reflects the colour right next to the painted region rather than
+ *  averaging in pixels the mask itself will overpaint.
+ *
+ *  Returns null if every candidate sample fell inside a neighbour. */
+function sampleSideMedian(midX, midY, nx, ny, neighborShapes, dStart) {
+  const reds = [], greens = [], blues = [];
+  const dEnd = dStart + 8;
+  for (let d = dStart; d <= dEnd; d += 2) {
+    for (let off = -8; off <= 8; off += 4) {
+      const tx = -ny, ty = nx;
+      const x = Math.round(midX + nx * d + tx * off);
+      const y = Math.round(midY + ny * d + ty * off);
+      if (x < 0 || x >= imgW || y < 0 || y >= imgH) continue;
+      if (neighborShapes && pointInsideAnyNeighbor(x, y, neighborShapes)) continue;
+      const k = (y * imgW + x) * 4;
+      reds.push(imgPixels[k]);
+      greens.push(imgPixels[k + 1]);
+      blues.push(imgPixels[k + 2]);
+    }
+  }
+  if (reds.length === 0) return null;
+  const med = arr => { arr.sort((a, b) => a - b); return arr[Math.floor(arr.length / 2)]; };
+  return [med(reds), med(greens), med(blues)];
+}
+
+// Mask is drawn slightly larger than the hex so it comfortably overpaints any
+// anti-aliased pixels right at the printed border, and at less than full
+// opacity so a hint of the underlying site artwork shows through. Both values
+// are overridden by /api/config when loadHexes() runs.
+let MASK_SCALE   = 1.20;
+let MASK_OPACITY = 0.5;
+
+/** Lazily-created shared <defs> element for SVG <mask> definitions. */
+function ensureDefs() {
+  let defs = overlay.querySelector('defs');
+  if (!defs) {
+    defs = document.createElementNS(SVG_NS, 'defs');
+    overlay.insertBefore(defs, overlay.firstChild);
+  }
+  return defs;
+}
+
+/** Build a <mask> that paints WHITE everywhere except the neighbour shapes
+ *  (drawn BLACK), so any group referencing it via mask=url(#id) won't render
+ *  pixels that fall inside a neighbour. Returns the mask id, or null when
+ *  there are no neighbours to exclude. */
+function buildNeighborMask(id) {
+  const nb = neighbors[id];
+  if (!nb || ((nb.sites || []).length === 0 && (nb.bodies || []).length === 0)) return null;
+  const defs = ensureDefs();
+  const maskId = 'nbmask-' + id;
+  // Replace any existing definition.
+  defs.querySelector('#' + CSS.escape(maskId))?.remove();
+  const m = document.createElementNS(SVG_NS, 'mask');
+  m.id = maskId;
+  m.setAttribute('maskUnits', 'userSpaceOnUse');
+  // Full-image white rect = paint by default.
+  const rect = document.createElementNS(SVG_NS, 'rect');
+  rect.setAttribute('x', 0); rect.setAttribute('y', 0);
+  rect.setAttribute('width', imgW); rect.setAttribute('height', imgH);
+  rect.setAttribute('fill', 'white');
+  m.appendChild(rect);
+  // Black neighbour-site polygons → carve out.
+  for (const sid of nb.sites || []) {
+    const nh = hexes[sid];
+    if (!nh) continue;
+    const corners = nh.corners.map(([x, y]) => `${x * imgW},${y * imgH}`).join(' ');
+    const p = document.createElementNS(SVG_NS, 'polygon');
+    p.setAttribute('points', corners);
+    p.setAttribute('fill', 'black');
+    m.appendChild(p);
+  }
+  // Black neighbour-body circles → carve out.
+  for (const bname of nb.bodies || []) {
+    const b = bodies[bname];
+    if (!b || b.removed) continue;
+    const c = document.createElementNS(SVG_NS, 'circle');
+    c.setAttribute('cx', b.cx * imgW);
+    c.setAttribute('cy', b.cy * imgH);
+    c.setAttribute('r',  b.r  * imgW);
+    c.setAttribute('fill', 'black');
+    m.appendChild(c);
+  }
+  defs.appendChild(m);
+  return maskId;
+}
+
+function drawMask(id) {
+  ensureImagePixels();
+  const h = hexes[id];
+  const pts = pixelCorners(h);
+  const cx = pts.reduce((s, p) => s + p[0], 0) / 6;
+  const cy = pts.reduce((s, p) => s + p[1], 0) / 6;
+  // Scale corners outward from the centroid for the drawn polygon.
+  const ptsBig = pts.map(([x, y]) => [
+    cx + (x - cx) * MASK_SCALE,
+    cy + (y - cy) * MASK_SCALE,
+  ]);
+  // Remove any prior mask group for this hex.
+  $('mask-' + id)?.remove();
+  const g = document.createElementNS(SVG_NS, 'g');
+  g.id = 'mask-' + id;
+  g.setAttribute('class', 'hide-mask');
+  g.setAttribute('opacity', MASK_OPACITY);
+  // If this hex has neighbours, point the SVG `mask` attribute at a
+  // black-cutouts mask so we don't paint over those neighbours.
+  const nbMaskId = buildNeighborMask(id);
+  if (nbMaskId) g.setAttribute('mask', `url(#${nbMaskId})`);
+
+  // Pass 1 — sample colour for each side, skipping pixels that fall inside
+  // any neighbour. Sides where every candidate pixel was a neighbour leave
+  // a null hole that's filled in pass 2.
+  const neighborShapes = getNeighborShapes(id);
+  const colours = new Array(6).fill(null);
+  for (let k = 0; k < 6; k++) {
+    const c1 = pts[k];
+    const c2 = pts[(k + 1) % 6];
+    const midX = (c1[0] + c2[0]) / 2;
+    const midY = (c1[1] + c2[1]) / 2;
+    const dx = midX - cx, dy = midY - cy;
+    const len = Math.hypot(dx, dy) || 1;       // apothem of THIS hex
+    // Sample just past the expanded-mask edge so the colour reflects the
+    // area the mask will visually butt up against, not pixels the mask
+    // itself will overpaint.
+    const dStart = Math.max(2, len * (MASK_SCALE - 1) + 2);
+    colours[k] = sampleSideMedian(midX, midY, dx / len, dy / len, neighborShapes, dStart);
+  }
+  // Pass 2 — borrow opposite-side colour for any blocked side; if even the
+  // opposite was blocked, fall back to neutral grey.
+  for (let k = 0; k < 6; k++) {
+    if (colours[k] === null) colours[k] = colours[(k + 3) % 6];
+  }
+  for (let k = 0; k < 6; k++) {
+    if (colours[k] === null) colours[k] = [128, 128, 128];
+  }
+
+  // Build the 6 triangles using the resolved colours.
+  for (let k = 0; k < 6; k++) {
+    const b1 = ptsBig[k];
+    const b2 = ptsBig[(k + 1) % 6];
+    const [r, gC, bC] = colours[k];
+    const tri = document.createElementNS(SVG_NS, 'polygon');
+    tri.setAttribute('points', `${cx},${cy} ${b1[0]},${b1[1]} ${b2[0]},${b2[1]}`);
+    tri.setAttribute('fill', `rgb(${r},${gC},${bC})`);
+    g.appendChild(tri);
+  }
+  overlay.appendChild(g);
+}
+
+function setHidden(id, hidden) {
+  const h = hexes[id];
+  h.hidden = hidden;
+  h.edited = true;
+  dirty.add(id);
+  // Re-render this hex from scratch (handles both directions cleanly).
+  $('poly-'  + id)?.remove();
+  $('mask-'  + id)?.remove();
+  for (let i = 0; i < 6; i++) $(`c-${id}-${i}`)?.remove();
+  drawHex(id);
+  // Update sidebar row appearance + button label.
+  const row = $('row-' + id);
+  if (row) {
+    row.classList.toggle('hidden', hidden);
+    row.classList.add('dirty');
+    const btn = row.querySelector('.hide-toggle');
+    if (btn) btn.textContent = hidden ? 'Show' : 'Hide';
+  }
+  updateDirtyStatus();
 }
 
 function pixelCorners(h) {
@@ -216,12 +503,11 @@ function startDrag(e) {
   selectHex(id);
   dragState = { id, idx, target: e.target };
   e.target.classList.add('dragging');
-  if (regularMode) {
-    const opp = (idx + 3) % 6;
-    const oppEl = $(`c-${id}-${opp}`);
-    if (oppEl) oppEl.classList.add('anchor');
-    dragState.anchorEl = oppEl;
-  }
+  // Highlight the opposite corner — it stays fixed during the drag.
+  const opp = (idx + 3) % 6;
+  const oppEl = $(`c-${id}-${opp}`);
+  if (oppEl) oppEl.classList.add('anchor');
+  dragState.anchorEl = oppEl;
   document.addEventListener('mousemove', onDrag);
   document.addEventListener('mouseup', endDrag);
 }
@@ -235,17 +521,12 @@ function onDrag(e) {
   const py = Math.max(0, Math.min(imgH, y));
   const h = hexes[dragState.id];
 
-  if (regularMode) {
-    // Anchor the opposite corner; recompute all 6 to keep a regular hexagon.
-    const a    = dragState.idx;
-    const b    = (a + 3) % 6;
-    const oppN = h.corners[b];                       // unchanged anchor (normalised)
-    const newCorners = recomputeFromOpposites(
-        [px / imgW, py / imgH], a, oppN);
-    if (newCorners) h.corners = newCorners;
-  } else {
-    h.corners[dragState.idx] = [px / imgW, py / imgH];
-  }
+  // Anchor the opposite corner; recompute all 6 to keep a regular hexagon.
+  const a    = dragState.idx;
+  const b    = (a + 3) % 6;
+  const oppN = h.corners[b];                       // unchanged anchor (normalised)
+  const newCorners = recomputeFromOpposites([px / imgW, py / imgH], a, oppN);
+  if (newCorners) h.corners = newCorners;
 
   updateHexPoly(dragState.id);
   markDirty(dragState.id);
@@ -309,22 +590,47 @@ function focusHex(id) {
 
 function addRow(id) {
   const h = hexes[id];
+  const name = siteNames[id] || '';
   const div = document.createElement('div');
   div.id = 'row-' + id;
-  div.className = 'hex-row' + (dirty.has(id) ? ' dirty' : '');
-  const meta = h.quality !== undefined
-      ? `q=${h.quality.toFixed(2)}`
-      : '';
-  div.innerHTML = `<span>${id}</span><span class="meta">${meta}</span>`;
+  div.className = 'hex-row' + (dirty.has(id) ? ' dirty' : '') + (h.hidden ? ' hidden' : '');
+  div.dataset.search = (id + ' ' + name).toLowerCase();
+  const meta = h.quality !== undefined ? `q=${h.quality.toFixed(2)}` : '';
+  const left = document.createElement('span');
+  left.style.display = 'flex';
+  left.style.flexDirection = 'column';
+  left.style.minWidth = '0';
+  left.style.flex = '1';
+  // Site name on top (or fall back to "id #N" when name is missing).
+  const nameEl = document.createElement('span');
+  nameEl.className = 'name';
+  nameEl.style.overflow = 'hidden';
+  nameEl.style.textOverflow = 'ellipsis';
+  nameEl.style.whiteSpace = 'nowrap';
+  nameEl.textContent = name || `#${id}`;
+  // ID + quality below.
+  const subEl = document.createElement('span');
+  subEl.innerHTML = `<span class="id">${id}</span><span class="meta">${meta}</span>`;
+  left.appendChild(nameEl);
+  left.appendChild(subEl);
+  const btn = document.createElement('button');
+  btn.className = 'hide-toggle';
+  btn.textContent = h.hidden ? 'Show' : 'Hide';
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setHidden(id, !hexes[id].hidden);
+  });
+  div.appendChild(left);
+  div.appendChild(btn);
   div.addEventListener('click', () => focusHex(id));
   hexList.appendChild(div);
 }
 
 $('search').addEventListener('input', e => {
-  const q = e.target.value.toLowerCase();
+  const q = e.target.value.trim().toLowerCase();
   for (const row of hexList.children) {
-    const id = row.id.replace(/^row-/, '');
-    row.style.display = id.toLowerCase().includes(q) ? '' : 'none';
+    const haystack = row.dataset.search || '';
+    row.style.display = (q === '' || haystack.includes(q)) ? '' : 'none';
   }
 });
 
@@ -380,17 +686,40 @@ document.addEventListener('mouseup', () => {
 
 // --- Save / reload -----------------------------------------------------------
 
-const regularBtn = $('regular-mode');
-function setRegularMode(on) {
-  regularMode = on;
-  regularBtn.textContent = on ? 'Regular mode: ON' : 'Regular mode: OFF';
-  regularBtn.classList.toggle('on', on);
+function redrawAllMasks() {
+  for (const [id, h] of Object.entries(hexes)) {
+    if (h.hidden) drawMask(id);
+  }
 }
-regularBtn.addEventListener('click', () => setRegularMode(!regularMode));
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'r' && !e.ctrlKey && !e.metaKey
-      && e.target.tagName !== 'INPUT') {
-    setRegularMode(!regularMode);
+
+function setHiddenAll(hidden) {
+  let touched = 0;
+  setStatus(`${hidden ? 'Hiding' : 'Showing'} all sites…`);
+  for (const id of Object.keys(hexes)) {
+    if (!!hexes[id].hidden === hidden) continue;
+    setHidden(id, hidden);
+    touched += 1;
+  }
+  if (touched === 0) {
+    setStatus(`All sites already ${hidden ? 'hidden' : 'visible'}`, 'ok');
+  }
+}
+
+$('hide-all').addEventListener('click', () => setHiddenAll(true));
+$('show-all').addEventListener('click', () => setHiddenAll(false));
+
+$('mask-opacity-input').addEventListener('input', e => {
+  const v = parseFloat(e.target.value);
+  if (!isNaN(v) && v >= 0 && v <= 1) {
+    MASK_OPACITY = v;
+    redrawAllMasks();
+  }
+});
+$('mask-scale-input').addEventListener('input', e => {
+  const v = parseFloat(e.target.value);
+  if (!isNaN(v) && v > 0) {
+    MASK_SCALE = v;
+    redrawAllMasks();
   }
 });
 

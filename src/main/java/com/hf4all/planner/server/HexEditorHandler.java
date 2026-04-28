@@ -36,9 +36,10 @@ import java.util.Map;
  */
 public final class HexEditorHandler implements HttpHandler {
 
-    private static final Path EDITED_PATH   = Path.of("src", "main", "resources", "static", "hexes-edited.json");
-    private static final Path ORIGINAL_PATH = Path.of("src", "main", "resources", "static", "hexes.json");
-    private static final Path HTML_PATH     = Path.of("src", "main", "resources", "static", "hex-editor.html");
+    private static final Path EDITED_PATH    = Path.of("src", "main", "resources", "static", "hexes-edited.json");
+    private static final Path ORIGINAL_PATH  = Path.of("src", "main", "resources", "static", "hexes.json");
+    private static final Path HTML_PATH      = Path.of("src", "main", "resources", "static", "hex-editor.html");
+    private static final Path NEIGHBORS_PATH = Path.of("src", "main", "resources", "static", "hex-neighbors.json");
 
     private static final String NO_CACHE = "no-store, no-cache, must-revalidate, max-age=0";
 
@@ -52,6 +53,8 @@ public final class HexEditorHandler implements HttpHandler {
                 serveDisk(exchange, HTML_PATH, "text/html; charset=UTF-8", "static/hex-editor.html");
             } else if ("/hex-editor/hexes".equals(path) && "GET".equals(method)) {
                 serveHexes(exchange);
+            } else if ("/hex-editor/neighbors".equals(path) && "GET".equals(method)) {
+                serveNeighbors(exchange);
             } else if ("/hex-editor/save".equals(path) && "POST".equals(method)) {
                 if (!exchange.getRemoteAddress().getAddress().isLoopbackAddress()) {
                     byte[] msg = "hex-editor edits are only accepted from localhost".getBytes(StandardCharsets.UTF_8);
@@ -123,6 +126,21 @@ public final class HexEditorHandler implements HttpHandler {
             fresh.add(e.getKey(), e.getValue());
         }
         return gson.toJson(fresh).getBytes(StandardCharsets.UTF_8);
+    }
+
+    private void serveNeighbors(HttpExchange exchange) throws IOException {
+        if (!Files.exists(NEIGHBORS_PATH)) {
+            // No precomputed neighbours yet → empty object so the client can fall back gracefully.
+            byte[] empty = "{}".getBytes(StandardCharsets.UTF_8);
+            setNoCache(exchange, "application/json; charset=UTF-8");
+            exchange.sendResponseHeaders(200, empty.length);
+            try (var os = exchange.getResponseBody()) { os.write(empty); }
+            return;
+        }
+        byte[] body = Files.readAllBytes(NEIGHBORS_PATH);
+        setNoCache(exchange, "application/json; charset=UTF-8");
+        exchange.sendResponseHeaders(200, body.length);
+        try (var os = exchange.getResponseBody()) { os.write(body); }
     }
 
     private void saveHexes(HttpExchange exchange) throws IOException {

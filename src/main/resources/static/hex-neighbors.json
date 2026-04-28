@@ -1,0 +1,818 @@
+{
+  "4": {
+    "sites": [],
+    "bodies": []
+  },
+  "13": {
+    "sites": [],
+    "bodies": []
+  },
+  "24": {
+    "sites": [],
+    "bodies": []
+  },
+  "35": {
+    "sites": [],
+    "bodies": []
+  },
+  "114": {
+    "sites": [
+      "115"
+    ],
+    "bodies": [
+      "Earth",
+      "Luna"
+    ]
+  },
+  "115": {
+    "sites": [
+      "114"
+    ],
+    "bodies": [
+      "Earth",
+      "Luna"
+    ]
+  },
+  "129": {
+    "sites": [],
+    "bodies": []
+  },
+  "132": {
+    "sites": [],
+    "bodies": []
+  },
+  "206": {
+    "sites": [],
+    "bodies": []
+  },
+  "217": {
+    "sites": [],
+    "bodies": []
+  },
+  "228": {
+    "sites": [],
+    "bodies": []
+  },
+  "241": {
+    "sites": [],
+    "bodies": []
+  },
+  "260": {
+    "sites": [],
+    "bodies": []
+  },
+  "261": {
+    "sites": [],
+    "bodies": []
+  },
+  "273": {
+    "sites": [],
+    "bodies": []
+  },
+  "279": {
+    "sites": [],
+    "bodies": []
+  },
+  "280": {
+    "sites": [],
+    "bodies": []
+  },
+  "289": {
+    "sites": [],
+    "bodies": []
+  },
+  "301": {
+    "sites": [],
+    "bodies": []
+  },
+  "308": {
+    "sites": [],
+    "bodies": []
+  },
+  "333": {
+    "sites": [],
+    "bodies": []
+  },
+  "340": {
+    "sites": [],
+    "bodies": [
+      "Mars"
+    ]
+  },
+  "341": {
+    "sites": [],
+    "bodies": [
+      "Mars"
+    ]
+  },
+  "342": {
+    "sites": [],
+    "bodies": [
+      "Mars"
+    ]
+  },
+  "345": {
+    "sites": [
+      "346"
+    ],
+    "bodies": [
+      "Mercury"
+    ]
+  },
+  "346": {
+    "sites": [
+      "345"
+    ],
+    "bodies": [
+      "Mercury"
+    ]
+  },
+  "348": {
+    "sites": [],
+    "bodies": []
+  },
+  "349": {
+    "sites": [],
+    "bodies": []
+  },
+  "350": {
+    "sites": [],
+    "bodies": []
+  },
+  "351": {
+    "sites": [],
+    "bodies": []
+  },
+  "352": {
+    "sites": [],
+    "bodies": []
+  },
+  "353": {
+    "sites": [],
+    "bodies": []
+  },
+  "362": {
+    "sites": [],
+    "bodies": []
+  },
+  "363": {
+    "sites": [],
+    "bodies": []
+  },
+  "364": {
+    "sites": [],
+    "bodies": []
+  },
+  "365": {
+    "sites": [],
+    "bodies": []
+  },
+  "370": {
+    "sites": [],
+    "bodies": []
+  },
+  "377": {
+    "sites": [],
+    "bodies": []
+  },
+  "379": {
+    "sites": [],
+    "bodies": []
+  },
+  "380": {
+    "sites": [],
+    "bodies": []
+  },
+  "381": {
+    "sites": [],
+    "bodies": []
+  },
+  "382": {
+    "sites": [],
+    "bodies": []
+  },
+  "383": {
+    "sites": [],
+    "bodies": []
+  },
+  "389": {
+    "sites": [],
+    "bodies": []
+  },
+  "390": {
+    "sites": [],
+    "bodies": []
+  },
+  "391": {
+    "sites": [],
+    "bodies": []
+  },
+  "392": {
+    "sites": [],
+    "bodies": []
+  },
+  "397": {
+    "sites": [],
+    "bodies": []
+  },
+  "403": {
+    "sites": [],
+    "bodies": []
+  },
+  "406": {
+    "sites": [],
+    "bodies": []
+  },
+  "410": {
+    "sites": [],
+    "bodies": []
+  },
+  "422": {
+    "sites": [],
+    "bodies": []
+  },
+  "426": {
+    "sites": [],
+    "bodies": []
+  },
+  "427": {
+    "sites": [],
+    "bodies": []
+  },
+  "428": {
+    "sites": [],
+    "bodies": []
+  },
+  "429": {
+    "sites": [],
+    "bodies": []
+  },
+  "435": {
+    "sites": [],
+    "bodies": []
+  },
+  "437": {
+    "sites": [],
+    "bodies": []
+  },
+  "438": {
+    "sites": [],
+    "bodies": []
+  },
+  "442": {
+    "sites": [],
+    "bodies": []
+  },
+  "450": {
+    "sites": [],
+    "bodies": []
+  },
+  "451": {
+    "sites": [],
+    "bodies": []
+  },
+  "453": {
+    "sites": [],
+    "bodies": []
+  },
+  "457": {
+    "sites": [],
+    "bodies": []
+  },
+  "458": {
+    "sites": [],
+    "bodies": []
+  },
+  "459": {
+    "sites": [],
+    "bodies": []
+  },
+  "464": {
+    "sites": [],
+    "bodies": []
+  },
+  "468": {
+    "sites": [],
+    "bodies": []
+  },
+  "472": {
+    "sites": [],
+    "bodies": []
+  },
+  "475": {
+    "sites": [],
+    "bodies": []
+  },
+  "479": {
+    "sites": [],
+    "bodies": []
+  },
+  "480": {
+    "sites": [],
+    "bodies": []
+  },
+  "481": {
+    "sites": [],
+    "bodies": []
+  },
+  "485": {
+    "sites": [],
+    "bodies": []
+  },
+  "490": {
+    "sites": [],
+    "bodies": []
+  },
+  "493": {
+    "sites": [],
+    "bodies": []
+  },
+  "494": {
+    "sites": [],
+    "bodies": []
+  },
+  "495": {
+    "sites": [],
+    "bodies": []
+  },
+  "496": {
+    "sites": [],
+    "bodies": []
+  },
+  "507": {
+    "sites": [],
+    "bodies": []
+  },
+  "508": {
+    "sites": [],
+    "bodies": []
+  },
+  "513": {
+    "sites": [],
+    "bodies": []
+  },
+  "516": {
+    "sites": [],
+    "bodies": []
+  },
+  "522": {
+    "sites": [],
+    "bodies": []
+  },
+  "538": {
+    "sites": [],
+    "bodies": [
+      "Callisto"
+    ]
+  },
+  "539": {
+    "sites": [],
+    "bodies": [
+      "Callisto"
+    ]
+  },
+  "561": {
+    "sites": [],
+    "bodies": [
+      "Europa"
+    ]
+  },
+  "562": {
+    "sites": [],
+    "bodies": [
+      "Europa"
+    ]
+  },
+  "568": {
+    "sites": [],
+    "bodies": [
+      "Ganymede"
+    ]
+  },
+  "569": {
+    "sites": [],
+    "bodies": [
+      "Ganymede"
+    ]
+  },
+  "580": {
+    "sites": [],
+    "bodies": []
+  },
+  "582": {
+    "sites": [],
+    "bodies": []
+  },
+  "583": {
+    "sites": [],
+    "bodies": []
+  },
+  "588": {
+    "sites": [],
+    "bodies": []
+  },
+  "589": {
+    "sites": [],
+    "bodies": []
+  },
+  "591": {
+    "sites": [],
+    "bodies": []
+  },
+  "592": {
+    "sites": [],
+    "bodies": []
+  },
+  "595": {
+    "sites": [],
+    "bodies": []
+  },
+  "597": {
+    "sites": [],
+    "bodies": []
+  },
+  "598": {
+    "sites": [],
+    "bodies": []
+  },
+  "603": {
+    "sites": [],
+    "bodies": []
+  },
+  "604": {
+    "sites": [],
+    "bodies": []
+  },
+  "615": {
+    "sites": [],
+    "bodies": [
+      "Io"
+    ]
+  },
+  "616": {
+    "sites": [],
+    "bodies": [
+      "Io"
+    ]
+  },
+  "617": {
+    "sites": [],
+    "bodies": []
+  },
+  "619": {
+    "sites": [],
+    "bodies": []
+  },
+  "620": {
+    "sites": [],
+    "bodies": []
+  },
+  "624": {
+    "sites": [],
+    "bodies": []
+  },
+  "625": {
+    "sites": [],
+    "bodies": []
+  },
+  "626": {
+    "sites": [],
+    "bodies": []
+  },
+  "631": {
+    "sites": [],
+    "bodies": []
+  },
+  "634": {
+    "sites": [],
+    "bodies": [
+      "Saturn"
+    ]
+  },
+  "639": {
+    "sites": [],
+    "bodies": []
+  },
+  "640": {
+    "sites": [],
+    "bodies": []
+  },
+  "641": {
+    "sites": [],
+    "bodies": []
+  },
+  "644": {
+    "sites": [],
+    "bodies": []
+  },
+  "653": {
+    "sites": [],
+    "bodies": []
+  },
+  "658": {
+    "sites": [],
+    "bodies": []
+  },
+  "660": {
+    "sites": [],
+    "bodies": []
+  },
+  "662": {
+    "sites": [],
+    "bodies": []
+  },
+  "668": {
+    "sites": [],
+    "bodies": []
+  },
+  "672": {
+    "sites": [],
+    "bodies": []
+  },
+  "675": {
+    "sites": [],
+    "bodies": []
+  },
+  "676": {
+    "sites": [],
+    "bodies": []
+  },
+  "677": {
+    "sites": [],
+    "bodies": []
+  },
+  "678": {
+    "sites": [],
+    "bodies": []
+  },
+  "685": {
+    "sites": [
+      "716"
+    ],
+    "bodies": [
+      "Uranus"
+    ]
+  },
+  "704": {
+    "sites": [],
+    "bodies": []
+  },
+  "705": {
+    "sites": [],
+    "bodies": []
+  },
+  "706": {
+    "sites": [],
+    "bodies": []
+  },
+  "707": {
+    "sites": [],
+    "bodies": []
+  },
+  "714": {
+    "sites": [],
+    "bodies": []
+  },
+  "715": {
+    "sites": [],
+    "bodies": []
+  },
+  "716": {
+    "sites": [],
+    "bodies": []
+  },
+  "717": {
+    "sites": [],
+    "bodies": []
+  },
+  "718": {
+    "sites": [],
+    "bodies": []
+  },
+  "720": {
+    "sites": [],
+    "bodies": []
+  },
+  "745": {
+    "sites": [],
+    "bodies": []
+  },
+  "752": {
+    "sites": [],
+    "bodies": [
+      "Triton"
+    ]
+  },
+  "753": {
+    "sites": [],
+    "bodies": [
+      "Triton"
+    ]
+  },
+  "758": {
+    "sites": [],
+    "bodies": []
+  },
+  "763": {
+    "sites": [],
+    "bodies": []
+  },
+  "764": {
+    "sites": [],
+    "bodies": []
+  },
+  "765": {
+    "sites": [],
+    "bodies": []
+  },
+  "770": {
+    "sites": [],
+    "bodies": [
+      "Neptune"
+    ]
+  },
+  "782": {
+    "sites": [],
+    "bodies": []
+  },
+  "783": {
+    "sites": [],
+    "bodies": []
+  },
+  "798": {
+    "sites": [],
+    "bodies": []
+  },
+  "799": {
+    "sites": [],
+    "bodies": []
+  },
+  "800": {
+    "sites": [],
+    "bodies": []
+  },
+  "801": {
+    "sites": [],
+    "bodies": []
+  },
+  "809": {
+    "sites": [],
+    "bodies": []
+  },
+  "820": {
+    "sites": [],
+    "bodies": []
+  },
+  "821": {
+    "sites": [],
+    "bodies": []
+  },
+  "828": {
+    "sites": [],
+    "bodies": []
+  },
+  "829": {
+    "sites": [],
+    "bodies": []
+  },
+  "865": {
+    "sites": [],
+    "bodies": []
+  },
+  "867": {
+    "sites": [],
+    "bodies": []
+  },
+  "873": {
+    "sites": [],
+    "bodies": []
+  },
+  "874": {
+    "sites": [],
+    "bodies": []
+  },
+  "877": {
+    "sites": [],
+    "bodies": []
+  },
+  "878": {
+    "sites": [],
+    "bodies": []
+  },
+  "880": {
+    "sites": [],
+    "bodies": []
+  },
+  "937": {
+    "sites": [],
+    "bodies": []
+  },
+  "970": {
+    "sites": [],
+    "bodies": []
+  },
+  "1029": {
+    "sites": [],
+    "bodies": []
+  },
+  "1049": {
+    "sites": [],
+    "bodies": []
+  },
+  "1058": {
+    "sites": [],
+    "bodies": []
+  },
+  "1076": {
+    "sites": [],
+    "bodies": []
+  },
+  "1077": {
+    "sites": [],
+    "bodies": []
+  },
+  "1078": {
+    "sites": [],
+    "bodies": []
+  },
+  "1079": {
+    "sites": [],
+    "bodies": [
+      "Jupiter"
+    ]
+  },
+  "1095": {
+    "sites": [],
+    "bodies": []
+  },
+  "1116": {
+    "sites": [],
+    "bodies": []
+  },
+  "1117": {
+    "sites": [],
+    "bodies": []
+  },
+  "1138": {
+    "sites": [],
+    "bodies": []
+  },
+  "1147": {
+    "sites": [],
+    "bodies": []
+  },
+  "1148": {
+    "sites": [],
+    "bodies": [
+      "Titan"
+    ]
+  },
+  "1149": {
+    "sites": [
+      "1150"
+    ],
+    "bodies": [
+      "Titan"
+    ]
+  },
+  "1150": {
+    "sites": [
+      "1149"
+    ],
+    "bodies": []
+  },
+  "1187": {
+    "sites": [],
+    "bodies": []
+  },
+  "1188": {
+    "sites": [],
+    "bodies": [
+      "Saturn"
+    ]
+  },
+  "1201": {
+    "sites": [],
+    "bodies": []
+  },
+  "1205": {
+    "sites": [],
+    "bodies": []
+  },
+  "1210": {
+    "sites": [],
+    "bodies": []
+  },
+  "1214": {
+    "sites": [],
+    "bodies": []
+  },
+  "1343": {
+    "sites": [],
+    "bodies": []
+  },
+  "1375": {
+    "sites": [],
+    "bodies": []
+  }
+}
