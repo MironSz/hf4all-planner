@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>HF4A Celestial-Body Editor</title>
+<style>
+  *  { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { display: flex; flex-direction: column; background: #1a1a2e; color: #eee;
+         font-family: ui-monospace, Menlo, Consolas, monospace; overflow: hidden; }
+
+  #topbar { display: flex; align-items: center; gap: 10px; padding: 8px 14px;
+            background: #16213e; border-bottom: 1px solid #333; flex: 0 0 auto; }
+  #topbar h2 { font-size: 13px; color: #7ec8e3; font-weight: 600; }
+  button { padding: 5px 10px; background: #0f3460; color: #eee; border: 1px solid #2a4a7a;
+           cursor: pointer; font-family: inherit; font-size: 12px; border-radius: 3px; }
+  button:hover  { background: #1e4a7a; }
+  button:active { background: #0a2540; }
+  button.primary { background: #e94560; border-color: #c73650; }
+  button.primary:hover { background: #c73650; }
+  button.danger  { background: #5a1e1e; border-color: #8a3030; }
+  button.danger:hover { background: #8a3030; }
+  #status { color: #aaa; font-size: 11px; margin-left: auto; min-width: 200px; text-align: right; }
+  #status.dirty { color: #ff0; }
+  #status.error { color: #f55; }
+  #status.ok    { color: #5f5; }
+
+  #content { flex: 1; display: flex; min-height: 0; }
+  #viewport { flex: 1; position: relative; overflow: scroll; background: #000; cursor: grab; }
+  #viewport.panning { cursor: grabbing; }
+  #stage { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+  #board { display: block; user-select: none; -webkit-user-drag: none; }
+  #overlay { position: absolute; top: 0; left: 0; pointer-events: none; }
+  #overlay circle, #overlay text { pointer-events: auto; }
+
+  .body-circle { fill: rgba(120, 220, 255, 0.06); stroke: #7ec8e3; stroke-width: 2;
+                 vector-effect: non-scaling-stroke; cursor: move; }
+  .body-circle:hover  { fill: rgba(120, 220, 255, 0.15); }
+  .body-circle.dirty  { stroke: #ffd400; }
+  .body-circle.selected { stroke: #fff; stroke-width: 3; }
+
+  .body-label { font-family: inherit; font-size: 14px; font-weight: 700;
+                fill: #fff; stroke: #000; stroke-width: 3; paint-order: stroke;
+                pointer-events: none; user-select: none; }
+
+  .edge-handle { fill: rgba(255, 220, 0, 0.5); stroke: #fff; stroke-width: 1.5;
+                 vector-effect: non-scaling-stroke; cursor: ew-resize; }
+  .edge-handle:hover, .edge-handle.dragging { fill: #f00; }
+
+  #sidebar { width: 240px; flex: 0 0 240px; background: #16213e; border-left: 1px solid #333;
+             display: flex; flex-direction: column; min-height: 0; }
+  #sidebar-head { padding: 8px 12px; font-size: 11px; color: #7ec8e3;
+                  border-bottom: 1px solid #333; flex: 0 0 auto; }
+  #body-list { flex: 1; overflow-y: auto; }
+  .body-row { padding: 6px 12px; cursor: pointer; font-size: 12px; border-bottom: 1px solid #1f2942;
+              display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+  .body-row:hover    { background: #0f3460; }
+  .body-row.selected { background: #1e4a7a; }
+  .body-row.dirty    { color: #ffd400; }
+  .body-row .meta    { color: #888; font-size: 10px; }
+  .body-row button   { padding: 2px 6px; font-size: 10px; }
+
+  #add-bar { display: flex; gap: 4px; padding: 6px 8px; border-top: 1px solid #333; flex: 0 0 auto; }
+  #add-bar input { flex: 1; padding: 4px 6px; background: #0f3460; border: 1px solid #2a4a7a;
+                   color: #eee; font-family: inherit; font-size: 12px; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <h2>Celestial-Body Editor</h2>
+  <button id="zoom-out">−</button>
+  <button id="zoom-reset">100%</button>
+  <button id="zoom-in">+</button>
+  <button id="fit">Fit</button>
+  <button id="reload">Reload</button>
+  <button id="save" class="primary">Save</button>
+  <span id="status">Loading…</span>
+</div>
+
+<div id="content">
+  <div id="viewport">
+    <div id="stage">
+      <img id="board" src="/hf4.jpg" draggable="false">
+      <svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+    </div>
+  </div>
+  <div id="sidebar">
+    <div id="sidebar-head">Bodies — click to focus</div>
+    <div id="body-list"></div>
+    <div id="add-bar">
+      <input id="new-name" placeholder="new body name…">
+      <button id="add-body">Add</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const BODIES_URL = '/celestial-body-editor/bodies';
+const SAVE_URL   = '/celestial-body-editor/save';
+
+let bodies = {};                // { name: { name, cx, cy, r, edited?, removed? } } — coords normalised
+let imgW = 0, imgH = 0;
+let zoom = 1;
+let dirty = new Set();          // names of bodies modified or removed since last load
+let selectedName = null;
+
+const $ = id => document.getElementById(id);
+const stage    = $('stage');
+const board    = $('board');
+const overlay  = $('overlay');
+const viewport = $('viewport');
+const status   = $('status');
+const list     = $('body-list');
+
+function setStatus(msg, cls = '') {
+  status.textContent = msg;
+  status.className = cls;
+}
+
+board.addEventListener('load', async () => {
+  imgW = board.naturalWidth;
+  imgH = board.naturalHeight;
+  overlay.setAttribute('width', imgW);
+  overlay.setAttribute('height', imgH);
+  overlay.setAttribute('viewBox', `0 0 ${imgW} ${imgH}`);
+  await loadBodies();
+});
+
+async function loadBodies() {
+  setStatus('Loading bodies…');
+  try {
+    const r = await fetch(BODIES_URL, { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    bodies = await r.json();
+    dirty.clear();
+    drawAll();
+    setStatus(`Loaded ${Object.keys(bodies).length} bodies`, 'ok');
+    setZoom(Math.min(viewport.clientWidth / imgW, viewport.clientHeight / imgH) * 0.95);
+  } catch (e) {
+    setStatus('Failed to load: ' + e.message, 'error');
+  }
+}
+
+function drawAll() {
+  overlay.innerHTML = '';
+  list.innerHTML = '';
+  const names = Object.keys(bodies).sort();
+  for (const n of names) drawBody(n);
+  for (const n of names) addRow(n);
+}
+
+function drawBody(name) {
+  const b = bodies[name];
+  if (b.removed) return;
+  const px = bodyToPx(b);
+  // Body circle (drag = move centre)
+  const c = document.createElementNS(SVG_NS, 'circle');
+  c.id = 'circ-' + cssId(name);
+  c.setAttribute('class', 'body-circle' + (dirty.has(name) ? ' dirty' : ''));
+  c.setAttribute('cx', px.cx);
+  c.setAttribute('cy', px.cy);
+  c.setAttribute('r',  px.r);
+  c.dataset.name = name;
+  c.addEventListener('mousedown', startCenterDrag);
+  overlay.appendChild(c);
+  // Edge handle (drag = resize)
+  const e = document.createElementNS(SVG_NS, 'circle');
+  e.id = 'edge-' + cssId(name);
+  e.setAttribute('class', 'edge-handle');
+  e.setAttribute('cx', px.cx + px.r);   // east edge
+  e.setAttribute('cy', px.cy);
+  e.setAttribute('r',  Math.max(6, px.r * 0.04));
+  e.dataset.name = name;
+  e.addEventListener('mousedown', startEdgeDrag);
+  overlay.appendChild(e);
+  // Label
+  const t = document.createElementNS(SVG_NS, 'text');
+  t.id = 'label-' + cssId(name);
+  t.setAttribute('class', 'body-label');
+  t.setAttribute('x', px.cx);
+  t.setAttribute('y', px.cy - px.r - 8);
+  t.setAttribute('text-anchor', 'middle');
+  t.textContent = name;
+  overlay.appendChild(t);
+}
+
+function bodyToPx(b) {
+  return { cx: b.cx * imgW, cy: b.cy * imgH, r: b.r * imgW };
+}
+
+function cssId(name) { return name.replace(/\s+/g, '_'); }
+
+function updateBodyVisuals(name) {
+  const b = bodies[name];
+  if (!b || b.removed) return;
+  const px = bodyToPx(b);
+  const c = $('circ-'  + cssId(name));
+  const e = $('edge-'  + cssId(name));
+  const t = $('label-' + cssId(name));
+  if (c) {
+    c.setAttribute('cx', px.cx);
+    c.setAttribute('cy', px.cy);
+    c.setAttribute('r',  px.r);
+  }
+  if (e) {
+    e.setAttribute('cx', px.cx + px.r);
+    e.setAttribute('cy', px.cy);
+    e.setAttribute('r',  Math.max(6, px.r * 0.04));
+  }
+  if (t) {
+    t.setAttribute('x', px.cx);
+    t.setAttribute('y', px.cy - px.r - 8);
+  }
+}
+
+function markDirty(name) {
+  if (dirty.has(name)) return;
+  dirty.add(name);
+  bodies[name].edited = true;
+  $('circ-' + cssId(name))?.classList.add('dirty');
+  $('row-' + cssId(name))?.classList.add('dirty');
+  updateDirtyStatus();
+}
+
+function updateDirtyStatus() {
+  if (dirty.size === 0) setStatus('No unsaved changes');
+  else setStatus(`${dirty.size} change(s) — unsaved`, 'dirty');
+}
+
+// --- Dragging ---------------------------------------------------------------
+
+let drag = null;
+
+function mouseToImage(e) {
+  const rect = stage.getBoundingClientRect();
+  return [(e.clientX - rect.left) / zoom, (e.clientY - rect.top) / zoom];
+}
+
+function startCenterDrag(e) {
+  e.stopPropagation();
+  e.preventDefault();
+  const name = e.target.dataset.name;
+  selectBody(name);
+  const [mx, my] = mouseToImage(e);
+  const b = bodies[name];
+  drag = { kind: 'center', name, dx: mx - b.cx * imgW, dy: my - b.cy * imgH };
+  document.addEventListener('mousemove', onDrag);
+  document.addEventListener('mouseup', endDrag);
+}
+
+function startEdgeDrag(e) {
+  e.stopPropagation();
+  e.preventDefault();
+  const name = e.target.dataset.name;
+  selectBody(name);
+  e.target.classList.add('dragging');
+  drag = { kind: 'edge', name, target: e.target };
+  document.addEventListener('mousemove', onDrag);
+  document.addEventListener('mouseup', endDrag);
+}
+
+function onDrag(e) {
+  if (!drag) return;
+  const b = bodies[drag.name];
+  const [mx, my] = mouseToImage(e);
+  if (drag.kind === 'center') {
+    const ncx = (mx - drag.dx) / imgW;
+    const ncy = (my - drag.dy) / imgH;
+    b.cx = Math.max(0, Math.min(1, ncx));
+    b.cy = Math.max(0, Math.min(1, ncy));
+  } else { // edge
+    const dx = mx - b.cx * imgW;
+    const dy = my - b.cy * imgH;
+    const r  = Math.hypot(dx, dy) / imgW;
+    b.r = Math.max(0.001, r);
+  }
+  updateBodyVisuals(drag.name);
+  markDirty(drag.name);
+}
+
+function endDrag() {
+  if (drag?.target) drag.target.classList.remove('dragging');
+  drag = null;
+  document.removeEventListener('mousemove', onDrag);
+  document.removeEventListener('mouseup', endDrag);
+}
+
+// --- Selection / sidebar ----------------------------------------------------
+
+function selectBody(name) {
+  if (selectedName === name) return;
+  if (selectedName) {
+    $('circ-' + cssId(selectedName))?.classList.remove('selected');
+    $('row-' + cssId(selectedName))?.classList.remove('selected');
+  }
+  selectedName = name;
+  $('circ-' + cssId(name))?.classList.add('selected');
+  const row = $('row-' + cssId(name));
+  if (row) {
+    row.classList.add('selected');
+    row.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function focusBody(name) {
+  selectBody(name);
+  const b = bodies[name];
+  if (!b || b.removed) return;
+  const cx = b.cx * imgW;
+  const cy = b.cy * imgH;
+  viewport.scrollLeft = cx * zoom - viewport.clientWidth  / 2;
+  viewport.scrollTop  = cy * zoom - viewport.clientHeight / 2;
+}
+
+function addRow(name) {
+  const b = bodies[name];
+  const div = document.createElement('div');
+  div.id = 'row-' + cssId(name);
+  div.className = 'body-row' + (dirty.has(name) ? ' dirty' : '');
+  if (b.removed) div.style.display = 'none';
+  const meta = `r=${(b.r * imgW).toFixed(0)}px`;
+  div.innerHTML = `<span>${name} <span class="meta">${meta}</span></span>`;
+  const rm = document.createElement('button');
+  rm.className = 'danger';
+  rm.textContent = 'Remove';
+  rm.onclick = (ev) => { ev.stopPropagation(); removeBody(name); };
+  div.appendChild(rm);
+  div.addEventListener('click', () => focusBody(name));
+  list.appendChild(div);
+}
+
+function removeBody(name) {
+  if (!confirm(`Remove "${name}"?`)) return;
+  bodies[name].removed = true;
+  bodies[name].edited = true;
+  dirty.add(name);
+  // Remove SVG elements for this body
+  $('circ-'  + cssId(name))?.remove();
+  $('edge-'  + cssId(name))?.remove();
+  $('label-' + cssId(name))?.remove();
+  const row = $('row-' + cssId(name));
+  if (row) row.style.display = 'none';
+  updateDirtyStatus();
+}
+
+$('add-body').addEventListener('click', () => {
+  const name = $('new-name').value.trim();
+  if (!name) return;
+  if (bodies[name] && !bodies[name].removed) {
+    alert(`"${name}" already exists.`);
+    return;
+  }
+  // Place at centre of current viewport with default radius
+  const cx = (viewport.scrollLeft + viewport.clientWidth  / 2) / zoom / imgW;
+  const cy = (viewport.scrollTop  + viewport.clientHeight / 2) / zoom / imgH;
+  bodies[name] = { name, cx, cy, r: 0.015, edited: true, removed: false };
+  dirty.add(name);
+  drawBody(name);
+  // Add row at the alphabetic position (simplest: redraw list)
+  list.innerHTML = '';
+  for (const n of Object.keys(bodies).sort()) addRow(n);
+  selectBody(name);
+  $('new-name').value = '';
+  updateDirtyStatus();
+});
+
+// --- Zoom / pan -------------------------------------------------------------
+
+function setZoom(z) {
+  const newZoom = Math.max(0.05, Math.min(8, z));
+  const cx = (viewport.scrollLeft + viewport.clientWidth  / 2) / zoom;
+  const cy = (viewport.scrollTop  + viewport.clientHeight / 2) / zoom;
+  zoom = newZoom;
+  stage.style.transform = `scale(${zoom})`;
+  stage.style.width  = imgW + 'px';
+  stage.style.height = imgH + 'px';
+  viewport.scrollLeft = cx * zoom - viewport.clientWidth  / 2;
+  viewport.scrollTop  = cy * zoom - viewport.clientHeight / 2;
+}
+
+$('zoom-in').addEventListener('click',    () => setZoom(zoom * 1.25));
+$('zoom-out').addEventListener('click',   () => setZoom(zoom / 1.25));
+$('zoom-reset').addEventListener('click', () => setZoom(1));
+$('fit').addEventListener('click', () =>
+  setZoom(Math.min(viewport.clientWidth / imgW, viewport.clientHeight / imgH) * 0.95));
+
+viewport.addEventListener('wheel', (e) => {
+  if (!e.ctrlKey) return;
+  e.preventDefault();
+  const factor = e.deltaY > 0 ? 1 / 1.1 : 1.1;
+  setZoom(zoom * factor);
+}, { passive: false });
+
+let panState = null;
+viewport.addEventListener('mousedown', (e) => {
+  if (e.target.classList.contains('body-circle') ||
+      e.target.classList.contains('edge-handle')) return;
+  panState = {
+    x0: e.clientX, y0: e.clientY,
+    sx0: viewport.scrollLeft, sy0: viewport.scrollTop,
+  };
+  viewport.classList.add('panning');
+});
+document.addEventListener('mousemove', (e) => {
+  if (!panState) return;
+  viewport.scrollLeft = panState.sx0 - (e.clientX - panState.x0);
+  viewport.scrollTop  = panState.sy0 - (e.clientY - panState.y0);
+});
+document.addEventListener('mouseup', () => {
+  panState = null;
+  viewport.classList.remove('panning');
+});
+
+// --- Save / reload ----------------------------------------------------------
+
+$('reload').addEventListener('click', async () => {
+  if (dirty.size > 0 && !confirm(`Discard ${dirty.size} unsaved changes?`)) return;
+  await loadBodies();
+});
+
+$('save').addEventListener('click', async () => {
+  const editedOnly = {};
+  for (const [name, b] of Object.entries(bodies)) {
+    if (b.edited) editedOnly[name] = b;
+  }
+  setStatus(`Saving ${Object.keys(editedOnly).length} change(s)…`);
+  try {
+    const r = await fetch(SAVE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(editedOnly, null, 2),
+    });
+    const txt = await r.text();
+    if (!r.ok) throw new Error(txt || ('HTTP ' + r.status));
+    dirty.clear();
+    document.querySelectorAll('.body-circle.dirty').forEach(el => el.classList.remove('dirty'));
+    document.querySelectorAll('.body-row.dirty').forEach(el => el.classList.remove('dirty'));
+    setStatus(txt, 'ok');
+  } catch (e) {
+    setStatus('Save failed: ' + e.message, 'error');
+  }
+});
+
+window.addEventListener('beforeunload', (e) => {
+  if (dirty.size > 0) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+</script>
+</body>
+</html>

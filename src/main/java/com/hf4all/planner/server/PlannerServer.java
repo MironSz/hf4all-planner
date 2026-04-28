@@ -33,6 +33,7 @@ public final class PlannerServer {
         server.createContext(Config.endpointTraverse(), new TraverseHandler(map));
         server.createContext(Config.endpointConfig(), new ConfigHandler());
         server.createContext("/hex-editor", new HexEditorHandler());
+        server.createContext("/celestial-body-editor", new CelestialBodyEditorHandler());
         server.createContext(Config.endpointStop(), exchange -> {
             byte[] body = "Server stopping.".getBytes();
             exchange.sendResponseHeaders(200, body.length);
