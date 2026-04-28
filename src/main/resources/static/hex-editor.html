@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>HF4A Hex Editor</title>
+<style>
+  *  { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { display: flex; flex-direction: column; background: #1a1a2e; color: #eee;
+         font-family: ui-monospace, Menlo, Consolas, monospace; overflow: hidden; }
+  #topbar { display: flex; align-items: center; gap: 14px; padding: 8px 14px;
+            background: #16213e; border-bottom: 1px solid #333; flex: 0 0 auto; }
+  #topbar h2 { font-size: 13px; color: #7ec8e3; font-weight: 600; }
+  button { padding: 5px 10px; background: #0f3460; color: #eee; border: 1px solid #2a4a7a;
+           cursor: pointer; font-family: inherit; font-size: 12px; border-radius: 3px; }
+  button:hover  { background: #1e4a7a; }
+  button:active { background: #0a2540; }
+  button.primary { background: #e94560; border-color: #c73650; }
+  button.primary:hover { background: #c73650; }
+  #status { color: #aaa; font-size: 11px; margin-left: auto; min-width: 200px; }
+  #status.dirty { color: #ff0; }
+  #status.error { color: #f55; }
+  #status.ok    { color: #5f5; }
+  #content { flex: 1; display: flex; min-height: 0; }
+  #viewport { flex: 1; position: relative; overflow: scroll; background: #000;
+              cursor: grab; }
+  #viewport.panning { cursor: grabbing; }
+  #stage { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+  #board { display: block; user-select: none; -webkit-user-drag: none; }
+  #overlay { position: absolute; top: 0; left: 0; pointer-events: none; }
+  #overlay polygon, #overlay circle { pointer-events: auto; }
+  .hex-poly { fill: rgba(60, 230, 110, 0.04); stroke: #3ce66e; stroke-width: 2;
+              vector-effect: non-scaling-stroke; }
+  .hex-poly.dirty    { stroke: #ffd400; }
+  .hex-poly.selected { stroke: #fff; }
+  .corner { fill: rgba(255, 255, 0, 0.4); stroke: #fff; stroke-width: 1.5;
+            vector-effect: non-scaling-stroke; cursor: move; }
+  .corner:hover  { fill: rgba(255, 80, 80, 0.85); }
+  .corner.dragging { fill: #f00; }
+  .corner.anchor   { fill: #2af; stroke: #fff; stroke-width: 2; }
+  button.toggle.on { background: #1e7a3a; border-color: #2aa050; }
+  #sidebar { width: 240px; flex: 0 0 240px; background: #16213e; border-left: 1px solid #333;
+             display: flex; flex-direction: column; min-height: 0; }
+  #sidebar-head { padding: 8px 12px; font-size: 11px; color: #7ec8e3;
+                  border-bottom: 1px solid #333; flex: 0 0 auto; }
+  #search { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #2a4a7a;
+            color: #eee; font-family: inherit; font-size: 12px; border-radius: 3px; margin-top: 4px; }
+  #hex-list { flex: 1; overflow-y: auto; }
+  .hex-row { padding: 4px 12px; cursor: pointer; font-size: 11px; border-bottom: 1px solid #1f2942;
+             display: flex; justify-content: space-between; gap: 8px; }
+  .hex-row:hover { background: #0f3460; }
+  .hex-row.selected { background: #1e4a7a; }
+  .hex-row.dirty   { color: #ffd400; }
+  .hex-row .meta   { color: #888; font-size: 10px; }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <h2>Hex Editor</h2>
+  <button id="zoom-out">−</button>
+  <button id="zoom-reset">100%</button>
+  <button id="zoom-in">+</button>
+  <button id="fit">Fit</button>
+  <button id="regular-mode" class="toggle on" title="When on, dragging a corner keeps the opposite corner fixed and reshapes the hex to remain regular.">Regular mode: ON</button>
+  <button id="reload">Reload</button>
+  <button id="save" class="primary">Save</button>
+  <span id="status">Loading…</span>
+</div>
+
+<div id="content">
+  <div id="viewport">
+    <div id="stage">
+      <img id="board" src="/hf4.jpg" draggable="false">
+      <svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+    </div>
+  </div>
+  <div id="sidebar">
+    <div id="sidebar-head">
+      Sites — click to focus
+      <input id="search" placeholder="filter (id or partial)…">
+    </div>
+    <div id="hex-list"></div>
+  </div>
+</div>
+
+<script>
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const HEXES_URL = '/hex-editor/hexes';
+const SAVE_URL  = '/hex-editor/save';
+
+let hexes = {};                 // { sid: hexObj } — corners are normalised [0..1]
+let imgW = 0, imgH = 0;
+let zoom = 1;
+let dirty = new Set();
+let selectedId = null;
+let regularMode = true;         // when on, dragging a corner keeps the opposite corner fixed
+
+const $ = id => document.getElementById(id);
+const stage    = $('stage');
+const board    = $('board');
+const overlay  = $('overlay');
+const viewport = $('viewport');
+const status   = $('status');
+const hexList  = $('hex-list');
+
+function setStatus(msg, cls = '') {
+  status.textContent = msg;
+  status.className = cls;
+}
+
+board.addEventListener('load', async () => {
+  imgW = board.naturalWidth;
+  imgH = board.naturalHeight;
+  overlay.setAttribute('width', imgW);
+  overlay.setAttribute('height', imgH);
+  overlay.setAttribute('viewBox', `0 0 ${imgW} ${imgH}`);
+  await loadHexes();
+});
+
+async function loadHexes() {
+  setStatus('Loading hexes…');
+  try {
+    const r = await fetch(HEXES_URL, { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    hexes = await r.json();
+    dirty.clear();
+    drawAll();
+    setStatus(`Loaded ${Object.keys(hexes).length} hexes`, 'ok');
+    setZoom(Math.min(viewport.clientWidth / imgW, viewport.clientHeight / imgH) * 0.95);
+  } catch (e) {
+    setStatus('Failed to load hexes: ' + e.message, 'error');
+  }
+}
+
+function drawAll() {
+  overlay.innerHTML = '';
+  hexList.innerHTML = '';
+  // Stable sort by site id (numeric)
+  const ids = Object.keys(hexes).sort((a, b) => {
+    const ia = parseInt(a), ib = parseInt(b);
+    if (!isNaN(ia) && !isNaN(ib)) return ia - ib;
+    return a.localeCompare(b);
+  });
+  for (const id of ids) {
+    drawHex(id);
+    addRow(id);
+  }
+}
+
+function drawHex(id) {
+  const h = hexes[id];
+  const pts = pixelCorners(h);
+  const poly = document.createElementNS(SVG_NS, 'polygon');
+  poly.id = 'poly-' + id;
+  poly.setAttribute('class', 'hex-poly' + (dirty.has(id) ? ' dirty' : ''));
+  poly.setAttribute('points', pts.map(p => p.join(',')).join(' '));
+  poly.addEventListener('click', () => selectHex(id));
+  overlay.appendChild(poly);
+  for (let i = 0; i < pts.length; i++) {
+    const [x, y] = pts[i];
+    const c = document.createElementNS(SVG_NS, 'circle');
+    c.id = `c-${id}-${i}`;
+    c.setAttribute('class', 'corner');
+    c.setAttribute('cx', x);
+    c.setAttribute('cy', y);
+    c.setAttribute('r', 6);
+    c.dataset.id  = id;
+    c.dataset.idx = i;
+    c.addEventListener('mousedown', startDrag);
+    overlay.appendChild(c);
+  }
+}
+
+function pixelCorners(h) {
+  return h.corners.map(([x, y]) => [x * imgW, y * imgH]);
+}
+
+function updateHexPoly(id) {
+  const h = hexes[id];
+  const pts = pixelCorners(h);
+  const poly = $('poly-' + id);
+  if (poly) poly.setAttribute('points', pts.map(p => p.join(',')).join(' '));
+  for (let i = 0; i < 6; i++) {
+    const c = $(`c-${id}-${i}`);
+    if (c) {
+      c.setAttribute('cx', pts[i][0]);
+      c.setAttribute('cy', pts[i][1]);
+    }
+  }
+}
+
+function markDirty(id) {
+  if (dirty.has(id)) return;
+  dirty.add(id);
+  hexes[id].edited = true;
+  $('poly-' + id)?.classList.add('dirty');
+  $('row-' + id)?.classList.add('dirty');
+  updateDirtyStatus();
+}
+
+function updateDirtyStatus() {
+  if (dirty.size === 0) setStatus('No unsaved changes');
+  else setStatus(`${dirty.size} hex(es) edited — unsaved`, 'dirty');
+}
+
+// --- Dragging a corner -------------------------------------------------------
+
+let dragState = null;
+
+function startDrag(e) {
+  e.stopPropagation();
+  e.preventDefault();
+  const id  = e.target.dataset.id;
+  const idx = parseInt(e.target.dataset.idx);
+  selectHex(id);
+  dragState = { id, idx, target: e.target };
+  e.target.classList.add('dragging');
+  if (regularMode) {
+    const opp = (idx + 3) % 6;
+    const oppEl = $(`c-${id}-${opp}`);
+    if (oppEl) oppEl.classList.add('anchor');
+    dragState.anchorEl = oppEl;
+  }
+  document.addEventListener('mousemove', onDrag);
+  document.addEventListener('mouseup', endDrag);
+}
+
+function onDrag(e) {
+  if (!dragState) return;
+  const rect = stage.getBoundingClientRect();
+  const x = (e.clientX - rect.left) / zoom;
+  const y = (e.clientY - rect.top)  / zoom;
+  const px = Math.max(0, Math.min(imgW, x));
+  const py = Math.max(0, Math.min(imgH, y));
+  const h = hexes[dragState.id];
+
+  if (regularMode) {
+    // Anchor the opposite corner; recompute all 6 to keep a regular hexagon.
+    const a    = dragState.idx;
+    const b    = (a + 3) % 6;
+    const oppN = h.corners[b];                       // unchanged anchor (normalised)
+    const newCorners = recomputeFromOpposites(
+        [px / imgW, py / imgH], a, oppN);
+    if (newCorners) h.corners = newCorners;
+  } else {
+    h.corners[dragState.idx] = [px / imgW, py / imgH];
+  }
+
+  updateHexPoly(dragState.id);
+  markDirty(dragState.id);
+}
+
+function endDrag() {
+  if (dragState?.target) dragState.target.classList.remove('dragging');
+  if (dragState?.anchorEl) dragState.anchorEl.classList.remove('anchor');
+  dragState = null;
+  document.removeEventListener('mousemove', onDrag);
+  document.removeEventListener('mouseup', endDrag);
+}
+
+// Given the dragged corner (index a, normalised position p_a) and the opposite
+// corner's current normalised position p_b, return all 6 corners of the unique
+// regular hexagon with those two corners pinned. Returns null if a and b
+// coincide (would yield r = 0).
+function recomputeFromOpposites(p_a, a, p_b) {
+  const ax = p_a[0] * imgW, ay = p_a[1] * imgH;
+  const bx = p_b[0] * imgW, by = p_b[1] * imgH;
+  const cx = (ax + bx) / 2;
+  const cy = (ay + by) / 2;
+  const r  = Math.hypot(ax - cx, ay - cy);
+  if (r < 0.5) return null;
+  const angleA = Math.atan2(ay - cy, ax - cx);
+  const theta  = angleA - a * Math.PI / 3;
+  const out = [];
+  for (let k = 0; k < 6; k++) {
+    const ang = theta + k * Math.PI / 3;
+    out.push([(cx + r * Math.cos(ang)) / imgW,
+              (cy + r * Math.sin(ang)) / imgH]);
+  }
+  return out;
+}
+
+// --- Selection / sidebar -----------------------------------------------------
+
+function selectHex(id) {
+  if (selectedId === id) return;
+  if (selectedId) {
+    $('poly-' + selectedId)?.classList.remove('selected');
+    $('row-' + selectedId)?.classList.remove('selected');
+  }
+  selectedId = id;
+  $('poly-' + id)?.classList.add('selected');
+  const row = $('row-' + id);
+  if (row) {
+    row.classList.add('selected');
+    row.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function focusHex(id) {
+  selectHex(id);
+  const h = hexes[id];
+  const cx = h.corners.reduce((s, p) => s + p[0], 0) / 6 * imgW;
+  const cy = h.corners.reduce((s, p) => s + p[1], 0) / 6 * imgH;
+  viewport.scrollLeft = cx * zoom - viewport.clientWidth  / 2;
+  viewport.scrollTop  = cy * zoom - viewport.clientHeight / 2;
+}
+
+function addRow(id) {
+  const h = hexes[id];
+  const div = document.createElement('div');
+  div.id = 'row-' + id;
+  div.className = 'hex-row' + (dirty.has(id) ? ' dirty' : '');
+  const meta = h.quality !== undefined
+      ? `q=${h.quality.toFixed(2)}`
+      : '';
+  div.innerHTML = `<span>${id}</span><span class="meta">${meta}</span>`;
+  div.addEventListener('click', () => focusHex(id));
+  hexList.appendChild(div);
+}
+
+$('search').addEventListener('input', e => {
+  const q = e.target.value.toLowerCase();
+  for (const row of hexList.children) {
+    const id = row.id.replace(/^row-/, '');
+    row.style.display = id.toLowerCase().includes(q) ? '' : 'none';
+  }
+});
+
+// --- Zoom / pan --------------------------------------------------------------
+
+function setZoom(z) {
+  const newZoom = Math.max(0.05, Math.min(8, z));
+  // Keep viewport-centre image-point fixed while zooming
+  const cx = (viewport.scrollLeft + viewport.clientWidth  / 2) / zoom;
+  const cy = (viewport.scrollTop  + viewport.clientHeight / 2) / zoom;
+  zoom = newZoom;
+  stage.style.transform = `scale(${zoom})`;
+  stage.style.width  = imgW + 'px';
+  stage.style.height = imgH + 'px';
+  // After scale, re-centre
+  viewport.scrollLeft = cx * zoom - viewport.clientWidth  / 2;
+  viewport.scrollTop  = cy * zoom - viewport.clientHeight / 2;
+}
+
+$('zoom-in').addEventListener('click',    () => setZoom(zoom * 1.25));
+$('zoom-out').addEventListener('click',   () => setZoom(zoom / 1.25));
+$('zoom-reset').addEventListener('click', () => setZoom(1));
+$('fit').addEventListener('click', () =>
+  setZoom(Math.min(viewport.clientWidth / imgW, viewport.clientHeight / imgH) * 0.95));
+
+viewport.addEventListener('wheel', (e) => {
+  if (!e.ctrlKey) return;
+  e.preventDefault();
+  const factor = e.deltaY > 0 ? 1 / 1.1 : 1.1;
+  setZoom(zoom * factor);
+}, { passive: false });
+
+let panState = null;
+viewport.addEventListener('mousedown', (e) => {
+  // Only pan when the click is on background (image), not a corner or polygon.
+  if (e.target.classList.contains('corner')) return;
+  if (e.target.tagName === 'polygon') return;
+  panState = {
+    x0: e.clientX, y0: e.clientY,
+    sx0: viewport.scrollLeft, sy0: viewport.scrollTop,
+  };
+  viewport.classList.add('panning');
+});
+document.addEventListener('mousemove', (e) => {
+  if (!panState) return;
+  viewport.scrollLeft = panState.sx0 - (e.clientX - panState.x0);
+  viewport.scrollTop  = panState.sy0 - (e.clientY - panState.y0);
+});
+document.addEventListener('mouseup', () => {
+  panState = null;
+  viewport.classList.remove('panning');
+});
+
+// --- Save / reload -----------------------------------------------------------
+
+const regularBtn = $('regular-mode');
+function setRegularMode(on) {
+  regularMode = on;
+  regularBtn.textContent = on ? 'Regular mode: ON' : 'Regular mode: OFF';
+  regularBtn.classList.toggle('on', on);
+}
+regularBtn.addEventListener('click', () => setRegularMode(!regularMode));
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'r' && !e.ctrlKey && !e.metaKey
+      && e.target.tagName !== 'INPUT') {
+    setRegularMode(!regularMode);
+  }
+});
+
+$('reload').addEventListener('click', async () => {
+  if (dirty.size > 0 && !confirm(`Discard ${dirty.size} unsaved edits?`)) return;
+  await loadHexes();
+});
+
+$('save').addEventListener('click', async () => {
+  // Send only the user-edited entries. The server merges them on top of the
+  // fresh hexes.json — so unedited hexes always reflect the latest algorithm
+  // output, and Save never freezes a stale snapshot.
+  const editedOnly = {};
+  for (const [id, h] of Object.entries(hexes)) {
+    if (h.edited) editedOnly[id] = h;
+  }
+  setStatus(`Saving ${Object.keys(editedOnly).length} edited hex(es)…`);
+  try {
+    const r = await fetch(SAVE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(editedOnly, null, 2),
+    });
+    const txt = await r.text();
+    if (!r.ok) throw new Error(txt || ('HTTP ' + r.status));
+    dirty.clear();
+    document.querySelectorAll('.hex-poly.dirty').forEach(el => el.classList.remove('dirty'));
+    document.querySelectorAll('.hex-row.dirty').forEach(el => el.classList.remove('dirty'));
+    setStatus(txt, 'ok');
+  } catch (e) {
+    setStatus('Save failed: ' + e.message, 'error');
+  }
+});
+
+window.addEventListener('beforeunload', (e) => {
+  if (dirty.size > 0) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+</script>
+</body>
+</html>
