@@ -19,10 +19,9 @@ body { display: flex; height: 100vh; background: #1a1a2e; color: #eee; font-fami
 #map-container { flex: 1; position: relative; overflow: hidden; }
 #main { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
 #main img { display: block; transition: filter 180ms ease-out; }
-/* Dim + desaturate the printed map while a site filter is active, so the
-   bright cyan filter rings drawn on the canvas stand out. */
-body.filter-active #main img { filter: brightness(0.8) saturate(0.825); }
 #main canvas { position: absolute; top: 0; left: 0; }
+#main #hex-mask-overlay { position: absolute; top: 0; left: 0; pointer-events: none; }
+#main #hex-mask-overlay .hide-mask polygon { stroke: none; }
 #sidebar { width: 300px; background: #16213e; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; border-left: 1px solid #333; }
 h2 { font-size: 14px; color: #7ec8e3; margin-bottom: 4px; }
 label { display: block; font-size: 12px; margin-bottom: 2px; color: #aaa; }
@@ -94,10 +93,10 @@ select { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #
 /* ---- Help-tip "?" glyph with hover tooltip ---- */
 .tip { display: inline-block; width: 14px; height: 14px; line-height: 13px; text-align: center; border-radius: 50%; background: #143359; color: #7ec8e3; border: 1px solid #2a4a72; font-size: 10px; font-weight: bold; font-family: monospace; cursor: help; margin-left: 4px; position: relative; vertical-align: middle; user-select: none; }
 .tip:hover { background: #1e4a7a; color: #fff; }
-.tip::after { content: attr(data-tip); display: none; position: absolute; left: 50%; top: calc(100% + 6px); transform: translateX(-50%); width: 220px; padding: 6px 8px; background: #0a1a30; color: #eee; border: 1px solid #2a4a72; border-radius: 4px; font-size: 11px; font-family: monospace; font-weight: normal; line-height: 1.4; white-space: normal; text-align: left; z-index: 200; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,0.5); }
-.tip:hover::after { display: block; }
-/* Debug bar sits at the bottom — open tooltip upward */
-#debug-toggle .tip::after { top: auto; bottom: calc(100% + 6px); }
+/* Shared tooltip popup — positioned dynamically by JS so it never overflows
+   the viewport. Pseudo-element approach was abandoned because CSS cannot
+   read the popup's own width to flip alignment near edges. */
+#tip-popup { position: fixed; display: none; width: 220px; max-width: calc(100vw - 8px); padding: 6px 8px; background: #0a1a30; color: #eee; border: 1px solid #2a4a72; border-radius: 4px; font-size: 11px; font-family: monospace; font-weight: normal; line-height: 1.4; white-space: normal; text-align: left; z-index: 200; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,0.5); }
 
 /* ---- Sidebar collapse toggle ---- */
 #sidebar-toggle { position: fixed; top: 12px; right: 12px; z-index: 110; width: 28px; height: 28px; padding: 0; margin: 0; background: #0f3460; color: #7ec8e3; border: 1px solid #555; border-radius: 4px; cursor: pointer; font-size: 14px; line-height: 1; display: flex; align-items: center; justify-content: center; }
@@ -126,6 +125,10 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
 <div id="map-container">
     <div id="main">
         <img id="bg" alt="HF4A Map">
+        <!-- Hex masks: positioned absolutely behind the canvas so route lines
+             and indicators on the canvas overlay them. pointer-events:none so
+             the existing canvas click/hover handlers see the events. -->
+        <svg id="hex-mask-overlay" xmlns="http://www.w3.org/2000/svg"></svg>
         <canvas id="canvas"></canvas>
     </div>
 </div>
@@ -147,14 +150,12 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
 
     <div id="node-info">Click a node on the map to select start</div>
 
-    <!-- Placeholder: hide-masked-sites toggle. UI only — not yet wired to the
-         renderer. The state is read from per-site hidden:true flags in
-         hexes.json (set via /hex-editor). Wiring will overlay 6-triangle
-         solar-zone-coloured masks on hidden hexes the same way the hex-editor
-         does. -->
-    <div id="hide-masked-row" style="display:flex;align-items:center;gap:8px;font-size:12px;color:#aaa;border:1px dashed #444;padding:6px 8px;border-radius:4px;">
-        <input type="checkbox" id="hide-masked-sites" disabled>
-        <label for="hide-masked-sites" style="margin:0;cursor:not-allowed;" title="Edit which sites are masked in the /hex-editor view. Wiring is not yet active here.">Hide masked sites <span style="color:#666;">(coming soon)</span></label>
+    <!-- Master toggle for the hex-mask overlay. When checked, sites that are
+         unreachable / filtered out get painted over with sampled solar-zone
+         colour at varying opacities (see updateHexMasks() below). -->
+    <div id="hide-masked-row" style="display:flex;align-items:center;gap:8px;font-size:12px;color:#aaa;padding:4px 0;">
+        <input type="checkbox" id="hide-masked-sites" checked>
+        <label for="hide-masked-sites" style="margin:0;cursor:pointer;" title="Paint over sites that are unreachable or filtered out so the matching set stands out.">Hide masked sites</label>
     </div>
 
     <div id="route-info" style="display:none;background:#0a1a30;border-radius:4px;font-family:monospace;font-size:13px;color:#fff;margin-bottom:8px;align-items:stretch;">
@@ -815,6 +816,56 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
     const mainEl = document.getElementById('main');
     const container = document.getElementById('map-container');
 
+    // --- Shared tooltip popup, dynamically positioned to stay on-screen ---
+    (function initTipPopup() {
+        const popup = document.createElement('div');
+        popup.id = 'tip-popup';
+        document.body.appendChild(popup);
+
+        function show(tip) {
+            const text = tip.getAttribute('data-tip') || '';
+            if (!text) return;
+            popup.textContent = text;
+            popup.style.display = 'block';
+            // Measure popup AFTER content is set so getBoundingClientRect is accurate
+            const tipR = tip.getBoundingClientRect();
+            const popR = popup.getBoundingClientRect();
+            const vw = window.innerWidth;
+            const vh = window.innerHeight;
+            const margin = 4;
+            const gap = 6;
+            // Default: centred horizontally on tip, opening downward.
+            let left = tipR.left + tipR.width / 2 - popR.width / 2;
+            let top  = tipR.bottom + gap;
+            // Flip upward if the popup would clip the viewport bottom AND there's
+            // more room above the tip.
+            if (top + popR.height > vh - margin) {
+                const aboveTop = tipR.top - gap - popR.height;
+                if (aboveTop >= margin) top = aboveTop;
+            }
+            // Clamp into viewport horizontally.
+            if (left < margin) left = margin;
+            if (left + popR.width > vw - margin) left = vw - margin - popR.width;
+            // Clamp vertically as a final safety net.
+            if (top < margin) top = margin;
+            if (top + popR.height > vh - margin) top = vh - margin - popR.height;
+            popup.style.left = left + 'px';
+            popup.style.top  = top  + 'px';
+        }
+        function hide() { popup.style.display = 'none'; }
+
+        document.addEventListener('mouseover', (e) => {
+            const tip = e.target.closest && e.target.closest('.tip');
+            if (tip) show(tip);
+        });
+        document.addEventListener('mouseout', (e) => {
+            const tip = e.target.closest && e.target.closest('.tip');
+            if (tip) hide();
+        });
+        window.addEventListener('scroll', hide, true);
+        window.addEventListener('resize', hide);
+    })();
+
     // --- Load config, then map data, then image ---
     fetch('/api/config')
         .then(r => r.json())
@@ -1423,40 +1474,10 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
         }
 
         // Compile filter once per draw so each site is only evaluated once.
+        // (Reachable / unreachable / filter-match state is now visualised by
+        // the SVG hex-mask overlay, so we only need the compiled filter for
+        // the route-highlight pass below.)
         const filter = readSiteFilter();
-        // Solution C: dim the underlying map image while a filter is active
-        // (CSS-driven, so route lines and badges drawn on the canvas stay
-        // full brightness). Only kicks in once a traverse has produced
-        // matchable endpoints — otherwise dimming with no visible matches is
-        // just confusing.
-        document.body.classList.toggle('filter-active',
-                filter.active && !!(traverseResult && traverseResult.endpoints));
-
-        // Draw reachable site indicators (small dots for all reachable sites).
-        // When a filter is active, dim non-matching reachable sites so the
-        // matching set stands out.
-        if (traverseResult && traverseResult.endpoints) {
-            for (const nodeId of Object.keys(traverseResult.endpoints)) {
-                if (nodeId === selectedNode) continue;
-                const p = points[nodeId];
-                if (!p) continue;
-                const filterOk = !filter.active || siteMatchesFilter(p, filter);
-                ctx.beginPath();
-                ctx.arc(p.x * imgW, p.y * imgH, cfgI('ui.reachable.indicator.radius', 6), 0, Math.PI * 2);
-                ctx.fillStyle = filterOk
-                        ? 'rgba(46, 204, 113, 0.6)'
-                        : 'rgba(46, 204, 113, 0.15)';
-                ctx.fill();
-                ctx.strokeStyle = filterOk ? 'white' : 'rgba(255,255,255,0.15)';
-                ctx.lineWidth = 1;
-                ctx.stroke();
-            }
-        }
-
-        // Filter-matching rings: rendered AFTER routes + NOT REACHABLE badges
-        // (see the block lower down) so they can't be occluded by competing
-        // overlays. The drawing logic itself lives in drawFilterRings(); call
-        // it here only as a no-op placeholder for layering reference.
 
         // Draw highlighted route path (for active endpoint: pinned or hovered)
         const activeEp = getActiveEndpoint();
@@ -1670,70 +1691,8 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
             }
         }
 
-        // Draw "NOT REACHABLE" badge over EVERY site that's not in reachableNodes,
-        // once a traverse has run. Width = 1.15 × diameter of the green filter
-        // ring so the badge is always wider than the reachable indicator.
-        if (reachableNodes) {
-            ctx.save();
-            const targetWidth = cfgI('ui.filter.ring.radius', 42) * 2 * 1.15;
-            let fontPx = 14;
-            ctx.font = 'bold ' + fontPx + 'px monospace';
-            const baseW = ctx.measureText('NOT REACHABLE').width;
-            fontPx = Math.max(8, Math.round(fontPx * targetWidth / baseW));
-            ctx.font = 'bold ' + fontPx + 'px monospace';
-            const w = ctx.measureText('NOT REACHABLE').width;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            for (const [id, p] of Object.entries(points)) {
-                if (p.type !== 'site') continue;
-                if (id in reachableNodes) continue;
-                const x = p.x * imgW;
-                const y = p.y * imgH;
-                ctx.fillStyle = 'rgba(0,0,0,0.85)';
-                ctx.fillRect(x - w / 2 - 4, y - fontPx / 2 - 3, w + 8, fontPx + 6);
-                ctx.fillStyle = '#ff3a3a';
-                ctx.fillText('NOT REACHABLE', x, y);
-            }
-            ctx.restore();
-        }
-
-        // Filter-matching rings — high-contrast version, drawn LAST so nothing
-        // sits on top of them. Each match gets:
-        //   • dark 6 px outer halo (separates the ring from the busy map)
-        //   • bright green 3 px inner ring + 40 % green fill
-        //   • a 3 px solid green dot at the centre, so the eye anchors even
-        //     when the ring spills off-screen.
-        if (traverseResult && traverseResult.endpoints && filter.active) {
-            const ringR = cfgI('ui.filter.ring.radius', 42);
-            const ringColor = 'rgba(50, 230, 110, 1.0)';
-            const ringFill  = 'rgba(50, 230, 110, 0.40)';
-            const haloColor = 'rgba(0, 0, 0, 0.85)';
-            for (const nodeId of Object.keys(traverseResult.endpoints)) {
-                const p = points[nodeId];
-                if (!p || p.type !== 'site') continue;
-                if (!siteMatchesFilter(p, filter)) continue;
-                const cx = p.x * imgW, cy = p.y * imgH;
-                // Dark halo
-                ctx.beginPath();
-                ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
-                ctx.lineWidth = 6;
-                ctx.strokeStyle = haloColor;
-                ctx.stroke();
-                // Bright ring + translucent fill
-                ctx.beginPath();
-                ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
-                ctx.fillStyle = ringFill;
-                ctx.fill();
-                ctx.lineWidth = 3;
-                ctx.strokeStyle = ringColor;
-                ctx.stroke();
-                // Centre anchor dot
-                ctx.beginPath();
-                ctx.arc(cx, cy, 3, 0, Math.PI * 2);
-                ctx.fillStyle = ringColor;
-                ctx.fill();
-            }
-        }
+        // (NOT REACHABLE badges and filter-matching rings used to be drawn
+        // here; they were superseded by the SVG hex-mask overlay.)
 
         // Draw selected start node highlight
         if (selectedNode) {
@@ -1999,6 +1958,316 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
         if (mapData) { updateFilterHeader(); return; }
         setTimeout(waitForMap, 100);
     })();
+
+    // =====================================================================
+    // Hex-mask overlay — paint over sites the planner shouldn't focus on.
+    // ---------------------------------------------------------------------
+    // Per-site opacity is computed from current filter + traverse + hover +
+    // route-endpoint state, on every draw cycle:
+    //
+    //   hovered site / start / current-route endpoint  → opacity 0
+    //   no traverse run yet (no reachableNodes)        → opacity 0
+    //   filter inactive:
+    //       reachable                                  → opacity 0
+    //       unreachable                                → opacity 0.5
+    //   filter active:
+    //       reachable, passes filter                   → opacity 0
+    //       reachable, filtered out                    → opacity 0.7
+    //       unreachable, passes filter                 → opacity 0.4
+    //       unreachable, filtered out                  → opacity 0.9
+    //
+    // Master toggle = #hide-masked-sites checkbox.
+    // Same colour-sampling logic as /hex-editor (6 triangles, neighbour-aware
+    // median, never paints over a precomputed neighbour hex/body).
+    // =====================================================================
+    const HM_SVG_NS = 'http://www.w3.org/2000/svg';
+    const HM_OVERLAY = document.getElementById('hex-mask-overlay');
+    const HM_TOGGLE  = document.getElementById('hide-masked-sites');
+    let hmHexes = null, hmNeighbors = {}, hmBodies = {};
+    let hmImgPixels = null;
+    let hmMaskScale = 1.20, hmMaskBlur = 6;
+    let hmReady = false;
+    const hmGroups = new Map();    // siteId -> SVG group element
+    // Per-state opacities (overridden by /api/config keys ui.hex.mask.opacity.*).
+    let hmOpFilteredOut         = 0.5;  // no start, filter on, fails
+    let hmOpUnreachable         = 0.5;  // start, no filter, unreachable
+    let hmOpUnreachableMatch    = 0.4;
+    let hmOpReachableMismatch   = 0.7;
+    let hmOpUnreachableMismatch = 0.9;
+
+    function hmPointInPolygon(x, y, poly) {
+        let inside = false;
+        for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+            const xi = poly[i][0], yi = poly[i][1];
+            const xj = poly[j][0], yj = poly[j][1];
+            if ((yi > y) !== (yj > y) &&
+                (x < (xj - xi) * (y - yi) / ((yj - yi) || 1e-12) + xi)) inside = !inside;
+        }
+        return inside;
+    }
+
+    function hmGetNeighborShapes(siteId, W, H) {
+        const nb = hmNeighbors[siteId];
+        const polys = [], circles = [];
+        if (!nb) return { polys, circles };
+        for (const sid of nb.sites || []) {
+            const nh = hmHexes[sid];
+            if (!nh) continue;
+            polys.push(nh.corners.map(([x, y]) => [x * W, y * H]));
+        }
+        for (const bname of nb.bodies || []) {
+            const b = hmBodies[bname];
+            if (!b || b.removed) continue;
+            circles.push({ cx: b.cx * W, cy: b.cy * H, r2: (b.r * W) ** 2 });
+        }
+        return { polys, circles };
+    }
+
+    function hmInsideAnyNeighbor(x, y, shapes) {
+        for (const poly of shapes.polys) if (hmPointInPolygon(x, y, poly)) return true;
+        for (const c of shapes.circles) {
+            const dx = x - c.cx, dy = y - c.cy;
+            if (dx * dx + dy * dy <= c.r2) return true;
+        }
+        return false;
+    }
+
+    function hmSampleMedian(midX, midY, nx, ny, shapes, dStart, W, H) {
+        const reds = [], greens = [], blues = [];
+        for (let d = dStart; d <= dStart + 8; d += 2) {
+            for (let off = -8; off <= 8; off += 4) {
+                const tx = -ny, ty = nx;
+                const x = Math.round(midX + nx * d + tx * off);
+                const y = Math.round(midY + ny * d + ty * off);
+                if (x < 0 || x >= W || y < 0 || y >= H) continue;
+                if (hmInsideAnyNeighbor(x, y, shapes)) continue;
+                const k = (y * W + x) * 4;
+                reds.push(hmImgPixels[k]);
+                greens.push(hmImgPixels[k + 1]);
+                blues.push(hmImgPixels[k + 2]);
+            }
+        }
+        if (reds.length === 0) return null;
+        const med = a => { a.sort((p, q) => p - q); return a[Math.floor(a.length / 2)]; };
+        return [med(reds), med(greens), med(blues)];
+    }
+
+    function hmEnsureDefs() {
+        let defs = HM_OVERLAY.querySelector('defs');
+        if (!defs) {
+            defs = document.createElementNS(HM_SVG_NS, 'defs');
+            HM_OVERLAY.appendChild(defs);
+            const f = document.createElementNS(HM_SVG_NS, 'filter');
+            f.id = 'hm-blur';
+            f.setAttribute('x', '-10%'); f.setAttribute('y', '-10%');
+            f.setAttribute('width', '120%'); f.setAttribute('height', '120%');
+            const g = document.createElementNS(HM_SVG_NS, 'feGaussianBlur');
+            g.setAttribute('stdDeviation', String(hmMaskBlur));
+            f.appendChild(g);
+            defs.appendChild(f);
+        }
+        return defs;
+    }
+
+    function hmBuildNeighborMask(siteId, W, H) {
+        const nb = hmNeighbors[siteId];
+        if (!nb || ((nb.sites || []).length === 0 && (nb.bodies || []).length === 0)) return null;
+        const defs = hmEnsureDefs();
+        const id = 'hm-nb-' + siteId;
+        defs.querySelector('#' + CSS.escape(id))?.remove();
+        const m = document.createElementNS(HM_SVG_NS, 'mask');
+        m.id = id;
+        m.setAttribute('maskUnits', 'userSpaceOnUse');
+        const r = document.createElementNS(HM_SVG_NS, 'rect');
+        r.setAttribute('x', 0); r.setAttribute('y', 0);
+        r.setAttribute('width', W); r.setAttribute('height', H);
+        r.setAttribute('fill', 'white');
+        m.appendChild(r);
+        for (const sid of nb.sites || []) {
+            const nh = hmHexes[sid];
+            if (!nh) continue;
+            const p = document.createElementNS(HM_SVG_NS, 'polygon');
+            p.setAttribute('points', nh.corners.map(([x, y]) => `${x * W},${y * H}`).join(' '));
+            p.setAttribute('fill', 'black');
+            m.appendChild(p);
+        }
+        for (const bname of nb.bodies || []) {
+            const b = hmBodies[bname];
+            if (!b || b.removed) continue;
+            const c = document.createElementNS(HM_SVG_NS, 'circle');
+            c.setAttribute('cx', b.cx * W); c.setAttribute('cy', b.cy * H);
+            c.setAttribute('r',  b.r  * W); c.setAttribute('fill', 'black');
+            m.appendChild(c);
+        }
+        defs.appendChild(m);
+        return id;
+    }
+
+    function hmBuildMaskGroup(siteId, W, H) {
+        const h = hmHexes[siteId];
+        if (!h) return null;
+        const pts = h.corners.map(([x, y]) => [x * W, y * H]);
+        const cx = pts.reduce((s, p) => s + p[0], 0) / 6;
+        const cy = pts.reduce((s, p) => s + p[1], 0) / 6;
+        const ptsBig = pts.map(([x, y]) => [
+            cx + (x - cx) * hmMaskScale,
+            cy + (y - cy) * hmMaskScale,
+        ]);
+        const shapes = hmGetNeighborShapes(siteId, W, H);
+        const colours = new Array(6).fill(null);
+        for (let k = 0; k < 6; k++) {
+            const c1 = pts[k], c2 = pts[(k + 1) % 6];
+            const midX = (c1[0] + c2[0]) / 2, midY = (c1[1] + c2[1]) / 2;
+            const dx = midX - cx, dy = midY - cy;
+            const len = Math.hypot(dx, dy) || 1;
+            const dStart = Math.max(2, len * (hmMaskScale - 1) + 2);
+            colours[k] = hmSampleMedian(midX, midY, dx / len, dy / len, shapes, dStart, W, H);
+        }
+        for (let k = 0; k < 6; k++) if (colours[k] === null) colours[k] = colours[(k + 3) % 6];
+        for (let k = 0; k < 6; k++) if (colours[k] === null) colours[k] = [128, 128, 128];
+
+        const g = document.createElementNS(HM_SVG_NS, 'g');
+        g.id = 'hm-group-' + siteId;
+        g.setAttribute('class', 'hide-mask');
+        g.setAttribute('opacity', 0);
+        g.style.display = 'none';
+        if (hmMaskBlur > 0) g.setAttribute('filter', 'url(#hm-blur)');
+        const nbMaskId = hmBuildNeighborMask(siteId, W, H);
+        if (nbMaskId) g.setAttribute('mask', 'url(#' + nbMaskId + ')');
+        for (let k = 0; k < 6; k++) {
+            const b1 = ptsBig[k], b2 = ptsBig[(k + 1) % 6];
+            const [r, gC, bC] = colours[k];
+            const tri = document.createElementNS(HM_SVG_NS, 'polygon');
+            tri.setAttribute('points', cx + ',' + cy + ' ' + b1[0] + ',' + b1[1] + ' ' + b2[0] + ',' + b2[1]);
+            tri.setAttribute('fill', 'rgb(' + r + ',' + gC + ',' + bC + ')');
+            g.appendChild(tri);
+        }
+        HM_OVERLAY.appendChild(g);
+        return g;
+    }
+
+    function hmEnsureImagePixels() {
+        if (hmImgPixels) return true;
+        const img = document.getElementById('bg');
+        if (!img.complete || !img.naturalWidth) return false;
+        const cv = document.createElement('canvas');
+        cv.width = img.naturalWidth;
+        cv.height = img.naturalHeight;
+        const cx = cv.getContext('2d', { willReadFrequently: true });
+        try {
+            cx.drawImage(img, 0, 0);
+            hmImgPixels = cx.getImageData(0, 0, img.naturalWidth, img.naturalHeight).data;
+        } catch (e) {
+            console.error('hex-mask: failed to read image pixels', e);
+            return false;
+        }
+        return true;
+    }
+
+    function hmBuildAll() {
+        if (!hmHexes) return;
+        const img = document.getElementById('bg');
+        if (!img.naturalWidth) return;
+        const W = img.naturalWidth, H = img.naturalHeight;
+        HM_OVERLAY.setAttribute('width', W);
+        HM_OVERLAY.setAttribute('height', H);
+        HM_OVERLAY.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+        HM_OVERLAY.style.width  = W + 'px';
+        HM_OVERLAY.style.height = H + 'px';
+        if (!hmEnsureImagePixels()) return;
+        hmEnsureDefs();
+        for (const sid of Object.keys(hmHexes)) {
+            if (hmGroups.has(sid)) continue;
+            const g = hmBuildMaskGroup(sid, W, H);
+            if (g) hmGroups.set(sid, g);
+        }
+        hmReady = true;
+    }
+
+    function hmOpacityFor(siteId, filter, activeEp) {
+        if (siteId === selectedNode) return 0;
+        if (siteId === hoveredNode)  return 0;
+        if (siteId === activeEp)     return 0;
+        const point = mapData && mapData.points && mapData.points[siteId];
+        if (!point) return 0;
+        const filterOk = !filter.active || siteMatchesFilter(point, filter);
+        // No start selected → no traverse → reachability is undefined; only
+        // the filter is meaningful here.
+        if (!reachableNodes) {
+            if (!filter.active) return 0;
+            return filterOk ? 0 : hmOpFilteredOut;
+        }
+        const reachable = !!reachableNodes[siteId];
+        if (!filter.active) return reachable ? 0 : hmOpUnreachable;
+        if ( reachable &&  filterOk) return 0;
+        if (!reachable &&  filterOk) return hmOpUnreachableMatch;
+        if ( reachable && !filterOk) return hmOpReachableMismatch;
+        return hmOpUnreachableMismatch;
+    }
+
+    function updateHexMasks() {
+        if (!hmReady) return;
+        const enabled = HM_TOGGLE && HM_TOGGLE.checked;
+        if (!enabled) {
+            for (const g of hmGroups.values()) g.style.display = 'none';
+            return;
+        }
+        const filter   = readSiteFilter();
+        const activeEp = (typeof getActiveEndpoint === 'function') ? getActiveEndpoint() : null;
+        for (const [sid, g] of hmGroups) {
+            const op = hmOpacityFor(sid, filter, activeEp);
+            if (op > 0) {
+                g.style.display = '';
+                g.setAttribute('opacity', op);
+            } else {
+                g.style.display = 'none';
+            }
+        }
+    }
+
+    if (HM_OVERLAY) {
+        Promise.all([
+            fetch('/hex-editor/hexes',             { cache: 'no-store' }).then(r => r.ok ? r.json() : null),
+            fetch('/hex-editor/neighbors',         { cache: 'no-store' }).then(r => r.ok ? r.json() : null),
+            fetch('/celestial-body-editor/bodies', { cache: 'no-store' }).then(r => r.ok ? r.json() : null),
+            fetch('/api/config',                   { cache: 'no-store' }).then(r => r.ok ? r.json() : null),
+        ]).then(([hx, nb, bd, cfg]) => {
+            if (!hx) { console.warn('hex-mask: no hex data'); return; }
+            hmHexes = hx; hmNeighbors = nb || {}; hmBodies = bd || {};
+            if (cfg) {
+                const s = parseFloat(cfg['ui.hex.hide.mask.scale']);
+                if (!isNaN(s) && s > 0) hmMaskScale = s;
+                const bl = parseFloat(cfg['ui.hex.hide.mask.blur']);
+                if (!isNaN(bl) && bl >= 0) hmMaskBlur = bl;
+                // Per-state opacities. Each is read independently so any
+                // missing/invalid key falls back to the JS default above.
+                const setOp = (key, setter) => {
+                    const v = parseFloat(cfg[key]);
+                    if (!isNaN(v) && v >= 0 && v <= 1) setter(v);
+                };
+                setOp('ui.hex.mask.opacity.filtered.out',         v => hmOpFilteredOut         = v);
+                setOp('ui.hex.mask.opacity.unreachable',          v => hmOpUnreachable         = v);
+                setOp('ui.hex.mask.opacity.unreachable.match',    v => hmOpUnreachableMatch    = v);
+                setOp('ui.hex.mask.opacity.reachable.mismatch',   v => hmOpReachableMismatch   = v);
+                setOp('ui.hex.mask.opacity.unreachable.mismatch', v => hmOpUnreachableMismatch = v);
+            }
+            const img = document.getElementById('bg');
+            if (img.complete && img.naturalWidth) {
+                hmBuildAll(); updateHexMasks();
+            } else {
+                img.addEventListener('load', () => { hmBuildAll(); updateHexMasks(); }, { once: true });
+            }
+        }).catch(e => console.error('hex-mask: init failed', e));
+    }
+
+    if (HM_TOGGLE) HM_TOGGLE.addEventListener('change', updateHexMasks);
+
+    // Refresh masks every time the planner redraws the canvas.
+    const _hmOrigDraw = draw;
+    draw = function () {
+        _hmOrigDraw.apply(this, arguments);
+        updateHexMasks();
+    };
 })();
 </script>
 </body>
