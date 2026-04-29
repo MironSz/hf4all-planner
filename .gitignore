@@ -30,3 +30,20 @@ bin/
 .DS_Store
 # Project exclude paths
 /target/
+
+### IDE / tooling ###
+.idea/
+.claude/
+.mvn/wrapper/maven-wrapper.properties
+
+### Maven wrapper (regenerated locally) ###
+mvnw
+mvnw.cmd
+
+### Runtime / build droppings ###
+*.log
+*.pid
+resp.json
+test-output.txt
+test_out.txt
+# benchmark-results.csv is intentionally tracked (perf history).
