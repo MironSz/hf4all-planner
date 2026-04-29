@@ -26,6 +26,9 @@ import java.util.List;
  *   <li>{@code jettisonedHere} — fuel steps the player jettisoned at the
  *       start of the turn this node sits in (0 if none); shown by the UI
  *       to flag jettison events on the path.</li>
+ *   <li>{@code afterburnedHere} — net-thrust gain from afterburn at the
+ *       start of the turn this node sits in (0 if no afterburn); set only
+ *       on turn-start nodes per the same rule as {@code jettisonedHere}.</li>
  * </ul>
  */
 public final class PathNode {
@@ -40,6 +43,7 @@ public final class PathNode {
     private final int fuelSpentDen;
     private final int wetMass;
     private final int jettisonedHere;
+    private final int afterburnedHere;
     private final int turns;
     private final int hazards;
     private final int worstRadRoll;
@@ -51,7 +55,7 @@ public final class PathNode {
                     int fuelStepsRemaining, int fuelSpent,
                     int fuelRemainingNum, int fuelRemainingDen,
                     int fuelSpentNum, int fuelSpentDen,
-                    int wetMass, int jettisonedHere,
+                    int wetMass, int jettisonedHere, int afterburnedHere,
                     int turns, int hazards, int worstRadRoll, int engineIndex) {
         this.id = id;
         this.nodeId = nodeId;
@@ -63,6 +67,7 @@ public final class PathNode {
         this.fuelSpentDen = fuelSpentDen;
         this.wetMass = wetMass;
         this.jettisonedHere = jettisonedHere;
+        this.afterburnedHere = afterburnedHere;
         this.turns = turns;
         this.hazards = hazards;
         this.worstRadRoll = worstRadRoll;
@@ -79,6 +84,7 @@ public final class PathNode {
     public int fuelSpentDen() { return fuelSpentDen; }
     public int wetMass() { return wetMass; }
     public int jettisonedHere() { return jettisonedHere; }
+    public int afterburnedHere() { return afterburnedHere; }
     public int turns() { return turns; }
     public int hazards() { return hazards; }
     public int worstRadRoll() { return worstRadRoll; }

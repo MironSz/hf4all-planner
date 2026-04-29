@@ -62,12 +62,20 @@ final class SearchState {
      */
     final SearchState turnStart;
 
+    /**
+     * Whether the engine afterburned at the start of this movement (HF4A H3a:
+     * once per movement). Set on the AB turn-start state; propagated unchanged
+     * through every mid-turn descendant; reset to {@code false} by the next
+     * {@link Pathfinder#addTurnStartStates}.
+     */
+    final boolean afterburnedThisMove;
+
     SearchState(MapNode node, String entryLabel, int engineIndex,
                 int burnsRemaining, int pivotsRemaining, int freeBurns, int thrust,
                 int fuelStepsRemaining, Fraction partialStepsThisMove, int jettisonedAtTurnStart,
                 int turn, int hazards, int worstRadRoll,
                 int visitedNodes, String previousNodeId, SearchState parent, List<String> bonusSites,
-                SearchState turnStart) {
+                SearchState turnStart, boolean afterburnedThisMove) {
         this.node = node;
         this.entryLabel = entryLabel;
         this.engineIndex = engineIndex;
@@ -86,6 +94,7 @@ final class SearchState {
         this.parent = parent;
         this.bonusSites = bonusSites;
         this.turnStart = turnStart;
+        this.afterburnedThisMove = afterburnedThisMove;
     }
 
     /** Returns the most recent turn-start state in this state's lineage

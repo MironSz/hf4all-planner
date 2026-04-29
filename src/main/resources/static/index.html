@@ -492,10 +492,13 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
         s.engines = [];
         document.querySelectorAll('.engine-block').forEach(b => {
             s.engines.push({
-                baseThrust:      parseInt(b.querySelector('.e-base-thrust').value) || 0,
-                fuelConsumption: parseInt(b.querySelector('.e-fuel').value)   || 0,
-                solarPowered:    b.querySelector('.e-solar').checked,
-                bonusPivots:     parseInt(b.querySelector('.e-pivots').value) || 0,
+                baseThrust:         parseInt(b.querySelector('.e-base-thrust').value) || 0,
+                fuelConsumption:    parseInt(b.querySelector('.e-fuel').value)   || 0,
+                solarPowered:       b.querySelector('.e-solar').checked,
+                bonusPivots:        parseInt(b.querySelector('.e-pivots').value) || 0,
+                canAfterburn:       b.querySelector('.e-afterburn').checked,
+                afterburnFuelCost:  parseInt(b.querySelector('.e-ab-cost').value) || 0,
+                afterburnThrustGain:parseInt(b.querySelector('.e-ab-gain').value) || 1,
             });
         });
         s.disableVenusFlyby = document.getElementById('no-venus-cb').checked;
@@ -1450,7 +1453,8 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
             const eng = (n.engineIndex != null && n.engineIndex >= 0)
                     ? ` e${n.engineIndex + 1}` : '';
             const jet = (n.jettisonedHere > 0) ? ` JETT${n.jettisonedHere}` : '';
-            return `${i}) ${name} [${type}] t${n.turns} f${n.fuelSpent} h${n.hazards} r${n.worstRadRoll}${eng}${jet}`;
+            const ab  = (n.afterburnedHere > 0) ? ` AB+${n.afterburnedHere}` : '';
+            return `${i}) ${name} [${type}] t${n.turns} f${n.fuelSpent} h${n.hazards} r${n.worstRadRoll}${eng}${jet}${ab}`;
         });
         return header + lines.join('\n');
     }
@@ -1831,11 +1835,12 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
                     const segStartFuelSpent = jettisoned > 0
                             ? pathNodes[i].fuelSpent
                             : anchor.fuelSpent;
+                    const afterburns = pathNodes[i].afterburnedHere || 0;
                     const eng = engineCfgs[ei];
                     let thrustStr = '?';
                     if (eng) {
                         const solarMod = eng.solarPowered ? (p.solarMod || 0) : 0;
-                        thrustStr = String(eng.baseThrust + weightClassMod(wmForSegment) + solarMod);
+                        thrustStr = String(eng.baseThrust + weightClassMod(wmForSegment) + solarMod + afterburns);
                     }
                     const line1 = turn + '. Engine ' + (ei + 1) + ' - ' + weightClassName(wmForSegment) + ' - Thrust ' + thrustStr;
 
@@ -1864,9 +1869,8 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
                         }
                     }
                     const fuelSteps = pathNodes[segEnd - 1].fuelSpent - segStartFuelSpent;
-                    const afterburns = 0; // backend telemetry pending
                     let line2 = 'Burns ' + burns + ' - Fuel Steps ' + fuelSteps;
-                    if (afterburns > 0) line2 += ' - Afterburn ' + afterburns;
+                    if (afterburns > 0) line2 += ' - Afterburn +' + afterburns;
                     const line3 = jettisoned > 0 ? 'Jettison ' + jettisoned + ' fuel steps' : null;
 
                     const w1 = ctx.measureText(line1).width;
@@ -2085,13 +2089,17 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
 
         const engines = [];
         document.querySelectorAll('.engine-block').forEach(block => {
+            const canAB = block.querySelector('.e-afterburn').checked;
+            const abCost = canAB ? (parseInt(block.querySelector('.e-ab-cost').value) || 0) : 0;
+            const abGain = canAB ? (parseInt(block.querySelector('.e-ab-gain').value) || 0) : 0;
             engines.push({
                 baseThrust: parseInt(block.querySelector('.e-base-thrust').value) || 0,
                 fuelConsumptionNum: parseInt(block.querySelector('.e-fuel').value) || 0,
                 fuelConsumptionDen: 1,
                 solarPowered: block.querySelector('.e-solar').checked,
                 bonusPivots: parseInt(block.querySelector('.e-pivots').value) || 0,
-                afterburnFuelCost: 0
+                afterburnFuelCost: abCost,
+                afterburnThrustGain: abGain
             });
         });
 
@@ -2176,6 +2184,9 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
         const fuelDef   = (initial && initial.fuelConsumption != null) ? initial.fuelConsumption : cfgI('ui.engine.fuel.default',   2);
         const pivotsDef = (initial && initial.bonusPivots     != null) ? initial.bonusPivots     : cfgI('ui.engine.pivots.default', 0);
         const solarDef  = !!(initial && initial.solarPowered);
+        const abOnDef   = !!(initial && initial.canAfterburn);
+        const abCostDef = (initial && initial.afterburnFuelCost  != null) ? initial.afterburnFuelCost  : 1;
+        const abGainDef = (initial && initial.afterburnThrustGain != null) ? initial.afterburnThrustGain : 1;
         const div = document.createElement('div');
         div.className = 'engine-block';
         div.innerHTML = `
@@ -2189,9 +2200,21 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
             </div>
             <div class="engine-row">
                 <div><label>Pivots: <span class="tip" data-tip="Lets you turn at non-Lagrange nodes without ending the turn or performing double burn.">?</span></label><input type="number" class="e-pivots" value="${pivotsDef}" min="0" max="5"></div>
-                <div><label><input type="checkbox" class="e-solar"${solarDef ? ' checked' : ''}>Solar <span class="tip" data-tip="Solar-powered engine: thrust scales with distance from the Sun.">?</span></label></div>
+                <div style="display:flex;flex-direction:column;gap:2px">
+                    <label><input type="checkbox" class="e-solar"${solarDef ? ' checked' : ''}>Solar <span class="tip" data-tip="Solar-powered engine: thrust scales with distance from the Sun.">?</span></label>
+                    <label><input type="checkbox" class="e-afterburn"${abOnDef ? ' checked' : ''}>Afterburn <span class="tip" data-tip="Once per movement: spend fuel to gain net thrust.">?</span></label>
+                </div>
+            </div>
+            <div class="engine-row engine-ab-row" style="display:${abOnDef ? 'flex' : 'none'}">
+                <div><label>AB cost: <span class="tip" data-tip="Fuel steps spent per afterburn use.">?</span></label><input type="number" class="e-ab-cost" value="${abCostDef}" min="1" max="20"></div>
+                <div><label>AB gain: <span class="tip" data-tip="Net-thrust gained per afterburn use.">?</span></label><input type="number" class="e-ab-gain" value="${abGainDef}" min="1" max="10"></div>
             </div>
         `;
+        const abCb  = div.querySelector('.e-afterburn');
+        const abRow = div.querySelector('.engine-ab-row');
+        abCb.addEventListener('change', () => {
+            abRow.style.display = abCb.checked ? 'flex' : 'none';
+        });
         div.querySelector('.e-remove').addEventListener('click', () => {
             div.remove();
             renumberEngines();

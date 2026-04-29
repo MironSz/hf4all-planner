@@ -124,20 +124,20 @@ public final class Pathfinder {
         // Seed: one initial state per engine. Weight class derived from the
         // user-supplied (dryMass, fuel); jettison at turn 1 is NOT a branch
         // — the player committed to the starting load by entering it.
-        for (int i = 0; i < engines.size(); i++) {
-            EngineSpec engine = engines.get(i);
-            int thrust = effectiveThrust(i, start, initialFuelSteps);
-            int burns  = Math.max(thrust, 0);
-            SearchState initial = new SearchState(
-                    start, null, i,
-                    burns, engine.bonusPivots(), 0, thrust,
-                    initialFuelSteps, Fraction.ZERO, 0,
-                    1, 0, 0,
-                    1, null, null, List.of(),
-                    null /* this IS a turn-start */);
-            if (addIfBest(initial, bestFound)) {
-                queue.add(initial);
-            }
+        // Afterburn IS a branch on turn 1 though (eager): for engines that
+        // can afterburn we emit both no-AB and AB variants alongside the
+        // baseline so the search treats turn 1 like every other turn-start.
+        List<SearchState> seeds = new ArrayList<>(engines.size() * 2);
+        SearchState pseudoCurrent = new SearchState(
+                start, null, 0, 0, 0, 0, 0,
+                initialFuelSteps, Fraction.ZERO, 0,
+                1, 0, 0,                       // turn=1 hazards=0 worstRadRoll=0
+                1, null, null, List.of(),
+                null, false);
+        addTurnStartStates(seeds, pseudoCurrent, initialFuelSteps, /*jettisoned=*/ 0,
+                /*turn=*/ 1, /*parent=*/ null);
+        for (SearchState s : seeds) {
+            if (addIfBest(s, bestFound)) queue.add(s);
         }
 
         int iterations = 0;
@@ -281,19 +281,20 @@ public final class Pathfinder {
                 initialFuelSteps, /* fuelSpent = */ 0,
                 /* remainNum */ initialFuelSteps, /* remainDen */ 1,
                 /* spentNum */  0, /* spentDen */  1,
-                rootWetMass, 0,
+                rootWetMass, 0, 0,
                 1, 0, 0, -1);
 
         Map<SearchState, PathNode> stateToNode = new IdentityHashMap<>();
         Deque<SearchState> buildQueue = new ArrayDeque<>();
         for (SearchState s : onPath) {
             if (s.parent == null) {
-                if (s.jettisonedAtTurnStart > 0) {
-                    // Lazy turn-1 jettison alts are parent-null SearchStates with
-                    // a non-zero jettison amount. They MUST get their own
-                    // PathNode (attached under the real root) so jettisonedHere
-                    // surfaces in the response — collapsing them into the
-                    // shared root would silently drop the jettison badge.
+                // Turn-1 seeds and lazy-jettison alts are parent-null. A seed
+                // that EITHER jettisoned OR afterburned at turn 1 carries info
+                // (badge + costs) that would be silently dropped if collapsed
+                // into the shared root, so it gets its own PathNode under root.
+                boolean abAtSeed  = s.afterburnedThisMove;
+                boolean jetAtSeed = s.jettisonedAtTurnStart > 0;
+                if (jetAtSeed || abAtSeed) {
                     int eff   = s.effectiveFuelStepsRemaining();
                     int wm    = FuelStrip.wetMassAt(dryMass, eff);
                     int spent = initialFuelSteps - eff;
@@ -301,14 +302,16 @@ public final class Pathfinder {
                             .subtract(s.partialStepsThisMove);
                     Fraction spentFrac  = Fraction.of(initialFuelSteps)
                             .subtract(remainFrac);
-                    PathNode jetRoot = new PathNode(nextId++, s.node.id(),
+                    int abGain = abAtSeed
+                            ? engines.get(s.engineIndex).afterburnThrustGain() : 0;
+                    PathNode seedRoot = new PathNode(nextId++, s.node.id(),
                             eff, spent,
                             remainFrac.numerator(), remainFrac.denominator(),
                             spentFrac.numerator(),  spentFrac.denominator(),
-                            wm, s.jettisonedAtTurnStart,
+                            wm, s.jettisonedAtTurnStart, abGain,
                             s.turn, s.hazards, s.worstRadRoll, s.engineIndex);
-                    root.addChild(jetRoot);
-                    stateToNode.put(s, jetRoot);
+                    root.addChild(seedRoot);
+                    stateToNode.put(s, seedRoot);
                 } else {
                     stateToNode.put(s, root);
                 }
@@ -333,18 +336,20 @@ public final class Pathfinder {
                 Fraction spentFrac  = Fraction.of(initialFuelSteps)
                         .subtract(remainFrac);
 
-                // jettisonedAtTurnStart is inherited by every mid-turn
-                // descendant. Report it on the PathNode ONLY at the actual
-                // turn-start (where the event occurred) so the UI doesn't
-                // splash the "Jettison N" badge across the whole turn.
+                // jettisonedAtTurnStart and afterburnedThisMove are both
+                // inherited by every mid-turn descendant. Report them on the
+                // PathNode ONLY at the actual turn-start (where the event
+                // occurred) so the UI doesn't splash badges across the turn.
                 boolean isTurnStart = (child.turnStart == null);
                 int jettisonedOnNode = isTurnStart ? child.jettisonedAtTurnStart : 0;
+                int afterburnedOnNode = (isTurnStart && child.afterburnedThisMove)
+                        ? engines.get(child.engineIndex).afterburnThrustGain() : 0;
 
                 PathNode childPN = new PathNode(nextId++, child.node.id(),
                         eff, spent,
                         remainFrac.numerator(), remainFrac.denominator(),
                         spentFrac.numerator(),  spentFrac.denominator(),
-                        wm, jettisonedOnNode,
+                        wm, jettisonedOnNode, afterburnedOnNode,
                         child.turn, child.hazards, child.worstRadRoll,
                         child.engineIndex);
                 currentPN.addChild(childPN);
@@ -522,7 +527,7 @@ public final class Pathfinder {
                     current.turn, newHazards, newRadRoll,
                     current.visitedNodes + visitedInc, prevNode, current,
                     current.bonusSites,
-                    current.turnStart()));
+                    current.turnStart(), current.afterburnedThisMove));
         }
         // Option B: paid burn — H5d gate: fractional partial ≤ remaining
         if (current.burnsRemaining > 0 && !newPartial.isGreaterThan(fuelCap)) {
@@ -535,7 +540,7 @@ public final class Pathfinder {
                     current.turn, newHazards, newRadRoll,
                     current.visitedNodes + visitedInc, prevNode, current,
                     current.bonusSites,
-                    current.turnStart()));
+                    current.turnStart(), current.afterburnedThisMove));
         }
         // Note: we deliberately do NOT trigger lazy jettison when we simply
         // ran out of burns this turn (burnsRemaining == 0). That fires for
@@ -562,7 +567,7 @@ public final class Pathfinder {
                     current.turn, current.hazards, current.worstRadRoll,
                     current.visitedNodes, prevNode, current,
                     current.bonusSites,
-                    current.turnStart()));
+                    current.turnStart(), current.afterburnedThisMove));
         }
         // Option B: force-turn via 2 paid burns (requires an operational thruster)
         if (current.burnsRemaining > 1 && current.thrust > 0) {
@@ -579,7 +584,7 @@ public final class Pathfinder {
                         current.turn, current.hazards, current.worstRadRoll,
                         current.visitedNodes, prevNode, current,
                         current.bonusSites,
-                        current.turnStart()));
+                        current.turnStart(), current.afterburnedThisMove));
             }
         } else if (current.thrust <= 0) {
             // Engine non-operational (e.g. solar in deep outer zone). Free
@@ -596,11 +601,25 @@ public final class Pathfinder {
     private List<SearchState> expandCruise(SearchState current, Neighbor neighbor,
                                            String prevNode, boolean oneWay, boolean sameNode) {
         MapNode dest = neighbor.node;
-        // For cross-node moves, recompute effective thrust at the destination
-        // (solar engines change thrust as they cross heliocentric zones).
-        int newThrust    = sameNode
-                ? current.thrust
-                : effectiveThrust(current.engineIndex, dest, current.fuelStepsRemaining);
+        // Mid-movement thrust is FROZEN per H3 — base thrust, weight class,
+        // and afterburn were all snapshotted at turn-start. The only thing
+        // that legitimately changes mid-move is the solar-zone modifier
+        // (when the ship crosses heliocentric zones). For non-solar engines,
+        // preserve current.thrust verbatim. For solar engines, apply the
+        // delta between the destination zone and the current node's zone —
+        // do NOT re-derive thrust via effectiveThrust, which would also
+        // recompute weight class from post-afterburn fuel and erase both
+        // the jettison decision AND the afterburn gain.
+        int newThrust;
+        if (sameNode) {
+            newThrust = current.thrust;
+        } else if (engines.get(current.engineIndex).solarPowered()) {
+            int oldSolar = current.node.solarMod();
+            int newSolar = dest.solarMod();
+            newThrust = current.thrust + (newSolar - oldSolar);
+        } else {
+            newThrust = current.thrust;
+        }
         boolean isHazard = !sameNode && dest.hazard();
         int newHazards   = current.hazards + (isHazard ? 1 : 0);
         int newRadRoll   = sameNode
@@ -626,7 +645,7 @@ public final class Pathfinder {
                 current.turn, newHazards, newRadRoll,
                 current.visitedNodes + visitedInc,
                 prevNode, current, newBonusSites,
-                current.turnStart()));
+                current.turnStart(), current.afterburnedThisMove));
     }
 
     /**
@@ -655,36 +674,67 @@ public final class Pathfinder {
     }
 
     /**
-     * Spawn one fresh-turn state per available engine, given the settled
-     * fuel level. Used by both {@link #waitTurn} (for the standard turn
-     * boundary) and {@link #maybeSpawnJettisonAlt} (for lazy jettison
-     * alternatives at the SAME turn boundary as an existing turn-start).
+     * Spawn fresh-turn states per available engine, given the settled fuel
+     * level. Used by {@link #waitTurn}, {@link #maybeSpawnJettisonAlt}, and
+     * the search seed.
+     *
+     * <p>For each engine we eagerly emit BOTH an afterburn-off and (when the
+     * engine can afterburn and fuel covers the cost) an afterburn-on branch.
+     * Per the project decision: weight class is derived from {@code newFuelSteps}
+     * (post-jettison, pre-afterburn). Afterburn gain is layered on top of the
+     * resulting net thrust; the cost is deducted from the AB branch's fuel
+     * budget but does NOT feed back into weight class.
      */
     private void addTurnStartStates(List<SearchState> out, SearchState current,
                                     int newFuelSteps, int jettisoned,
                                     int turn, SearchState parent) {
         for (int i = 0; i < engines.size(); i++) {
             EngineSpec engine = engines.get(i);
-            int thrust = effectiveThrust(i, current.node, newFuelSteps);
-            int burns  = Math.max(thrust, 0);
-            out.add(new SearchState(
-                    current.node, null, i,
-                    burns, engine.bonusPivots(), 0, thrust,
-                    newFuelSteps, Fraction.ZERO, jettisoned,
-                    turn,
-                    current.hazards, current.worstRadRoll,
-                    current.visitedNodes, null, parent, List.of(),
-                    null /* this IS a turn-start */));
+            int noAbThrust = effectiveThrust(i, current.node, newFuelSteps);
+
+            // Branch A: no afterburn (always present).
+            out.add(buildTurnStart(current, i, engine, noAbThrust,
+                    newFuelSteps, jettisoned, turn, parent, /*ab=*/ false));
+
+            // Branch B: afterburn (eager, when supported and affordable).
+            int cost = engine.afterburnFuelCost();
+            if (engine.canAfterburn() && newFuelSteps >= cost) {
+                int abThrust = noAbThrust + engine.afterburnThrustGain();
+                out.add(buildTurnStart(current, i, engine, abThrust,
+                        newFuelSteps - cost, jettisoned, turn, parent, /*ab=*/ true));
+            }
         }
     }
 
+    /** Builds a single turn-start SearchState. Centralises the constructor
+     *  call so the AB-vs-no-AB branching above stays readable. */
+    private SearchState buildTurnStart(SearchState current, int engineIndex,
+                                       EngineSpec engine, int thrust,
+                                       int fuelSteps, int jettisoned, int turn,
+                                       SearchState parent, boolean afterburned) {
+        int burns = Math.max(thrust, 0);
+        return new SearchState(
+                current.node, null, engineIndex,
+                burns, engine.bonusPivots(), 0, thrust,
+                fuelSteps, Fraction.ZERO, jettisoned,
+                turn,
+                current.hazards, current.worstRadRoll,
+                current.visitedNodes, null, parent, List.of(),
+                null /* this IS a turn-start */,
+                afterburned);
+    }
+
     /**
-     * Effective net thrust for an engine at a given node, with current Wet
-     * Mass derived from {@code fuelStepsRemaining}:
-     * {@code baseThrust + weightClassMod(WM) + (solar ? node.solarMod : 0)}.
+     * Net thrust for an engine at a given node, with Wet Mass derived from
+     * {@code fuelStepsRemaining}: {@code baseThrust + weightClassMod(WM) +
+     * (solar ? node.solarMod : 0)}.
      *
-     * <p>Reserved future term: afterburn (H3a) — adds +1 once per move,
-     * for {@code engine.afterburnFuelCost} fuel steps. Currently ignored.
+     * <p>Afterburn (H3a) is intentionally NOT folded in here. By project
+     * decision, afterburn is a flat layer on top of the post-weight-class
+     * thrust — the cost is deducted from the AB turn-start's fuel budget
+     * but does not feed back into weight class. Callers in
+     * {@link #addTurnStartStates} add {@code engine.afterburnThrustGain()}
+     * after this method returns.
      */
     private int effectiveThrust(int engineIndex, MapNode node, int fuelStepsRemaining) {
         EngineSpec engine = engines.get(engineIndex);
