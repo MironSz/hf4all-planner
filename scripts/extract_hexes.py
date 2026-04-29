@@ -53,7 +53,7 @@ from PIL import Image, ImageDraw
 ROOT = Path(__file__).resolve().parent.parent
 MAP_JSON = ROOT / "src/main/resources/data-hf4-v2.json"
 MAP_IMG  = ROOT / "src/main/resources/static/hf4.jpg"
-OUT_JSON = ROOT / "src/main/resources/static/hexes.json"
+OUT_JSON = ROOT / "src/main/resources/static/data/hexes.json"
 OUT_PNG  = ROOT / "target/hex-overlay.png"
 
 R_MIN          = 22         # smallest plausible hex; below this we'd lock onto inner icons
