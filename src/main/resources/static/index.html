@@ -90,6 +90,20 @@ button:disabled { background: #555; cursor: not-allowed; }
 .flag-cb-row input { margin: 0; }
 select { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #555; color: #eee; font-family: monospace; font-size: 12px; }
 
+/* ---- "How to use" instructions panel ---- */
+.instructions-panel { background: #0f3460; border-radius: 4px; font-size: 12px; color: #ccc; }
+.instructions-panel summary { padding: 8px; cursor: pointer; user-select: none; color: #7ec8e3; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; list-style: none; }
+.instructions-panel summary::-webkit-details-marker { display: none; }
+.instructions-panel summary::before { content: '▶'; display: inline-block; margin-right: 6px; transition: transform 0.15s; }
+.instructions-panel[open] summary::before { transform: rotate(90deg); }
+.instructions-panel summary:hover { background: #143359; border-radius: 4px; }
+.instructions-panel[open] summary { border-bottom: 1px solid #1a3758; border-radius: 4px 4px 0 0; }
+.instructions-body { padding: 8px 10px 10px; }
+.instructions-body p { margin: 0 0 6px 0; line-height: 1.45; }
+.instructions-body p:last-child { margin-bottom: 0; }
+.instructions-body b { color: #eee; }
+.instructions-body kbd { background: #143359; border: 1px solid #2a4a72; border-radius: 3px; padding: 0 4px; font-family: monospace; font-size: 11px; color: #7ec8e3; }
+
 /* ---- Help-tip "?" glyph with hover tooltip ---- */
 .tip { display: inline-block; width: 14px; height: 14px; line-height: 13px; text-align: center; border-radius: 50%; background: #143359; color: #7ec8e3; border: 1px solid #2a4a72; font-size: 10px; font-weight: bold; font-family: monospace; cursor: help; margin-left: 4px; position: relative; vertical-align: middle; user-select: none; }
 .tip:hover { background: #1e4a7a; color: #fff; }
@@ -153,9 +167,15 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
     <!-- Master toggle for the hex-mask overlay. When checked, sites that are
          unreachable / filtered out get painted over with sampled solar-zone
          colour at varying opacities (see updateHexMasks() below). -->
-    <div id="hide-masked-row" style="display:flex;align-items:center;gap:8px;font-size:12px;color:#aaa;padding:4px 0;">
-        <input type="checkbox" id="hide-masked-sites" checked>
-        <label for="hide-masked-sites" style="margin:0;cursor:pointer;" title="Paint over sites that are unreachable or filtered out so the matching set stands out.">Hide masked sites</label>
+    <div id="hide-masked-row" style="display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;font-size:12px;color:#aaa;padding:4px 0;">
+        <span style="display:flex;align-items:center;gap:6px;">
+            <input type="checkbox" id="hide-unreachable-sites" checked>
+            <label for="hide-unreachable-sites" style="margin:0;cursor:pointer;" title="Paint over sites the planner found unreachable from the current start.">Hide unreachable sites</label>
+        </span>
+        <span style="display:flex;align-items:center;gap:6px;">
+            <input type="checkbox" id="hide-filtered-sites" checked>
+            <label for="hide-filtered-sites" style="margin:0;cursor:pointer;" title="Paint over sites that don't match the active site filter.">Hide filtered sites</label>
+        </span>
     </div>
 
     <div id="route-info" style="display:none;background:#0a1a30;border-radius:4px;font-family:monospace;font-size:13px;color:#fff;margin-bottom:8px;align-items:stretch;">
@@ -237,6 +257,19 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
             </div>
         </div>
     </div>
+
+    <details id="instructions" class="instructions-panel">
+        <summary>How to use</summary>
+        <div class="instructions-body">
+            <p><b>Select start</b> — Click any node on the map.</p>
+            <p><b>Select endpoint</b> — Hover to preview, click to pin.</p>
+            <p><b>Clear routes</b> — Press <kbd>Esc</kbd>, or use the <b>Clear routes</b> button (when panel hidden).</p>
+            <p><b>Switch routes</b> — <kbd>←</kbd>/<kbd>→</kbd>, the <b>◄</b>/<b>►</b> arrows on the route card, or <b>Prev/Next</b> buttons.</p>
+            <p><b>Add engine</b> — Click <b>+ Add Engine</b>; configure thrust/fuel/pivots/solar. Hover <b>?</b> glyphs for help.</p>
+            <p><b>Use filter</b> — Press <kbd>F</kbd> or click the <b>Filter</b> header. Matching sites get a green hex outline; rest of map dims. <b>✕</b> or <kbd>Shift+F</kbd> resets.</p>
+            <p><b>Hide / show panel</b> — Use the <b>»</b> / <b>«</b> button (top-right).</p>
+        </div>
+    </details>
 
     <div id="status">Loading map data...</div>
     <div id="debug-route" style="display:none;font-size:11px;color:#aaa;background:#0a1a30;padding:8px;border-radius:4px;max-height:40vh;overflow-y:auto;white-space:pre;font-family:monospace"></div>
@@ -1976,13 +2009,19 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
     //       unreachable, passes filter                 → opacity 0.4
     //       unreachable, filtered out                  → opacity 0.9
     //
-    // Master toggle = #hide-masked-sites checkbox.
+    // Two independent toggles:
+    //   #hide-unreachable-sites — paint sites the planner can't reach from the
+    //                              current start (does nothing until a start is
+    //                              picked → reachableNodes exists).
+    //   #hide-filtered-sites    — paint sites that don't pass the active site
+    //                              filter (does nothing while the filter is off).
     // Same colour-sampling logic as /hex-editor (6 triangles, neighbour-aware
     // median, never paints over a precomputed neighbour hex/body).
     // =====================================================================
     const HM_SVG_NS = 'http://www.w3.org/2000/svg';
     const HM_OVERLAY = document.getElementById('hex-mask-overlay');
-    const HM_TOGGLE  = document.getElementById('hide-masked-sites');
+    const HM_TOGGLE_UNREACHABLE = document.getElementById('hide-unreachable-sites');
+    const HM_TOGGLE_FILTERED    = document.getElementById('hide-filtered-sites');
     let hmHexes = null, hmNeighbors = {}, hmBodies = {};
     let hmImgPixels = null;
     let hmMaskScale = 1.20, hmMaskBlur = 6;
@@ -2190,24 +2229,32 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
         if (siteId === activeEp)     return 0;
         const point = mapData && mapData.points && mapData.points[siteId];
         if (!point) return 0;
-        const filterOk = !filter.active || siteMatchesFilter(point, filter);
-        // No start selected → no traverse → reachability is undefined; only
-        // the filter is meaningful here.
-        if (!reachableNodes) {
-            if (!filter.active) return 0;
-            return filterOk ? 0 : hmOpFilteredOut;
+        const hideUnreachable = !!(HM_TOGGLE_UNREACHABLE && HM_TOGGLE_UNREACHABLE.checked);
+        const hideFiltered    = !!(HM_TOGGLE_FILTERED    && HM_TOGGLE_FILTERED.checked);
+        if (!hideUnreachable && !hideFiltered) return 0;
+        const filterOk      = !filter.active || siteMatchesFilter(point, filter);
+        const reachable     = !reachableNodes ? true : !!reachableNodes[siteId];
+        const isUnreachable = !!reachableNodes && !reachable;
+        const isFilteredOut = filter.active && !filterOk;
+        const showUnreach   = hideUnreachable && isUnreachable;
+        const showFiltered  = hideFiltered    && isFilteredOut;
+        if (!showUnreach && !showFiltered) return 0;
+        // Both categories apply → strongest overlay (heavy paint).
+        if (showUnreach && showFiltered) return hmOpUnreachableMismatch;
+        // Unreachable only — separate sub-tier when site still passes filter
+        // (lighter paint so a matching-but-unreachable site stays partially
+        // visible).
+        if (showUnreach) {
+            return (filter.active && filterOk) ? hmOpUnreachableMatch : hmOpUnreachable;
         }
-        const reachable = !!reachableNodes[siteId];
-        if (!filter.active) return reachable ? 0 : hmOpUnreachable;
-        if ( reachable &&  filterOk) return 0;
-        if (!reachable &&  filterOk) return hmOpUnreachableMatch;
-        if ( reachable && !filterOk) return hmOpReachableMismatch;
-        return hmOpUnreachableMismatch;
+        // showFiltered only — separate sub-tier for reachable-but-filtered-out.
+        return reachable ? hmOpReachableMismatch : hmOpFilteredOut;
     }
 
     function updateHexMasks() {
         if (!hmReady) return;
-        const enabled = HM_TOGGLE && HM_TOGGLE.checked;
+        const enabled = (HM_TOGGLE_UNREACHABLE && HM_TOGGLE_UNREACHABLE.checked)
+                     || (HM_TOGGLE_FILTERED    && HM_TOGGLE_FILTERED.checked);
         if (!enabled) {
             for (const g of hmGroups.values()) g.style.display = 'none';
             return;
@@ -2260,7 +2307,8 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
         }).catch(e => console.error('hex-mask: init failed', e));
     }
 
-    if (HM_TOGGLE) HM_TOGGLE.addEventListener('change', updateHexMasks);
+    if (HM_TOGGLE_UNREACHABLE) HM_TOGGLE_UNREACHABLE.addEventListener('change', updateHexMasks);
+    if (HM_TOGGLE_FILTERED)    HM_TOGGLE_FILTERED.addEventListener('change',    updateHexMasks);
 
     // Refresh masks every time the planner redraws the canvas.
     const _hmOrigDraw = draw;
