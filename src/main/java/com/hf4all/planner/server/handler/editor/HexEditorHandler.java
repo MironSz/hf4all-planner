@@ -36,10 +36,10 @@ import java.util.Map;
  */
 public final class HexEditorHandler implements HttpHandler {
 
-    private static final Path EDITED_PATH    = Path.of("src", "main", "resources", "static", "hexes-edited.json");
-    private static final Path ORIGINAL_PATH  = Path.of("src", "main", "resources", "static", "hexes.json");
-    private static final Path HTML_PATH      = Path.of("src", "main", "resources", "static", "hex-editor.html");
-    private static final Path NEIGHBORS_PATH = Path.of("src", "main", "resources", "static", "hex-neighbors.json");
+    private static final Path EDITED_PATH    = Path.of("src", "main", "resources", "static", "data",   "hexes-edited.json");
+    private static final Path ORIGINAL_PATH  = Path.of("src", "main", "resources", "static", "data",   "hexes.json");
+    private static final Path HTML_PATH      = Path.of("src", "main", "resources", "static", "editor", "hex-editor.html");
+    private static final Path NEIGHBORS_PATH = Path.of("src", "main", "resources", "static", "data",   "hex-neighbors.json");
 
     private static final String NO_CACHE = "no-store, no-cache, must-revalidate, max-age=0";
 
@@ -50,7 +50,7 @@ public final class HexEditorHandler implements HttpHandler {
 
         try {
             if ((path.equals("/hex-editor") || path.equals("/hex-editor/")) && "GET".equals(method)) {
-                serveDisk(exchange, HTML_PATH, "text/html; charset=UTF-8", "static/hex-editor.html");
+                serveDisk(exchange, HTML_PATH, "text/html; charset=UTF-8", "static/editor/hex-editor.html");
             } else if ("/hex-editor/hexes".equals(path) && "GET".equals(method)) {
                 serveHexes(exchange);
             } else if ("/hex-editor/neighbors".equals(path) && "GET".equals(method)) {
@@ -90,7 +90,7 @@ public final class HexEditorHandler implements HttpHandler {
     }
 
     private void serveHexes(HttpExchange exchange) throws IOException {
-        byte[] freshBytes = readDiskOrClasspath(ORIGINAL_PATH, "static/hexes.json");
+        byte[] freshBytes = readDiskOrClasspath(ORIGINAL_PATH, "static/data/hexes.json");
         if (freshBytes == null) {
             exchange.sendResponseHeaders(404, -1);
             return;

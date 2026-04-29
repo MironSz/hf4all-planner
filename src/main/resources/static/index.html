@@ -4,15 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>HF4A Mission Planner</title>
-<script src="/d3-dispatch.min.js"></script>
-<script src="/d3-selection.min.js"></script>
-<script src="/d3-color.min.js"></script>
-<script src="/d3-interpolate.min.js"></script>
-<script src="/d3-timer.min.js"></script>
-<script src="/d3-ease.min.js"></script>
-<script src="/d3-transition.min.js"></script>
-<script src="/d3-drag.min.js"></script>
-<script src="/d3-zoom.min.js"></script>
+<script src="/lib/d3-dispatch.min.js"></script>
+<script src="/lib/d3-selection.min.js"></script>
+<script src="/lib/d3-color.min.js"></script>
+<script src="/lib/d3-interpolate.min.js"></script>
+<script src="/lib/d3-timer.min.js"></script>
+<script src="/lib/d3-ease.min.js"></script>
+<script src="/lib/d3-transition.min.js"></script>
+<script src="/lib/d3-drag.min.js"></script>
+<script src="/lib/d3-zoom.min.js"></script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { display: flex; height: 100vh; background: #1a1a2e; color: #eee; font-family: monospace; overflow: hidden; }
@@ -959,7 +959,7 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
                         initCanvas();
                         initTabs();
                     };
-                    bgImg.src = '/hf4.jpg';
+                    bgImg.src = '/img/hf4.jpg';
                 })
                 .catch(err => {
                     document.getElementById('status').textContent = 'Failed to load map: ' + err;

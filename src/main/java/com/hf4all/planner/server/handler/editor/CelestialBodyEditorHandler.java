@@ -36,9 +36,9 @@ import java.util.Map;
  */
 public final class CelestialBodyEditorHandler implements HttpHandler {
 
-    private static final Path EDITED_PATH   = Path.of("src", "main", "resources", "static", "bodies-edited.json");
-    private static final Path ORIGINAL_PATH = Path.of("src", "main", "resources", "static", "bodies.json");
-    private static final Path HTML_PATH     = Path.of("src", "main", "resources", "static", "celestial-body-editor.html");
+    private static final Path EDITED_PATH   = Path.of("src", "main", "resources", "static", "data",   "bodies-edited.json");
+    private static final Path ORIGINAL_PATH = Path.of("src", "main", "resources", "static", "data",   "bodies.json");
+    private static final Path HTML_PATH     = Path.of("src", "main", "resources", "static", "editor", "celestial-body-editor.html");
 
     private static final String NO_CACHE = "no-store, no-cache, must-revalidate, max-age=0";
 
@@ -49,7 +49,7 @@ public final class CelestialBodyEditorHandler implements HttpHandler {
 
         try {
             if ((path.equals("/celestial-body-editor") || path.equals("/celestial-body-editor/")) && "GET".equals(method)) {
-                serveDisk(exchange, HTML_PATH, "text/html; charset=UTF-8", "static/celestial-body-editor.html");
+                serveDisk(exchange, HTML_PATH, "text/html; charset=UTF-8", "static/editor/celestial-body-editor.html");
             } else if ("/celestial-body-editor/bodies".equals(path) && "GET".equals(method)) {
                 serveBodies(exchange);
             } else if ("/celestial-body-editor/save".equals(path) && "POST".equals(method)) {
@@ -83,7 +83,7 @@ public final class CelestialBodyEditorHandler implements HttpHandler {
     }
 
     private void serveBodies(HttpExchange exchange) throws IOException {
-        byte[] freshBytes = readDiskOrClasspath(ORIGINAL_PATH, "static/bodies.json");
+        byte[] freshBytes = readDiskOrClasspath(ORIGINAL_PATH, "static/data/bodies.json");
         if (freshBytes == null) {
             exchange.sendResponseHeaders(404, -1);
             return;
