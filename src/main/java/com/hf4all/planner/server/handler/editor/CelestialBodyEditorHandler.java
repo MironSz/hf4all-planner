@@ -1,4 +1,4 @@
-package com.hf4all.planner.server;
+package com.hf4all.planner.server.handler.editor;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;

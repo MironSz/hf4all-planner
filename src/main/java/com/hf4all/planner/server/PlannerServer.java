@@ -1,8 +1,14 @@
 package com.hf4all.planner.server;
 
 import com.hf4all.planner.config.Config;
-import com.hf4all.planner.io.MapLoader;
+import com.hf4all.planner.map.MapLoader;
 import com.hf4all.planner.model.SolarMap;
+import com.hf4all.planner.server.handler.ConfigHandler;
+import com.hf4all.planner.server.handler.IndexHandler;
+import com.hf4all.planner.server.handler.MapHandler;
+import com.hf4all.planner.server.handler.TraverseHandler;
+import com.hf4all.planner.server.handler.editor.CelestialBodyEditorHandler;
+import com.hf4all.planner.server.handler.editor.HexEditorHandler;
 import com.sun.net.httpserver.HttpServer;
 
 import java.io.IOException;

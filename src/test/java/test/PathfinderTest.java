@@ -1,10 +1,10 @@
 package test;
 
-import com.hf4all.planner.io.MapLoader;
+import com.hf4all.planner.map.MapLoader;
 import com.hf4all.planner.model.FuelStrip;
 import com.hf4all.planner.model.SolarMap;
 import com.hf4all.planner.pathfinder.Pathfinder;
-import com.hf4all.planner.server.dto.*;
+import com.hf4all.planner.api.*;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Disabled;

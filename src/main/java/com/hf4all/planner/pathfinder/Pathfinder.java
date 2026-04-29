@@ -5,7 +5,7 @@ import com.hf4all.planner.model.Fraction;
 import com.hf4all.planner.model.FuelStrip;
 import com.hf4all.planner.model.MapNode;
 import com.hf4all.planner.model.SolarMap;
-import com.hf4all.planner.server.dto.*;
+import com.hf4all.planner.api.*;
 
 import java.util.*;
 

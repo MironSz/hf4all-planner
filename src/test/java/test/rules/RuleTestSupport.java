@@ -3,10 +3,10 @@ package test.rules;
 import com.hf4all.planner.model.MapNode;
 import com.hf4all.planner.model.SolarMap;
 import com.hf4all.planner.pathfinder.Pathfinder;
-import com.hf4all.planner.server.dto.EngineSpec;
-import com.hf4all.planner.server.dto.PathNode;
-import com.hf4all.planner.server.dto.TraverseRequest;
-import com.hf4all.planner.server.dto.TraverseResponse;
+import com.hf4all.planner.api.EngineSpec;
+import com.hf4all.planner.api.PathNode;
+import com.hf4all.planner.api.TraverseRequest;
+import com.hf4all.planner.api.TraverseResponse;
 
 import java.util.*;
 

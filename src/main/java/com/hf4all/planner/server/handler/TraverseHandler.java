@@ -1,12 +1,12 @@
-package com.hf4all.planner.server;
+package com.hf4all.planner.server.handler;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
 import com.hf4all.planner.config.Config;
 import com.hf4all.planner.model.SolarMap;
 import com.hf4all.planner.pathfinder.Pathfinder;
-import com.hf4all.planner.server.dto.TraverseRequest;
-import com.hf4all.planner.server.dto.TraverseResponse;
+import com.hf4all.planner.api.TraverseRequest;
+import com.hf4all.planner.api.TraverseResponse;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 

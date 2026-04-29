@@ -1,10 +1,10 @@
 package test.rules;
 
-import com.hf4all.planner.io.MapLoader;
+import com.hf4all.planner.map.MapLoader;
 import com.hf4all.planner.model.SolarMap;
-import com.hf4all.planner.server.dto.EngineSpec;
-import com.hf4all.planner.server.dto.PathNode;
-import com.hf4all.planner.server.dto.TraverseResponse;
+import com.hf4all.planner.api.EngineSpec;
+import com.hf4all.planner.api.PathNode;
+import com.hf4all.planner.api.TraverseResponse;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;

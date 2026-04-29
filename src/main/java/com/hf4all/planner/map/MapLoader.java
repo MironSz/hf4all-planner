@@ -1,4 +1,4 @@
-package com.hf4all.planner.io;
+package com.hf4all.planner.map;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;

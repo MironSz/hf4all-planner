@@ -9,7 +9,7 @@ import java.util.Objects;
 /**
  * Internal search state used during the Pareto-optimal BFS.
  * Forms a tree via the {@code parent} pointer; the tree is later converted
- * to a {@link com.hf4all.planner.server.dto.PathNode} tree for the API response.
+ * to a {@link com.hf4all.planner.api.PathNode} tree for the API response.
  *
  * <p>Mass / fuel tracking (HF4A F2/F3, H5):
  * <ul>

@@ -1,4 +1,4 @@
-package com.hf4all.planner.server.dto;
+package com.hf4all.planner.api;
 
 import java.util.ArrayList;
 import java.util.List;

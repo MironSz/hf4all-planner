@@ -1,4 +1,4 @@
-package com.hf4all.planner.server;
+package com.hf4all.planner.server.handler;
 
 import com.hf4all.planner.config.Config;
 import com.sun.net.httpserver.HttpExchange;

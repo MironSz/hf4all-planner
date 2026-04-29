@@ -1,6 +1,6 @@
 package test.rules;
 
-import com.hf4all.planner.io.MapLoader;
+import com.hf4all.planner.map.MapLoader;
 import com.hf4all.planner.model.MapNode;
 import com.hf4all.planner.model.NodeType;
 import com.hf4all.planner.model.SolarMap;
