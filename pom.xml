@@ -41,7 +41,37 @@
                             <mainClass>com.hf4all.planner.Main</mainClass>
                         </manifest>
                     </archive>
+                    <!-- Tools are one-shot CLIs that mutate the source-of-truth
+                         JSON files. They live in the build for `mvn exec:java`
+                         convenience but are NOT shipped in the runtime jar. -->
+                    <excludes>
+                        <exclude>com/hf4all/planner/tools/**</exclude>
+                    </excludes>
                 </configuration>
+            </plugin>
+
+            <!-- Adds src/tools/java as an additional compile source. Tools sit
+                 outside the production tree (src/main/java) so it's clear they
+                 aren't part of the runtime, while still being on the compile
+                 classpath when running `mvn exec:java -Dexec.mainClass=...`. -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>add-tools-source</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>add-source</goal>
+                        </goals>
+                        <configuration>
+                            <sources>
+                                <source>src/tools/java</source>
+                            </sources>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
 
             <!-- Runs JUnit 5 tests. Maven 3.9+ bundles Surefire 3.x, but pin

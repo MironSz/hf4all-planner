@@ -1,4 +1,4 @@
-package test.rules;
+package com.hf4all.planner.support;
 
 import com.hf4all.planner.map.MapLoader;
 import com.hf4all.planner.model.MapNode;
@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test;
  * left in place as debugging aids.
  */
 @Disabled("Diagnostic helpers — enable the class or an individual method to print candidate node ids")
-class MapScenarioScanner {
+public class MapScenarioScanner {
 
     static SolarMap map() { return MapLoader.loadDefault(); }
 

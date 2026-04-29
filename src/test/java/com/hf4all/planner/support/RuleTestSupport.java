@@ -1,4 +1,4 @@
-package test.rules;
+package com.hf4all.planner.support;
 
 import com.hf4all.planner.model.MapNode;
 import com.hf4all.planner.model.SolarMap;
@@ -14,7 +14,7 @@ import java.util.*;
  * Shared helpers for rule-focused tests. Every helper is map-agnostic and
  * subgraph-agnostic — pass the {@link SolarMap} you want to search.
  */
-final class RuleTestSupport {
+public final class RuleTestSupport {
 
     /**
      * Common low-thrust engine used when the test doesn't care about thrust
@@ -22,28 +22,28 @@ final class RuleTestSupport {
      * Tug-class -2 modifier so that net thrust = 3, matching the values
      * these tests were originally calibrated against.
      */
-    static final EngineSpec ENGINE_LOW   = new EngineSpec(5, 2, false, 0);
+    public static final EngineSpec ENGINE_LOW   = new EngineSpec(5, 2, false, 0);
     /** Engine capable of powered landings on mid-sized sites (net thrust 11 at Tug). */
-    static final EngineSpec ENGINE_HIGH  = new EngineSpec(13, 2, false, 0);
+    public static final EngineSpec ENGINE_HIGH  = new EngineSpec(13, 2, false, 0);
 
     /** Default Dry Mass for tests that don't care about specific weight class. */
-    static final int DRY_DEFAULT  = 4;
+    public static final int DRY_DEFAULT  = 4;
     /** Default fuel (water tanks loaded). With DRY_DEFAULT this gives Wet 24 (Tug class). */
-    static final int FUEL_DEFAULT = 20;
+    public static final int FUEL_DEFAULT = 20;
 
     private RuleTestSupport() {}
 
-    static TraverseResponse traverse(SolarMap map, String startId,
+    public static TraverseResponse traverse(SolarMap map, String startId,
                                      List<EngineSpec> engines, int fuel) {
         return Pathfinder.traverse(map, new TraverseRequest(startId, engines, DRY_DEFAULT, fuel));
     }
 
-    static TraverseResponse traverse(SolarMap map, String startId, EngineSpec engine, int fuel) {
+    public static TraverseResponse traverse(SolarMap map, String startId, EngineSpec engine, int fuel) {
         return traverse(map, startId, List.of(engine), fuel);
     }
 
     /** Collect all unique (fuel|turns|hazards|radRoll) cost vectors reported for a node. */
-    static Set<String> costVectorsAt(TraverseResponse r, String nodeId) {
+    public static Set<String> costVectorsAt(TraverseResponse r, String nodeId) {
         Set<String> out = new LinkedHashSet<>();
         if (r.endpoints() == null) return out;
         List<Integer> ids = r.endpoints().get(nodeId);
@@ -57,12 +57,12 @@ final class RuleTestSupport {
     }
 
     /** True if the node id is among the search response's endpoints. */
-    static boolean reached(TraverseResponse r, String nodeId) {
+    public static boolean reached(TraverseResponse r, String nodeId) {
         return r.endpoints() != null && r.endpoints().containsKey(nodeId);
     }
 
     /** First PathNode at which the given mapNodeId appears in the search tree, null if none. */
-    static PathNode findNodeByMapId(PathNode root, String mapNodeId) {
+    public static PathNode findNodeByMapId(PathNode root, String mapNodeId) {
         if (root == null) return null;
         Deque<PathNode> queue = new ArrayDeque<>();
         queue.add(root);
@@ -75,7 +75,7 @@ final class RuleTestSupport {
     }
 
     /** BFS search for a tree node by its integer id. */
-    static PathNode findTreeNode(PathNode root, int id) {
+    public static PathNode findTreeNode(PathNode root, int id) {
         if (root == null) return null;
         Deque<PathNode> queue = new ArrayDeque<>();
         queue.add(root);
@@ -88,7 +88,7 @@ final class RuleTestSupport {
     }
 
     /** Find the first neighbour of {@code startId} whose node passes the given test. */
-    static Optional<MapNode> findNeighbour(SolarMap map, String startId,
+    public static Optional<MapNode> findNeighbour(SolarMap map, String startId,
                                            java.util.function.Predicate<MapNode> predicate) {
         for (MapNode n : map.neighboursOf(startId)) {
             if (predicate.test(n)) return Optional.of(n);

@@ -1,8 +1,9 @@
-package test;
+package com.hf4all.planner.map;
 
 import com.hf4all.planner.map.MapLoader;
 import com.hf4all.planner.model.MapNode;
 import com.hf4all.planner.model.SolarMap;
+import com.hf4all.planner.support.MapSubgraph;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;

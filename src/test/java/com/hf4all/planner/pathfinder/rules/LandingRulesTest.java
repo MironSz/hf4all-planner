@@ -1,4 +1,4 @@
-package test.rules;
+package com.hf4all.planner.pathfinder.rules;
 
 import com.hf4all.planner.map.MapLoader;
 import com.hf4all.planner.model.SolarMap;
@@ -9,13 +9,13 @@ import com.hf4all.planner.api.TraverseResponse;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-import test.MapSubgraph;
+import com.hf4all.planner.support.MapSubgraph;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static test.rules.RuleTestSupport.*;
+import static com.hf4all.planner.support.RuleTestSupport.*;
 
 /**
  * Rules H6a (powered landing / liftoff thrust gates) and the landing-burn

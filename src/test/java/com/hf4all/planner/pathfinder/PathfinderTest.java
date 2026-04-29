@@ -1,4 +1,4 @@
-package test;
+package com.hf4all.planner.pathfinder;
 
 import com.hf4all.planner.map.MapLoader;
 import com.hf4all.planner.model.FuelStrip;

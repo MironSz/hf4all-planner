@@ -1,4 +1,4 @@
-package test;
+package com.hf4all.planner.support;
 
 import com.hf4all.planner.model.MapNode;
 import com.hf4all.planner.model.SolarMap;
