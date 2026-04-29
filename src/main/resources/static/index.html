@@ -117,6 +117,12 @@ select { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #
 #sidebar-toggle:hover { background: #1b3a70; color: #fff; }
 body.sidebar-collapsed #sidebar { display: none; }
 #sidebar-clear, #sidebar-prev, #sidebar-next { position: fixed; right: 48px; z-index: 110; height: 28px; padding: 0 10px; margin: 0; background: #0f3460; color: #7ec8e3; border: 1px solid #555; border-radius: 4px; cursor: pointer; font-size: 12px; line-height: 1; display: none; }
+#rotate-ccw, #rotate-cw, #rotate-reset { position: fixed; top: 12px; z-index: 110; width: 32px; height: 32px; padding: 0; margin: 0; background: #0f3460; color: #7ec8e3; border: 1px solid #555; border-radius: 4px; cursor: pointer; font-size: 18px; line-height: 30px; text-align: center; display: inline-flex; align-items: center; justify-content: center; }
+#rotate-ccw:hover, #rotate-cw:hover, #rotate-reset:hover { background: #1b3a70; color: #fff; }
+#rotate-reset { font-size: 12px; }
+#rotate-ccw   { left: 12px; }
+#rotate-reset { left: 50px; }
+#rotate-cw    { left: 88px; }
 #sidebar-clear:hover, #sidebar-prev:hover, #sidebar-next:hover { background: #1b3a70; color: #fff; }
 #sidebar-clear { top: 12px; }
 #sidebar-prev  { top: 48px; right: 144px; }
@@ -136,6 +142,9 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
 <button id="sidebar-clear" type="button" title="Clear selected routes (Esc)">Clear routes</button>
 <button id="sidebar-prev" type="button" title="Previous route (←)">◄ Prev route</button>
 <button id="sidebar-next" type="button" title="Next route (→)">Next route ►</button>
+<button id="rotate-ccw"   type="button" title="Rotate map counter-clockwise (Q)">⟲</button>
+<button id="rotate-reset" type="button" title="Reset map rotation">0°</button>
+<button id="rotate-cw"    type="button" title="Rotate map clockwise (E)">⟳</button>
 <div id="map-container">
     <div id="main">
         <img id="bg" alt="HF4A Map">
@@ -268,6 +277,7 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
             <p><b>Add engine</b> — Click <b>+ Add Engine</b>; configure thrust/fuel/pivots/solar. Hover <b>?</b> glyphs for help.</p>
             <p><b>Use filter</b> — Press <kbd>F</kbd> or click the <b>Filter</b> header. Matching sites get a green hex outline; rest of map dims. <b>✕</b> or <kbd>Shift+F</kbd> resets.</p>
             <p><b>Hide / show panel</b> — Use the <b>»</b> / <b>«</b> button (top-right).</p>
+            <p><b>Rotate map</b> — Press <kbd>Q</kbd> / <kbd>E</kbd>, use the <b>⟲</b> / <b>⟳</b> buttons (top-left), or twist with two fingers on a touchscreen.</p>
         </div>
     </details>
 
@@ -358,6 +368,14 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
     let debugMode = false;
     let debugHoveredNode = null; // nearest node under cursor (debug only, unfiltered)
     let imgW = 0, imgH = 0;
+    let mapRotation = 0; // radians; q/e keys nudge by ±ROTATION_STEP_RAD
+    const ROTATION_STEP_RAD = Math.PI / 12; // 15°
+    const ROTATION_ANIM_MS  = 180;          // ease-out duration per nudge
+    // Active rotation animation, or null when idle. Multiple presses while
+    // animating just extend the target — the animation re-starts from the
+    // current interpolated angle so it always feels smooth.
+    let rotAnim = null;
+    let rotAnimScheduled = false;
     // d3-zoom behavior and the selection it's bound to — captured in initCanvas
     // so the search box can pan the view programmatically.
     let zoomBehavior = null;
@@ -926,6 +944,150 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
                 });
         });
 
+    // Compose the d3-zoom transform with the current map rotation. Rotation
+    // pivots about the image centre so the user's mental model of "the board
+    // turns under the cursor" holds regardless of pan/zoom.
+    function applyMainTransform(x, y, k) {
+        const cx = imgW / 2, cy = imgH / 2;
+        const deg = mapRotation * 180 / Math.PI;
+        mainEl.style.transform =
+            `translate(${x}px,${y}px) scale(${k}) `
+          + `translate(${cx}px,${cy}px) rotate(${deg}deg) translate(${-cx}px,${-cy}px)`;
+    }
+
+    // Apply rotation given the most recent zoom transform — used by the q/r
+    // key handlers so we don't need to reach into d3-zoom internals.
+    function reapplyTransform() {
+        if (!zoomSel || !zoomBehavior) return;
+        const t = d3.zoomTransform(zoomSel.node());
+        applyMainTransform(t.x, t.y, t.k);
+    }
+
+    // Adjust d3-zoom's translate so that, after applying an incremental
+    // rotation `deltaRad`, the canvas point currently at the centre of the
+    // visible viewport stays at the centre. This makes Q/E (and the touch
+    // twist) rotate around the user's current focus instead of around the
+    // image centre.
+    //
+    // Derivation: the CSS transform is
+    //   S = (x, y) + k·C + k·R(θ)·(P − C)
+    // where C is the image centre and R(θ) is the current rotation. For a
+    // small Δθ we want the screen point V (viewport centre) to map to the
+    // SAME canvas point P after rotation. Solving for the new (x', y'):
+    //   D       = V − (x, y) − k·C
+    //   (x',y') = V − k·C − R(Δθ)·D
+    function adjustZoomForRotationDelta(deltaRad) {
+        if (!zoomSel || !zoomBehavior || !container || deltaRad === 0) return;
+        const tr = d3.zoomTransform(zoomSel.node());
+        const rect = container.getBoundingClientRect();
+        const vx = rect.width / 2, vy = rect.height / 2;
+        const cx = imgW / 2,        cy = imgH / 2;
+        const dx = vx - tr.x - tr.k * cx;
+        const dy = vy - tr.y - tr.k * cy;
+        const c = Math.cos(deltaRad), s = Math.sin(deltaRad);
+        const newTx = vx - tr.k * cx - (c * dx - s * dy);
+        const newTy = vy - tr.k * cy - (s * dx + c * dy);
+        // Mutate d3-zoom's internal transform directly so we don't fire a
+        // "zoom" event on every animation frame (would churn persistTabs).
+        zoomSel.node().__zoom = d3.zoomIdentity.translate(newTx, newTy).scale(tr.k);
+    }
+
+    // Animate to an ABSOLUTE rotation. Useful for the "0°" reset button.
+    // Delegates to nudgeRotation so we go through the same easing pipeline
+    // and chain cleanly onto any in-flight animation.
+    function setRotation(targetRad) {
+        const baseline = rotAnim ? rotAnim.target : mapRotation;
+        nudgeRotation(targetRad - baseline);
+    }
+
+    // Schedule a smooth easing of mapRotation from its current value to a new
+    // target. If we're already mid-animation, the new target chains onto the
+    // current angle so repeated key presses keep the motion fluid instead of
+    // snapping each step.
+    function nudgeRotation(deltaRad) {
+        const newTarget = (rotAnim ? rotAnim.target : mapRotation) + deltaRad;
+        rotAnim = {
+            start: mapRotation,
+            target: newTarget,
+            startTime: performance.now(),
+        };
+        if (!rotAnimScheduled) {
+            rotAnimScheduled = true;
+            requestAnimationFrame(stepRotationAnim);
+        }
+    }
+
+    // Two-finger twist gesture for touchscreens. Runs alongside d3-zoom's
+    // built-in pinch (zoom) so the user can pinch + twist simultaneously —
+    // each gesture only reads what it cares about (distance vs angle).
+    let touchRotState = null;
+    function _touchAngle(t1, t2) {
+        return Math.atan2(t2.clientY - t1.clientY, t2.clientX - t1.clientX);
+    }
+    function bindTouchRotation(el) {
+        el.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 2) {
+                rotAnim = null; // abandon any key-driven easing
+                touchRotState = {
+                    startAngle: _touchAngle(e.touches[0], e.touches[1]),
+                    baseRotation: mapRotation,
+                };
+            } else {
+                touchRotState = null;
+            }
+        }, { passive: true });
+        el.addEventListener('touchmove', (e) => {
+            if (e.touches.length === 2 && touchRotState) {
+                const cur = _touchAngle(e.touches[0], e.touches[1]);
+                const newRotation = touchRotState.baseRotation
+                                  + (cur - touchRotState.startAngle);
+                adjustZoomForRotationDelta(newRotation - mapRotation);
+                mapRotation = newRotation;
+                reapplyTransform();
+                draw();
+            }
+        }, { passive: true });
+        el.addEventListener('touchend', () => { touchRotState = null; }, { passive: true });
+        el.addEventListener('touchcancel', () => { touchRotState = null; }, { passive: true });
+    }
+
+    function stepRotationAnim() {
+        rotAnimScheduled = false;
+        if (!rotAnim) return;
+        const now = performance.now();
+        const t = Math.min(1, (now - rotAnim.startTime) / ROTATION_ANIM_MS);
+        // ease-out cubic — decelerates as it approaches the target
+        const eased = 1 - Math.pow(1 - t, 3);
+        const newRotation = rotAnim.start + (rotAnim.target - rotAnim.start) * eased;
+        // Compensate the pan so the viewport centre stays put across this frame.
+        adjustZoomForRotationDelta(newRotation - mapRotation);
+        mapRotation = newRotation;
+        reapplyTransform();
+        draw();
+        if (t < 1) {
+            rotAnimScheduled = true;
+            requestAnimationFrame(stepRotationAnim);
+        } else {
+            adjustZoomForRotationDelta(rotAnim.target - mapRotation);
+            mapRotation = rotAnim.target;
+            rotAnim = null;
+            reapplyTransform();
+            draw();
+        }
+    }
+
+    // Rotate a canvas-space point about the image centre by the current
+    // mapRotation. Returns the viewport-equivalent (modulo zoom/pan) — used by
+    // the segment-label placer to lay out boxes that stay upright after CSS
+    // rotation rotates the canvas bitmap.
+    function rotateAboutCentre(px, py, sign) {
+        const cx = imgW / 2, cy = imgH / 2;
+        const a = sign * mapRotation;
+        const c = Math.cos(a), s = Math.sin(a);
+        const dx = px - cx, dy = py - cy;
+        return { x: cx + dx * c - dy * s, y: cy + dx * s + dy * c };
+    }
+
     // --- Canvas setup ---
     function initCanvas() {
         imgW = bgImg.naturalWidth  || cfgI('ui.image.fallback.width',  5000);
@@ -943,7 +1105,7 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
             .filter((event) => !event.button)
             .on('zoom', (event) => {
                 const {x, y, k} = event.transform;
-                mainEl.style.transform = `translate(${x}px,${y}px) scale(${k})`;
+                applyMainTransform(x, y, k);
                 // User-driven pan/zoom updates the active tab's transform.
                 // sourceEvent is null when we set the transform programmatically
                 // during tab activation — skip those to avoid persistence churn.
@@ -952,6 +1114,7 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
 
         zoomBehavior = z;
         zoomSel = d3.select(container);
+        bindTouchRotation(container);
         zoomSel.call(z)
             .call(z.translateTo,
                   cfgF('ui.viewport.initial.x.ratio', 0.85) * imgW,
@@ -1634,6 +1797,12 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
                     drawnAt.add(key);
                     const ax = p.x * imgW;
                     const ay = p.y * imgH;
+                    // Viewport-rotated anchor: where the anchor visually lands
+                    // after CSS map rotation. Layout (preferred slot, collision
+                    // avoidance) happens in this upright-viewport frame so the
+                    // segment labels appear axis-aligned regardless of rotation.
+                    const aRot = rotateAboutCentre(ax, ay, +1);
+                    const rax = aRot.x, ray = aRot.y;
                     // Use the post-jettison wet mass when this segment starts a
                     // turn that jettisoned fuel — otherwise the segment-start
                     // mass is just the anchor's mass (mid-turn engine swap or
@@ -1689,11 +1858,12 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
                     const numLines = line3 ? 3 : 2;
                     const boxW = w + 6;
                     const boxH = 18 + (numLines - 1) * lineH;
-                    // Preferred placement: above-right of the anchor.
-                    const boxX = ax + 7;          // = (ax + 10) - 3
-                    const preferredBoxY = ay - 10 - boxH + 2;
+                    // Preferred placement is in VIEWPORT-rotated space (above-
+                    // right of where the anchor will visually land).
+                    const boxX = rax + 7;
+                    const preferredBoxY = ray - 10 - boxH + 2;
                     labels.push({
-                        ax, ay,
+                        ax, ay, rax, ray,
                         boxX, boxY: preferredBoxY,
                         preferredBoxY,
                         boxW, boxH,
@@ -1741,14 +1911,21 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
                         || segs(ln.x1, ln.y1, ln.x2, ln.y2, X, Y, x, Y)
                         || segs(ln.x1, ln.y1, ln.x2, ln.y2, x, Y, x, y);
                 };
+                // Rotate route lines into viewport-aligned space so the
+                // box-vs-line check is comparing apples to apples (boxes are in
+                // viewport space, lines must be too).
+                const routeLinesView = routeLines.map(ln => {
+                    const a = rotateAboutCentre(ln.x1, ln.y1, +1);
+                    const b = rotateAboutCentre(ln.x2, ln.y2, +1);
+                    return { x1: a.x, y1: a.y, x2: b.x, y2: b.y };
+                });
                 labels.sort((a, b) => a.boxY - b.boxY || a.boxX - b.boxX);
                 const placedLabels = [];
                 for (const cur of labels) {
-                    const ax = cur.ax, ay = cur.ay;
-                    const right = ax + 7;
-                    const left  = ax - cur.boxW - 7;
+                    const right = cur.rax + 7;
+                    const left  = cur.rax - cur.boxW - 7;
                     const above = cur.preferredBoxY;       // y of box top when above-anchor
-                    const below = ay + 12;                 // y of box top when below-anchor
+                    const below = cur.ray + 12;            // y of box top when below-anchor
                     const dyStep = cur.boxH + 6;
                     // Build candidate list, ordered by total displacement from preferred.
                     const cands = [];
@@ -1773,7 +1950,7 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
                         if (boxHit) continue;
                         if (!fallbackCand) fallbackCand = c;
                         let lineHit = false;
-                        for (const ln of routeLines) {
+                        for (const ln of routeLinesView) {
                             if (lineCrossesRect(ln, test)) { lineHit = true; break; }
                         }
                         if (!lineHit) { cleanCand = c; break; }
@@ -1785,36 +1962,50 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
                     placedLabels.push(cur);
                 }
 
-                // PASS 3: draw. If a box was shifted from its preferred
-                // position, draw a thin connector from the anchor to the
-                // nearest edge of the box so the eye still ties them together.
+                // PASS 3: draw. Each label is laid out in viewport-rotated
+                // space (boxX/boxY); we counter-rotate the canvas about the
+                // image centre so that, after the CSS rotation applied by
+                // applyMainTransform(), the label appears axis-aligned and
+                // upright. If the box was shifted from its preferred slot, a
+                // thin connector ties it back to its anchor.
                 for (const L of labels) {
-                    const dx = L.boxX - (L.ax + 7);
+                    const dx = L.boxX - (L.rax + 7);
                     const dy = L.boxY - L.preferredBoxY;
                     const moved = Math.abs(dx) > 4 || Math.abs(dy) > 4;
                     if (moved) {
-                        // Pick the box-edge midpoint nearest the anchor.
+                        // Pick the box-edge midpoint nearest the (rotated)
+                        // anchor — all in viewport space.
                         const cx = L.boxX + L.boxW / 2;
                         const cy = L.boxY + L.boxH / 2;
                         let tx, ty;
-                        if (L.ax < L.boxX)              { tx = L.boxX;             ty = cy; }
-                        else if (L.ax > L.boxX + L.boxW){ tx = L.boxX + L.boxW;     ty = cy; }
-                        else if (L.ay < L.boxY)         { tx = cx;                  ty = L.boxY; }
-                        else                             { tx = cx;                  ty = L.boxY + L.boxH; }
+                        if (L.rax < L.boxX)               { tx = L.boxX;              ty = cy; }
+                        else if (L.rax > L.boxX + L.boxW) { tx = L.boxX + L.boxW;     ty = cy; }
+                        else if (L.ray < L.boxY)          { tx = cx;                  ty = L.boxY; }
+                        else                               { tx = cx;                  ty = L.boxY + L.boxH; }
+                        // Map the connector endpoint back to canvas space so it
+                        // rotates with the rest of the canvas content.
+                        const tCanvas = rotateAboutCentre(tx, ty, -1);
                         ctx.save();
                         ctx.strokeStyle = 'rgba(255,224,102,0.55)';
                         ctx.lineWidth = 1;
                         ctx.beginPath();
                         ctx.moveTo(L.ax, L.ay);
-                        ctx.lineTo(tx, ty);
+                        ctx.lineTo(tCanvas.x, tCanvas.y);
                         ctx.stroke();
                         ctx.restore();
                     }
+                    // Translate to the canvas point that, after CSS rotation,
+                    // lands at (L.boxX, L.boxY). Then counter-rotate so the
+                    // box and text are upright after the CSS transform.
+                    const boxCanvas = rotateAboutCentre(L.boxX, L.boxY, -1);
+                    ctx.save();
+                    ctx.translate(boxCanvas.x, boxCanvas.y);
+                    ctx.rotate(-mapRotation);
                     ctx.fillStyle = 'rgba(0,0,0,0.75)';
-                    ctx.fillRect(L.boxX, L.boxY, L.boxW, L.boxH);
-                    // textBaseline='bottom' → y param is the bottom of the line.
-                    const textX = L.boxX + 3;
-                    const bottomY = L.boxY + L.boxH - 2;
+                    ctx.fillRect(0, 0, L.boxW, L.boxH);
+                    // Inside the rotated frame the box top-left is (0,0).
+                    const textX = 3;
+                    const bottomY = L.boxH - 2; // textBaseline='bottom'
                     ctx.fillStyle = '#ffe066';
                     ctx.fillText(L.line1, textX, bottomY - (L.numLines - 1) * L.lineH);
                     ctx.fillStyle = '#eee';
@@ -1823,6 +2014,7 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
                         ctx.fillStyle = '#ff6b6b';
                         ctx.fillText(L.line3, textX, bottomY);
                     }
+                    ctx.restore();
                 }
                 ctx.restore();
 
@@ -2021,6 +2213,9 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
         document.getElementById('sidebar-clear').addEventListener('click', clearRoutes);
         document.getElementById('sidebar-prev').addEventListener('click', () => cycleRoute(-1));
         document.getElementById('sidebar-next').addEventListener('click', () => cycleRoute(+1));
+        document.getElementById('rotate-ccw')  .addEventListener('click', () => nudgeRotation(-ROTATION_STEP_RAD));
+        document.getElementById('rotate-cw')   .addEventListener('click', () => nudgeRotation(+ROTATION_STEP_RAD));
+        document.getElementById('rotate-reset').addEventListener('click', () => setRotation(0));
     })();
 
     // Site filter controls — redraw only (no re-traverse, since the filter is
@@ -2105,6 +2300,12 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
             e.preventDefault();
             const body = document.getElementById('site-filter-body');
             setFilterOpen(!body.classList.contains('open'));
+        } else if (e.key === 'q' || e.key === 'Q') {
+            e.preventDefault();
+            nudgeRotation(-ROTATION_STEP_RAD);
+        } else if (e.key === 'e' || e.key === 'E') {
+            e.preventDefault();
+            nudgeRotation(+ROTATION_STEP_RAD);
         }
     });
 
