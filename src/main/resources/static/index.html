@@ -1555,6 +1555,9 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
                 const lineWidth = cfgI('ui.route.line.width', 8);
                 const spacing = cfgI('ui.route.line.spacing', 9); // perpendicular gap between parallel lines
                 ctx.lineWidth = lineWidth;
+                // Capture every parallel-offset route line as we draw it, so
+                // the segment-label placer below can avoid painting over them.
+                const routeLines = [];
                 for (const { a, b, turns } of segmentsByEdge.values()) {
                     const pa = points[a];
                     const pb = points[b];
@@ -1575,6 +1578,7 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
                         ctx.moveTo(x1 + ox, y1 + oy);
                         ctx.lineTo(x2 + ox, y2 + oy);
                         ctx.stroke();
+                        routeLines.push({ x1: x1 + ox, y1: y1 + oy, x2: x2 + ox, y2: y2 + oy });
                     }
                 }
 
@@ -1607,10 +1611,16 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
                 }
 
                 ctx.save();
-                ctx.font = 'bold ' + cfgI('ui.engine.label.font.px', 14) + 'px monospace';
+                const fontPx = cfgI('ui.engine.label.font.px', 14);
+                ctx.font = 'bold ' + fontPx + 'px monospace';
                 ctx.textAlign = 'left';
                 ctx.textBaseline = 'bottom';
-                const drawnAt = new Set(); // dedupe labels that land on the same map node
+
+                // PASS 1: build a label record per segment. We don't draw
+                // anything yet — we need to know every box's preferred bounds
+                // before we can resolve overlaps.
+                const labels = [];
+                const drawnAt = new Set(); // dedupe labels on the same map node
                 for (let s = 0; s < segStarts.length; s++) {
                     const i = segStarts[s];
                     const ei = pathNodes[i].engineIndex;
@@ -1622,41 +1632,34 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
                     const key = anchor.nodeId + '|' + ei + '|' + turn;
                     if (drawnAt.has(key)) continue;
                     drawnAt.add(key);
-                    const lx = p.x * imgW + 10;
-                    const ly = p.y * imgH - 10;
+                    const ax = p.x * imgW;
+                    const ay = p.y * imgH;
                     // Use the post-jettison wet mass when this segment starts a
                     // turn that jettisoned fuel — otherwise the segment-start
                     // mass is just the anchor's mass (mid-turn engine swap or
                     // turn-boundary with no jettison).
                     const jettisoned   = pathNodes[i].jettisonedHere || 0;
                     const wmForSegment = jettisoned > 0 ? pathNodes[i].wetMass : anchor.wetMass;
-                    // Fuel-step "anchor" for this segment also shifts past any
-                    // turn-start jettison: jettisoned fuel is reported as
-                    // fuelSpent on the post-jettison node, which we exclude
-                    // from the segment's burn-fuel total.
                     const segStartFuelSpent = jettisoned > 0
                             ? pathNodes[i].fuelSpent
                             : anchor.fuelSpent;
-                    // Effective thrust at the start of the segment:
-                    //   baseThrust + weightClassMod(wetMass) + (solar ? node.solarMod : 0)
                     const eng = engineCfgs[ei];
                     let thrustStr = '?';
                     if (eng) {
                         const solarMod = eng.solarPowered ? (p.solarMod || 0) : 0;
                         thrustStr = String(eng.baseThrust + weightClassMod(wmForSegment) + solarMod);
                     }
-                    const line1 = 'Engine ' + (ei + 1) + ' - ' + weightClassName(wmForSegment) + ' - Thrust ' + thrustStr;
+                    const line1 = turn + '. Engine ' + (ei + 1) + ' - ' + weightClassName(wmForSegment) + ' - Thrust ' + thrustStr;
 
                     // Burns within this segment.
                     //   • Standard burn: move into a burn-type node from a
                     //     different node — counts as 1 (free or paid).
                     //   • Forced turn at a Hohmann intersection: same-node,
-                    //     same-turn move that consumed fuel — counts as 2,
-                    //     since a force-turn is a 2-burn manoeuvre.
+                    //     same-turn move that consumed fuel — counts as 2.
                     //   • Free pivots / cruise / waitTurn — count as 0.
                     // Skip the jettison-creation edge (pn[i-1] → pn[i]) when this
                     // segment starts with a jettison node — that edge changes
-                    // fuelSpent but is NOT a burn or forced turn.
+                    // fuelSpent but is NOT a burn.
                     const burnLoopStart = jettisoned > 0 ? i + 1 : i;
                     let burns = 0;
                     for (let k = burnLoopStart; k < segEnd; k++) {
@@ -1673,31 +1676,152 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
                         }
                     }
                     const fuelSteps = pathNodes[segEnd - 1].fuelSpent - segStartFuelSpent;
-                    // Afterburn count — backend telemetry not yet implemented;
-                    // wired here so the line shows up automatically once it is.
-                    const afterburns = 0;
+                    const afterburns = 0; // backend telemetry pending
                     let line2 = 'Burns ' + burns + ' - Fuel Steps ' + fuelSteps;
                     if (afterburns > 0) line2 += ' - Afterburn ' + afterburns;
-                    const line3 = jettisoned > 0 ? 'Jettison ' + jettisoned : null;
+                    const line3 = jettisoned > 0 ? 'Jettison ' + jettisoned + ' fuel steps' : null;
 
-                    const fontPx = cfgI('ui.engine.label.font.px', 14);
                     const w1 = ctx.measureText(line1).width;
                     const w2 = ctx.measureText(line2).width;
                     const w3 = line3 ? ctx.measureText(line3).width : 0;
                     const w  = Math.max(w1, w2, w3);
                     const lineH = fontPx + 4;
                     const numLines = line3 ? 3 : 2;
-                    // Box covers all stacked lines; bottom line sits where the
-                    // original single-line label used to be.
+                    const boxW = w + 6;
+                    const boxH = 18 + (numLines - 1) * lineH;
+                    // Preferred placement: above-right of the anchor.
+                    const boxX = ax + 7;          // = (ax + 10) - 3
+                    const preferredBoxY = ay - 10 - boxH + 2;
+                    labels.push({
+                        ax, ay,
+                        boxX, boxY: preferredBoxY,
+                        preferredBoxY,
+                        boxW, boxH,
+                        line1, line2, line3,
+                        numLines, lineH,
+                    });
+                }
+
+                // PASS 2: collision avoidance.
+                //
+                // For each label, try a fixed set of candidate offsets from
+                // its preferred position (right side then left side, stepping
+                // both downward and upward). Score each candidate by:
+                //   • box-vs-box overlap with already-placed labels   (HARD: avoid)
+                //   • box-vs-route-line crossing                       (SOFT: avoid if possible)
+                // Keep the first candidate that's clear of BOTH; if every
+                // candidate hits a route line, fall back to the first that's
+                // at least free of other labels (best-effort, since the user
+                // accepts route overlap when nothing else fits).
+                const rectsOverlap = (a, b) => !(
+                    a.boxX + a.boxW + 2 < b.boxX ||
+                    b.boxX + b.boxW + 2 < a.boxX ||
+                    a.boxY + a.boxH + 2 < b.boxY ||
+                    b.boxY + b.boxH + 2 < a.boxY
+                );
+                // Cheap line-vs-rect intersection. True if the segment endpoints
+                // sit inside the rect, or any rect edge intersects the segment.
+                const lineCrossesRect = (ln, r) => {
+                    const inside = (x, y) =>
+                        x >= r.boxX - 1 && x <= r.boxX + r.boxW + 1 &&
+                        y >= r.boxY - 1 && y <= r.boxY + r.boxH + 1;
+                    if (inside(ln.x1, ln.y1) || inside(ln.x2, ln.y2)) return true;
+                    const segs = (ax1, ay1, ax2, ay2, bx1, by1, bx2, by2) => {
+                        const d1x = ax2 - ax1, d1y = ay2 - ay1;
+                        const d2x = bx2 - bx1, d2y = by2 - by1;
+                        const den = d1x * d2y - d1y * d2x;
+                        if (Math.abs(den) < 1e-9) return false;
+                        const t = ((bx1 - ax1) * d2y - (by1 - ay1) * d2x) / den;
+                        const u = ((bx1 - ax1) * d1y - (by1 - ay1) * d1x) / den;
+                        return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+                    };
+                    const x = r.boxX, y = r.boxY, X = r.boxX + r.boxW, Y = r.boxY + r.boxH;
+                    return segs(ln.x1, ln.y1, ln.x2, ln.y2, x, y, X, y)
+                        || segs(ln.x1, ln.y1, ln.x2, ln.y2, X, y, X, Y)
+                        || segs(ln.x1, ln.y1, ln.x2, ln.y2, X, Y, x, Y)
+                        || segs(ln.x1, ln.y1, ln.x2, ln.y2, x, Y, x, y);
+                };
+                labels.sort((a, b) => a.boxY - b.boxY || a.boxX - b.boxX);
+                const placedLabels = [];
+                for (const cur of labels) {
+                    const ax = cur.ax, ay = cur.ay;
+                    const right = ax + 7;
+                    const left  = ax - cur.boxW - 7;
+                    const above = cur.preferredBoxY;       // y of box top when above-anchor
+                    const below = ay + 12;                 // y of box top when below-anchor
+                    const dyStep = cur.boxH + 6;
+                    // Build candidate list, ordered by total displacement from preferred.
+                    const cands = [];
+                    for (let s = 0; s <= 8; s++) {
+                        // Right-side first, then left, alternating up/down each step
+                        // so we explore all 4 quadrants close to the anchor first.
+                        cands.push({ boxX: right, boxY: above + s * dyStep });
+                        if (s > 0) cands.push({ boxX: right, boxY: above - s * dyStep });
+                        cands.push({ boxX: right, boxY: below + s * dyStep });
+                        cands.push({ boxX: left,  boxY: above + s * dyStep });
+                        if (s > 0) cands.push({ boxX: left,  boxY: above - s * dyStep });
+                        cands.push({ boxX: left,  boxY: below + s * dyStep });
+                    }
+                    let cleanCand = null;     // no boxes AND no route-lines
+                    let fallbackCand = null;  // no boxes, lines acceptable
+                    for (const c of cands) {
+                        const test = { boxX: c.boxX, boxY: c.boxY, boxW: cur.boxW, boxH: cur.boxH };
+                        let boxHit = false;
+                        for (const e of placedLabels) {
+                            if (rectsOverlap(test, e)) { boxHit = true; break; }
+                        }
+                        if (boxHit) continue;
+                        if (!fallbackCand) fallbackCand = c;
+                        let lineHit = false;
+                        for (const ln of routeLines) {
+                            if (lineCrossesRect(ln, test)) { lineHit = true; break; }
+                        }
+                        if (!lineHit) { cleanCand = c; break; }
+                    }
+                    const chosen = cleanCand || fallbackCand
+                                              || { boxX: cur.boxX, boxY: cur.preferredBoxY };
+                    cur.boxX = chosen.boxX;
+                    cur.boxY = chosen.boxY;
+                    placedLabels.push(cur);
+                }
+
+                // PASS 3: draw. If a box was shifted from its preferred
+                // position, draw a thin connector from the anchor to the
+                // nearest edge of the box so the eye still ties them together.
+                for (const L of labels) {
+                    const dx = L.boxX - (L.ax + 7);
+                    const dy = L.boxY - L.preferredBoxY;
+                    const moved = Math.abs(dx) > 4 || Math.abs(dy) > 4;
+                    if (moved) {
+                        // Pick the box-edge midpoint nearest the anchor.
+                        const cx = L.boxX + L.boxW / 2;
+                        const cy = L.boxY + L.boxH / 2;
+                        let tx, ty;
+                        if (L.ax < L.boxX)              { tx = L.boxX;             ty = cy; }
+                        else if (L.ax > L.boxX + L.boxW){ tx = L.boxX + L.boxW;     ty = cy; }
+                        else if (L.ay < L.boxY)         { tx = cx;                  ty = L.boxY; }
+                        else                             { tx = cx;                  ty = L.boxY + L.boxH; }
+                        ctx.save();
+                        ctx.strokeStyle = 'rgba(255,224,102,0.55)';
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.moveTo(L.ax, L.ay);
+                        ctx.lineTo(tx, ty);
+                        ctx.stroke();
+                        ctx.restore();
+                    }
                     ctx.fillStyle = 'rgba(0,0,0,0.75)';
-                    ctx.fillRect(lx - 3, ly - 16 - (numLines - 1) * lineH, w + 6, 18 + (numLines - 1) * lineH);
+                    ctx.fillRect(L.boxX, L.boxY, L.boxW, L.boxH);
+                    // textBaseline='bottom' → y param is the bottom of the line.
+                    const textX = L.boxX + 3;
+                    const bottomY = L.boxY + L.boxH - 2;
                     ctx.fillStyle = '#ffe066';
-                    ctx.fillText(line1, lx, ly - (numLines - 1) * lineH);
+                    ctx.fillText(L.line1, textX, bottomY - (L.numLines - 1) * L.lineH);
                     ctx.fillStyle = '#eee';
-                    ctx.fillText(line2, lx, ly - (line3 ? lineH : 0));
-                    if (line3) {
+                    ctx.fillText(L.line2, textX, bottomY - (L.line3 ? L.lineH : 0));
+                    if (L.line3) {
                         ctx.fillStyle = '#ff6b6b';
-                        ctx.fillText(line3, lx, ly);
+                        ctx.fillText(L.line3, textX, bottomY);
                     }
                 }
                 ctx.restore();
