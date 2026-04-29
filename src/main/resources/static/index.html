@@ -817,10 +817,22 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
         function focusNode(id) {
             const p = mapData && mapData.points && mapData.points[id];
             if (!p || !zoomBehavior || !zoomSel) return;
-            // Center the view on the target node. translateTo operates on
-            // content coordinates (pre-zoom), so we pass the node's image pos.
+            // Centre the view on the target node AND zoom in: search picks
+            // are usually for inspecting a specific site, so we want
+            // detail-level zoom rather than just panning. Clamp to scaleExtent
+            // and never zoom OUT below the user's current scale (so picking a
+            // site while already zoomed deeper preserves the deeper level).
+            const rect = container.getBoundingClientRect();
+            const cur  = d3.zoomTransform(zoomSel.node());
+            const minK = cfgF('ui.zoom.min', 0.1);
+            const maxK = cfgF('ui.zoom.max', 1.5);
+            const desired = cfgF('ui.search.zoom.scale', 1.2);
+            const k = Math.max(cur.k, Math.min(maxK, Math.max(minK, desired)));
+            const tx = rect.width  / 2 - k * (p.x * imgW);
+            const ty = rect.height / 2 - k * (p.y * imgH);
+            const target = d3.zoomIdentity.translate(tx, ty).scale(k);
             zoomSel.transition().duration(cfgI('ui.zoom.transition.ms', 400))
-                .call(zoomBehavior.translateTo, p.x * imgW, p.y * imgH);
+                .call(zoomBehavior.transform, target);
         }
 
         function choose(i) {
@@ -831,6 +843,13 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
             renderList();
             focusNode(pick.id);
             input.blur();
+            // Brief 3-second spotlight: dim every other site so the picked
+            // one stands out the moment the user lands on it.
+            if (typeof startSearchSpotlight === 'function') {
+                startSearchSpotlight(pick.id);
+            } else if (typeof window.startSearchSpotlight === 'function') {
+                window.startSearchSpotlight(pick.id);
+            }
         }
 
         input.addEventListener('input', updateSuggestions);
@@ -2354,6 +2373,16 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
     const hmGroups = new Map();    // siteId -> SVG group element
     // Per-state opacities (overridden by /api/config keys ui.hex.mask.opacity.*).
     let hmOpFilteredOut         = 0.5;  // no start, filter on, fails
+    // --- Search spotlight state ----------------------------------------------
+    // When the user picks a site from the search box we briefly dim every
+    // other site so the spotlight is visually obvious. searchSpotlightId is
+    // the picked node, searchSpotlightUntil is the wall-clock ms after which
+    // it ends. Both are cleared by a setTimeout that re-runs updateHexMasks().
+    let searchSpotlightId    = null;
+    let searchSpotlightUntil = 0;
+    let searchSpotlightTimer = null;
+    const SEARCH_SPOTLIGHT_MS      = 1000;
+    const SEARCH_SPOTLIGHT_OPACITY = 0.8;
     let hmOpUnreachable         = 0.5;  // start, no filter, unreachable
     let hmOpUnreachableMatch    = 0.4;
     let hmOpReachableMismatch   = 0.7;
@@ -2578,6 +2607,22 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
 
     function updateHexMasks() {
         if (!hmReady) return;
+        // Search-spotlight mode (3 s after a search pick): dim every site to
+        // SEARCH_SPOTLIGHT_OPACITY, leave the picked site fully visible. This
+        // overrides the regular hide-unreachable / hide-filtered logic.
+        const spotlightActive = searchSpotlightId
+                             && performance.now() < searchSpotlightUntil;
+        if (spotlightActive) {
+            for (const [sid, g] of hmGroups) {
+                if (sid === searchSpotlightId) {
+                    g.style.display = 'none';
+                } else {
+                    g.style.display = '';
+                    g.setAttribute('opacity', SEARCH_SPOTLIGHT_OPACITY);
+                }
+            }
+            return;
+        }
         const enabled = (HM_TOGGLE_UNREACHABLE && HM_TOGGLE_UNREACHABLE.checked)
                      || (HM_TOGGLE_FILTERED    && HM_TOGGLE_FILTERED.checked);
         if (!enabled) {
@@ -2596,6 +2641,22 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
             }
         }
     }
+
+    // Trigger the 3-second spotlight on a site picked from the search box.
+    // Re-callable: subsequent picks restart the timer.
+    function startSearchSpotlight(siteId) {
+        searchSpotlightId    = siteId;
+        searchSpotlightUntil = performance.now() + SEARCH_SPOTLIGHT_MS;
+        if (searchSpotlightTimer) clearTimeout(searchSpotlightTimer);
+        searchSpotlightTimer = setTimeout(() => {
+            searchSpotlightId    = null;
+            searchSpotlightTimer = null;
+            updateHexMasks();
+        }, SEARCH_SPOTLIGHT_MS);
+        updateHexMasks();
+    }
+    // Expose so the search box (defined earlier in the file) can call it.
+    window.startSearchSpotlight = startSearchSpotlight;
 
     if (HM_OVERLAY) {
         Promise.all([
