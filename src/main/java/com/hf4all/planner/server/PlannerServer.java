@@ -8,6 +8,7 @@ import com.hf4all.planner.server.handler.IndexHandler;
 import com.hf4all.planner.server.handler.MapHandler;
 import com.hf4all.planner.server.handler.TraverseHandler;
 import com.hf4all.planner.server.handler.editor.CelestialBodyEditorHandler;
+import com.hf4all.planner.server.handler.editor.ChitEditorHandler;
 import com.hf4all.planner.server.handler.editor.HexEditorHandler;
 import com.sun.net.httpserver.HttpServer;
 
@@ -43,6 +44,7 @@ public final class PlannerServer {
         server.createContext(Config.endpointConfig(), new ConfigHandler());
         server.createContext("/hex-editor", new HexEditorHandler());
         server.createContext("/celestial-body-editor", new CelestialBodyEditorHandler());
+        server.createContext("/chit-editor", new ChitEditorHandler());
         server.createContext(Config.endpointStop(), exchange -> {
             // Only the local machine can shut the server down. With the
             // server bound to a public port (e.g. :80) anyone could

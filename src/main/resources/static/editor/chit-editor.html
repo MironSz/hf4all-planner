@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>HF4A Chit-Placement Editor</title>
+<style>
+  *  { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { display: flex; flex-direction: column; background: #1a1a2e; color: #eee;
+         font-family: ui-monospace, Menlo, Consolas, monospace; overflow: hidden; }
+
+  #topbar { display: flex; align-items: center; gap: 10px; padding: 8px 14px;
+            background: #16213e; border-bottom: 1px solid #333; flex: 0 0 auto; }
+  #topbar h2 { font-size: 13px; color: #7ec8e3; font-weight: 600; }
+  button { padding: 5px 10px; background: #0f3460; color: #eee; border: 1px solid #2a4a7a;
+           cursor: pointer; font-family: inherit; font-size: 12px; border-radius: 3px; }
+  button:hover  { background: #1e4a7a; }
+  button:active { background: #0a2540; }
+  button.primary { background: #e94560; border-color: #c73650; }
+  button.primary:hover { background: #c73650; }
+  button.danger  { background: #5a1e1e; border-color: #8a3030; }
+  button.danger:hover { background: #8a3030; }
+  button.toggle.active { background: #2ecc71; border-color: #27ae60; color: #0a2540; }
+  #status { color: #aaa; font-size: 11px; margin-left: auto; min-width: 220px; text-align: right; }
+  #status.dirty { color: #ff0; }
+  #status.error { color: #f55; }
+  #status.ok    { color: #5f5; }
+
+  #content { flex: 1; display: flex; min-height: 0; }
+  #viewport { flex: 1; position: relative; overflow: scroll; background: #000; cursor: grab; }
+  #viewport.panning { cursor: grabbing; }
+  #viewport.adding  { cursor: crosshair; }
+  #stage { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+  #board { display: block; user-select: none; -webkit-user-drag: none; }
+  #overlay { position: absolute; top: 0; left: 0; pointer-events: none; }
+  #overlay circle, #overlay text { pointer-events: auto; }
+
+  .chit-circle { fill: rgba(126, 200, 227, 0.55); stroke: #fff; stroke-width: 2;
+                 vector-effect: non-scaling-stroke; cursor: move; }
+  .chit-circle:hover  { fill: rgba(126, 200, 227, 0.85); }
+  .chit-circle.dirty  { stroke: #ffd400; }
+  .chit-circle.selected { stroke: #2ecc71; stroke-width: 3; }
+  .chit-circle.locked   { cursor: not-allowed; opacity: 0.7; }
+  /* Fractional positions (1+1/9, 2+1/6, ...) — visually subordinate to
+     integer-mass chits so the 32 main positions still pop. */
+  .chit-circle.fractional { fill: rgba(126, 200, 227, 0.30);
+                            stroke-dasharray: 3 2; }
+
+  .chit-label { font-family: inherit; font-size: 14px; font-weight: 700;
+                fill: #fff; stroke: #000; stroke-width: 3; paint-order: stroke;
+                pointer-events: none; user-select: none; text-anchor: middle;
+                dominant-baseline: central; }
+  .chit-label.fractional { font-size: 9px; font-weight: 500; }
+
+  .chit-link { stroke: rgba(255,255,255,0.35); stroke-width: 1;
+               vector-effect: non-scaling-stroke; pointer-events: none;
+               stroke-dasharray: 4,3; }
+
+  #sidebar { width: 240px; flex: 0 0 240px; background: #16213e; border-left: 1px solid #333;
+             display: flex; flex-direction: column; min-height: 0; }
+  #sidebar-head { padding: 8px 12px; font-size: 11px; color: #7ec8e3;
+                  border-bottom: 1px solid #333; flex: 0 0 auto; }
+  #mode-bar { display: flex; gap: 4px; padding: 8px; border-bottom: 1px solid #333;
+              flex: 0 0 auto; }
+  #mode-bar button { flex: 1; }
+  #hint { padding: 8px 12px; font-size: 11px; color: #aaa; border-bottom: 1px solid #333;
+          background: #0a1a30; line-height: 1.5; flex: 0 0 auto; }
+  #hint b { color: #7ec8e3; }
+  #chit-list { flex: 1; overflow-y: auto; }
+  .chit-row { padding: 6px 12px; cursor: pointer; font-size: 12px; border-bottom: 1px solid #1f2942;
+              display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+  .chit-row:hover    { background: #0f3460; }
+  .chit-row.selected { background: #1e4a7a; }
+  .chit-row.dirty    { color: #ffd400; }
+  .chit-row .meta    { color: #888; font-size: 10px; }
+  .chit-row button   { padding: 2px 6px; font-size: 10px; }
+  .chit-row .mass    { color: #7ec8e3; font-weight: bold; min-width: 24px; }
+
+  #footer-bar { display: flex; gap: 4px; padding: 6px 8px; border-top: 1px solid #333;
+                flex: 0 0 auto; }
+  #footer-bar button { flex: 1; }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <h2>Chit-Placement Editor</h2>
+  <button id="zoom-out">−</button>
+  <button id="zoom-reset">100%</button>
+  <button id="zoom-in">+</button>
+  <button id="fit">Fit</button>
+  <button id="reload">Reload</button>
+  <button id="save" class="primary">Save</button>
+  <span id="status">Loading…</span>
+</div>
+
+<div id="content">
+  <div id="viewport">
+    <div id="stage">
+      <img id="board" src="/docs/fuel-strip-on-dark.png" draggable="false">
+      <svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+    </div>
+  </div>
+  <div id="sidebar">
+    <div id="sidebar-head">Wet-Mass chit placements</div>
+    <div id="mode-bar">
+      <button id="mode-add"  class="toggle active">+ Add</button>
+      <button id="mode-edit" class="toggle">Edit</button>
+    </div>
+    <div id="hint">
+      <b>Add</b> mode — click image: each click marks the next viable
+      Wet-Mass chit position (next: <span id="next-mass">1</span>).
+      Positions go <code>1, 1+1/9, …, 1+8/9, 2, 2+1/6, …</code> — every
+      fractional fuel step is a valid placement.
+      <br><br>
+      <b>Edit</b> mode — drag chit centres to reposition. Remove deletes
+      that one slot only (no reflow — each step is tied to a specific
+      strip position). Removed slots become the next Add-mode target.
+      <br><br>
+      Pan = drag empty space. Zoom = Ctrl-wheel.
+      Filled: <span id="total-positions">0 / 57</span>.
+    </div>
+    <div id="chit-list"></div>
+    <div id="footer-bar">
+      <button id="clear-all" class="danger">Clear All</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const CHITS_URL = '/chit-editor/chits';
+const SAVE_URL  = '/chit-editor/save';
+
+// INTERVALS[N] = fuel steps in the [N, N+1] interval on the HF4A fuel strip.
+// The denominator of a fractional position equals INTERVALS[mass]. So the
+// 1↔2 interval has 9 fuel steps → fractional positions 1+1/9 … 1+8/9.
+// Index 0 unused. Verified against the rulebook FUEL STRIP KEY.
+const INTERVALS = [
+    0, 9, 6, 4, 3, 3, 2, 2, 2, 2, 2,    // 1↔2 .. 10↔11
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,    // 11↔12 .. 21↔22
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1        // 22↔23 .. 31↔32
+];
+const TOTAL_STEPS = INTERVALS.slice(1).reduce((a, b) => a + b, 0); // = 56
+const TOTAL_POSITIONS = TOTAL_STEPS + 1;                           // = 57 (steps 0..56 inclusive)
+const DEFAULT_RADIUS_PX = 12;   // visual chit radius at 1× zoom
+
+/**
+ * Convert a step index (0..TOTAL_STEPS) to a human-readable mass label:
+ *   step 0  → "1"
+ *   step 1  → "1+1/9"
+ *   step 9  → "2"
+ *   step 10 → "2+1/6"
+ *   step 56 → "32"
+ */
+function stepToLabel(step) {
+    if (step < 0 || step > TOTAL_STEPS) return '?';
+    let mass = 1, cumulative = 0;
+    while (mass < 32 && cumulative + INTERVALS[mass] <= step) {
+        cumulative += INTERVALS[mass];
+        mass++;
+    }
+    const remainder = step - cumulative;
+    if (remainder === 0) return String(mass);
+    return `${mass}+${remainder}/${INTERVALS[mass]}`;
+}
+
+// State
+let chits = [];           // [{ step, x, y }]   x,y are normalised [0,1]
+let imgW = 0, imgH = 0;
+let zoom = 1;
+let dirty = false;        // any unsaved change
+let selectedStep = null;
+let mode = 'add';         // 'add' | 'edit'
+
+const $ = id => document.getElementById(id);
+const stage    = $('stage');
+const board    = $('board');
+const overlay  = $('overlay');
+const viewport = $('viewport');
+const status   = $('status');
+const list     = $('chit-list');
+
+function setStatus(msg, cls = '') {
+  status.textContent = msg;
+  status.className = cls;
+}
+
+function setDirty(b) {
+  dirty = b;
+  if (b) setStatus('Unsaved changes', 'dirty');
+  else   setStatus('No unsaved changes');
+}
+
+// ----------------------------------------------------------------------------
+// Load / draw
+// ----------------------------------------------------------------------------
+
+board.addEventListener('load', async () => {
+  imgW = board.naturalWidth;
+  imgH = board.naturalHeight;
+  overlay.setAttribute('width', imgW);
+  overlay.setAttribute('height', imgH);
+  overlay.setAttribute('viewBox', `0 0 ${imgW} ${imgH}`);
+  await loadChits();
+});
+
+async function loadChits() {
+  setStatus('Loading chits…');
+  try {
+    const r = await fetch(CHITS_URL, { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    const raw = Array.isArray(j.chits) ? j.chits : [];
+    // Schema migration: old entries used { mass, x, y } where the value
+    // was actually a 1-based sequential click index (so 32 entries
+    // covered the first 32 fuel-step positions: "1", "1+1/9", ..., "9").
+    // New entries use { step, x, y } directly. Map old → new with
+    // step = mass - 1.
+    chits = raw.map(c => {
+      if (typeof c.step === 'number') return { step: c.step, x: c.x, y: c.y };
+      if (typeof c.mass === 'number') return { step: c.mass - 1, x: c.x, y: c.y };
+      return null;
+    }).filter(Boolean);
+    chits.sort((a, b) => a.step - b.step);
+    drawAll();
+    setDirty(false);
+    setStatus(`Loaded ${chits.length} chit(s)`, 'ok');
+    setZoom(Math.min(viewport.clientWidth / imgW, viewport.clientHeight / imgH) * 0.95);
+  } catch (e) {
+    setStatus('Failed to load: ' + e.message, 'error');
+  }
+}
+
+function drawAll() {
+  overlay.innerHTML = '';
+  list.innerHTML = '';
+  // Draw connector polyline first (under chits)
+  if (chits.length > 1) {
+    const pl = document.createElementNS(SVG_NS, 'polyline');
+    pl.setAttribute('class', 'chit-link');
+    pl.setAttribute('fill', 'none');
+    pl.setAttribute('points',
+      chits.map(c => `${c.x * imgW},${c.y * imgH}`).join(' '));
+    overlay.appendChild(pl);
+  }
+  for (const c of chits) drawChit(c);
+  for (const c of chits) addRow(c);
+  updateNextMassHint();
+}
+
+function drawChit(c) {
+  const cx = c.x * imgW, cy = c.y * imgH;
+  const r = DEFAULT_RADIUS_PX;
+  const label = stepToLabel(c.step);
+  // Integer-mass positions get a slightly bolder ring to distinguish them
+  // from fractional sub-positions. Fractionals stay the standard ring.
+  const isInteger = !label.includes('+');
+
+  const circ = document.createElementNS(SVG_NS, 'circle');
+  circ.id = 'circ-' + c.step;
+  circ.setAttribute('class', 'chit-circle'
+                  + (mode === 'edit' ? '' : ' locked')
+                  + (isInteger ? '' : ' fractional'));
+  circ.setAttribute('cx', cx);
+  circ.setAttribute('cy', cy);
+  circ.setAttribute('r',  r);
+  circ.dataset.step = c.step;
+  circ.addEventListener('mousedown', startCenterDrag);
+  overlay.appendChild(circ);
+
+  const t = document.createElementNS(SVG_NS, 'text');
+  t.id = 'label-' + c.step;
+  t.setAttribute('class', 'chit-label' + (isInteger ? '' : ' fractional'));
+  t.setAttribute('x', cx);
+  t.setAttribute('y', cy);
+  t.textContent = label;
+  overlay.appendChild(t);
+}
+
+function updateChitVisuals(step) {
+  const c = chits.find(x => x.step === step);
+  if (!c) return;
+  const cx = c.x * imgW, cy = c.y * imgH;
+  $('circ-'  + step)?.setAttribute('cx', cx);
+  $('circ-'  + step)?.setAttribute('cy', cy);
+  $('label-' + step)?.setAttribute('x', cx);
+  $('label-' + step)?.setAttribute('y', cy);
+  // Re-draw the link polyline
+  drawConnectorOnly();
+}
+
+function drawConnectorOnly() {
+  // Remove existing polyline (it's the only one with class chit-link)
+  overlay.querySelectorAll('.chit-link').forEach(el => el.remove());
+  if (chits.length < 2) return;
+  const pl = document.createElementNS(SVG_NS, 'polyline');
+  pl.setAttribute('class', 'chit-link');
+  pl.setAttribute('fill', 'none');
+  pl.setAttribute('points',
+    chits.map(c => `${c.x * imgW},${c.y * imgH}`).join(' '));
+  // Insert before the first chit-circle so it's underneath
+  overlay.insertBefore(pl, overlay.firstChild);
+}
+
+/** Lowest step index in [0, TOTAL_POSITIONS) that isn't already placed.
+ *  Returns TOTAL_POSITIONS when everything's filled. */
+function findNextStep() {
+  const used = new Set(chits.map(c => c.step));
+  for (let s = 0; s < TOTAL_POSITIONS; s++) {
+    if (!used.has(s)) return s;
+  }
+  return TOTAL_POSITIONS;
+}
+
+function updateNextMassHint() {
+  const nextStep = findNextStep();
+  const totalEl = $('total-positions');
+  if (totalEl) totalEl.textContent = `${chits.length} / ${TOTAL_POSITIONS}`;
+  $('next-mass').textContent = nextStep < TOTAL_POSITIONS
+      ? stepToLabel(nextStep)
+      : `done (all ${TOTAL_POSITIONS} placed)`;
+}
+
+// ----------------------------------------------------------------------------
+// Sidebar list
+// ----------------------------------------------------------------------------
+
+function addRow(c) {
+  const div = document.createElement('div');
+  div.id = 'row-' + c.step;
+  div.className = 'chit-row';
+  div.innerHTML = `
+    <span class="mass">${stepToLabel(c.step)}</span>
+    <span class="meta">${(c.x * imgW).toFixed(0)}, ${(c.y * imgH).toFixed(0)}</span>`;
+  const rm = document.createElement('button');
+  rm.className = 'danger';
+  rm.textContent = 'Remove';
+  rm.onclick = (ev) => { ev.stopPropagation(); removeChit(c.step); };
+  div.appendChild(rm);
+  div.addEventListener('click', () => focusChit(c.step));
+  list.appendChild(div);
+}
+
+function focusChit(step) {
+  selectChit(step);
+  const c = chits.find(x => x.step === step);
+  if (!c) return;
+  const cx = c.x * imgW, cy = c.y * imgH;
+  viewport.scrollLeft = cx * zoom - viewport.clientWidth  / 2;
+  viewport.scrollTop  = cy * zoom - viewport.clientHeight / 2;
+}
+
+function selectChit(step) {
+  if (selectedStep === step) return;
+  if (selectedStep != null) {
+    $('circ-' + selectedStep)?.classList.remove('selected');
+    $('row-'  + selectedStep)?.classList.remove('selected');
+  }
+  selectedStep = step;
+  $('circ-' + step)?.classList.add('selected');
+  const row = $('row-' + step);
+  if (row) {
+    row.classList.add('selected');
+    row.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function removeChit(step) {
+  // Each step is tied to a specific physical position on the strip
+  // (e.g. step 5 = "1+5/9"), so deleting MUST NOT reflow other entries.
+  // The slot just becomes the new "next" target for an Add click.
+  chits = chits.filter(c => c.step !== step);
+  if (selectedStep === step) selectedStep = null;
+  drawAll();
+  setDirty(true);
+}
+
+$('clear-all').addEventListener('click', () => {
+  if (chits.length === 0) return;
+  if (!confirm(`Remove all ${chits.length} placements?`)) return;
+  chits = [];
+  selectedStep = null;
+  drawAll();
+  setDirty(true);
+});
+
+// ----------------------------------------------------------------------------
+// Mode toggle
+// ----------------------------------------------------------------------------
+
+function setMode(m) {
+  mode = m;
+  $('mode-add' ).classList.toggle('active', m === 'add');
+  $('mode-edit').classList.toggle('active', m === 'edit');
+  viewport.classList.toggle('adding', m === 'add');
+  // Update lock visual on existing chits
+  overlay.querySelectorAll('.chit-circle').forEach(el =>
+    el.classList.toggle('locked', m !== 'edit'));
+}
+$('mode-add' ).addEventListener('click', () => setMode('add'));
+$('mode-edit').addEventListener('click', () => setMode('edit'));
+
+// ----------------------------------------------------------------------------
+// Add mode: click empty viewport to add the next chit
+// ----------------------------------------------------------------------------
+
+function mouseToImage(e) {
+  const rect = stage.getBoundingClientRect();
+  return [(e.clientX - rect.left) / zoom, (e.clientY - rect.top) / zoom];
+}
+
+viewport.addEventListener('click', (e) => {
+  if (mode !== 'add') return;
+  // Don't add if click landed on an existing chit
+  if (e.target.classList.contains('chit-circle') ||
+      e.target.classList.contains('chit-label')) return;
+  if (panMoved) return;   // suppress click that ended a pan
+  // Fill the lowest unplaced step. After a fresh load with the original
+  // 32 integer-mass entries migrated, the first ~25 clicks fill the
+  // fractional gaps (1+1/9, 1+2/9, ..., 2+1/6, ...) in mass order.
+  const nextStep = findNextStep();
+  if (nextStep >= TOTAL_POSITIONS) {
+    setStatus(`All ${TOTAL_POSITIONS} placements set`, 'ok');
+    return;
+  }
+  const [mx, my] = mouseToImage(e);
+  if (mx < 0 || my < 0 || mx > imgW || my > imgH) return;
+  const x = mx / imgW, y = my / imgH;
+  chits.push({ step: nextStep, x, y });
+  drawAll();
+  setDirty(true);
+  selectChit(nextStep);
+});
+
+// ----------------------------------------------------------------------------
+// Edit mode: drag existing chits
+// ----------------------------------------------------------------------------
+
+let drag = null;
+
+function startCenterDrag(e) {
+  if (mode !== 'edit') return;
+  e.stopPropagation();
+  e.preventDefault();
+  const step = parseInt(e.target.dataset.step);
+  selectChit(step);
+  const [mx, my] = mouseToImage(e);
+  const c = chits.find(x => x.step === step);
+  drag = { step, dx: mx - c.x * imgW, dy: my - c.y * imgH };
+  document.addEventListener('mousemove', onDrag);
+  document.addEventListener('mouseup', endDrag);
+}
+
+function onDrag(e) {
+  if (!drag) return;
+  const c = chits.find(x => x.step === drag.step);
+  if (!c) return;
+  const [mx, my] = mouseToImage(e);
+  c.x = Math.max(0, Math.min(1, (mx - drag.dx) / imgW));
+  c.y = Math.max(0, Math.min(1, (my - drag.dy) / imgH));
+  updateChitVisuals(drag.step);
+  // Update sidebar coord text live
+  const row = $('row-' + drag.step);
+  if (row) {
+    const meta = row.querySelector('.meta');
+    if (meta) meta.textContent = `${(c.x * imgW).toFixed(0)}, ${(c.y * imgH).toFixed(0)}`;
+  }
+  setDirty(true);
+}
+
+function endDrag() {
+  drag = null;
+  document.removeEventListener('mousemove', onDrag);
+  document.removeEventListener('mouseup', endDrag);
+}
+
+// ----------------------------------------------------------------------------
+// Zoom / pan
+// ----------------------------------------------------------------------------
+
+function setZoom(z) {
+  const newZoom = Math.max(0.05, Math.min(8, z));
+  const cx = (viewport.scrollLeft + viewport.clientWidth  / 2) / zoom;
+  const cy = (viewport.scrollTop  + viewport.clientHeight / 2) / zoom;
+  zoom = newZoom;
+  stage.style.transform = `scale(${zoom})`;
+  stage.style.width  = imgW + 'px';
+  stage.style.height = imgH + 'px';
+  viewport.scrollLeft = cx * zoom - viewport.clientWidth  / 2;
+  viewport.scrollTop  = cy * zoom - viewport.clientHeight / 2;
+}
+
+$('zoom-in').addEventListener('click',    () => setZoom(zoom * 1.25));
+$('zoom-out').addEventListener('click',   () => setZoom(zoom / 1.25));
+$('zoom-reset').addEventListener('click', () => setZoom(1));
+$('fit').addEventListener('click', () =>
+  setZoom(Math.min(viewport.clientWidth / imgW, viewport.clientHeight / imgH) * 0.95));
+
+viewport.addEventListener('wheel', (e) => {
+  if (!e.ctrlKey) return;
+  e.preventDefault();
+  const factor = e.deltaY > 0 ? 1 / 1.1 : 1.1;
+  setZoom(zoom * factor);
+}, { passive: false });
+
+let panState = null;
+let panMoved = false;
+viewport.addEventListener('mousedown', (e) => {
+  // Don't start a pan if clicking a chit (chits handle their own drag).
+  if (e.target.classList.contains('chit-circle')) return;
+  panState = {
+    x0: e.clientX, y0: e.clientY,
+    sx0: viewport.scrollLeft, sy0: viewport.scrollTop,
+  };
+  panMoved = false;
+  viewport.classList.add('panning');
+});
+document.addEventListener('mousemove', (e) => {
+  if (!panState) return;
+  const dx = e.clientX - panState.x0;
+  const dy = e.clientY - panState.y0;
+  if (Math.abs(dx) + Math.abs(dy) > 3) panMoved = true;
+  viewport.scrollLeft = panState.sx0 - dx;
+  viewport.scrollTop  = panState.sy0 - dy;
+});
+document.addEventListener('mouseup', () => {
+  panState = null;
+  viewport.classList.remove('panning');
+  // panMoved persists for the click handler below (cleared at next mousedown).
+});
+
+// ----------------------------------------------------------------------------
+// Save / reload
+// ----------------------------------------------------------------------------
+
+$('reload').addEventListener('click', async () => {
+  if (dirty && !confirm('Discard unsaved changes?')) return;
+  await loadChits();
+});
+
+$('save').addEventListener('click', async () => {
+  const payload = { chits: chits.map(c => ({ step: c.step, x: c.x, y: c.y })) };
+  setStatus(`Saving ${chits.length} placement(s)…`);
+  try {
+    const r = await fetch(SAVE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload, null, 2),
+    });
+    const txt = await r.text();
+    if (!r.ok) throw new Error(txt || ('HTTP ' + r.status));
+    setDirty(false);
+    setStatus(txt, 'ok');
+  } catch (e) {
+    setStatus('Save failed: ' + e.message, 'error');
+  }
+});
+
+window.addEventListener('beforeunload', (e) => {
+  if (dirty) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+</script>
+</body>
+</html>

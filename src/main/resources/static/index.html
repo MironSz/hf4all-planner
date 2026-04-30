@@ -22,6 +22,43 @@ body { display: flex; height: 100vh; background: #1a1a2e; color: #eee; font-fami
 #main canvas { position: absolute; top: 0; left: 0; }
 #main #hex-mask-overlay { position: absolute; top: 0; left: 0; pointer-events: none; }
 #main #hex-mask-overlay .hide-mask polygon { stroke: none; }
+
+/* Endpoint fuel-strip overlay — pinned to the upper-left corner of the
+   map container. The rotation buttons (#rotate-ccw, #rotate-reset,
+   #rotate-cw) are position:fixed with z-index:110, so they naturally
+   render on top of this panel (z-index:50). Kept "absolute" so the panel
+   sits inside #map-container and doesn't bleed under the sidebar. */
+#endpoint-fuel-strip {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 50;
+    width: 720px;
+    pointer-events: none;
+    background: #0a1a30;
+    border: 1px solid #2a4a72;
+    border-radius: 4px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+    padding: 4px;
+}
+#endpoint-fuel-strip img {
+    width: 100%;
+    display: block;
+    border-radius: 2px;
+}
+#endpoint-fuel-strip svg {
+    position: absolute;
+    top: 4px; left: 4px;
+    width: calc(100% - 8px);
+    pointer-events: none;
+}
+.endpoint-chit-circle { stroke: #fff; stroke-width: 4; }
+.endpoint-chit-circle.dry { fill: #e94560; }
+.endpoint-chit-circle.wet { fill: #7ec8e3; }
+.endpoint-chit-label { font-family: monospace; font-weight: 700; fill: #fff;
+                       stroke: #000; stroke-width: 3; paint-order: stroke;
+                       text-anchor: middle; dominant-baseline: central;
+                       pointer-events: none; user-select: none; }
 #sidebar { width: 300px; background: #16213e; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; border-left: 1px solid #333; }
 h2 { font-size: 14px; color: #7ec8e3; margin-bottom: 4px; }
 label { display: block; font-size: 12px; margin-bottom: 2px; color: #aaa; }
@@ -135,6 +172,7 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
 <body>
 <div id="debug-toggle">
     <input type="checkbox" id="debug-cb"><label for="debug-cb">Debug</label>
+    <input type="checkbox" id="show-fuel-strip-cb" style="margin-left:12px;" checked><label for="show-fuel-strip-cb">Show fuel strip</label><span class="tip" data-tip="Show the rulebook fuel strip with Dry / Wet chits at the hovered or pinned endpoint's final state. Toggle off to hide the panel entirely.">?</span>
     <input type="checkbox" id="no-venus-cb" style="margin-left:12px;"><label for="no-venus-cb">Disable Venus flyby</label><span class="tip" data-tip="Exclude Venus gravity-assist flybys from planned routes.">?</span>
     <input type="checkbox" id="allow-jettison-cb" style="margin-left:12px;" checked><label for="allow-jettison-cb">Allow fuel jettison</label><span class="tip" data-tip="Allow planner to drop fuel mid-route to improve thrust. May cause finding routes to take longer.">?</span>
 </div>
@@ -153,6 +191,14 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
              the existing canvas click/hover handlers see the events. -->
         <svg id="hex-mask-overlay" xmlns="http://www.w3.org/2000/svg"></svg>
         <canvas id="canvas"></canvas>
+    </div>
+    <!-- Final-fuel-state visualisation. Anchored to the pinned endpoint's
+         current screen position (sits OUTSIDE #main so the d3-zoom transform
+         doesn't scale it). Hidden until pinnedEndpoint && chit-coord data
+         are both ready; if either fetch fails we silently stay hidden. -->
+    <div id="endpoint-fuel-strip" style="display:none">
+        <img id="endpoint-strip-bg" src="/docs/fuel-strip-on-dark.png" draggable="false">
+        <svg id="endpoint-strip-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none"></svg>
     </div>
 </div>
 <div id="sidebar">
@@ -338,6 +384,266 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
         const size = pos < 32 ? FUEL_STRIP_INTERVALS[pos] : 1;
         return complete + ' + ' + remaining + '/' + size
                 + ' (total steps ' + fuelSteps + ')';
+    }
+
+    // =====================================================================
+    // Endpoint fuel-strip overlay
+    //
+    // Floating panel anchored to the pinned-endpoint's screen position.
+    // Shows the rulebook fuel-strip image with Dry + Wet chits drawn at
+    // the user-edited coordinates from /chit-editor/chits.
+    //
+    // Strip step indexing (matches the chit editor):
+    //   step  0 = Wet Mass 1
+    //   step  1 = 1+1/9
+    //   ...
+    //   step  9 = Wet Mass 2
+    //   ...
+    //   step 56 = Wet Mass 32
+    // Dry chit is at the integer-mass step (massToStripStep(dryMass)).
+    // Wet chit is fuelStepsRemaining further along the black line.
+    //
+    // All five readiness flags below are checked individually so the panel
+    // stays hidden gracefully if any single piece is missing — the rest of
+    // the planner is unaffected.
+    // =====================================================================
+    const STRIP_MAX_STEP = 56;
+
+    /** Cumulative fuel-step count from Wet Mass 1 up to (and INCLUDING) M. */
+    function massToStripStep(mass) {
+        let s = 0;
+        for (let i = 1; i < mass; i++) s += FUEL_STRIP_INTERVALS[i];
+        return s;
+    }
+
+    let stripChitCoords = null;          // { stepIndex: {x, y} }, x/y in [0,1]
+    let stripImgNaturalSize = null;      // { w, h } once the bg image loads
+    let hoveredRouteSegmentStartId = null; // mapNodeId at the START (closer to startpoint)
+                                           // of the route segment currently under cursor
+    let hoveredRouteSegmentProj = null;    // {x, y} in image-pixel coords: the point
+                                           // ON the segment closest to the cursor.
+                                           // Tracks cursor along the segment so the
+                                           // green dot can ride it.
+    let fuelStripHoverIndicatorId = null;  // mapNodeId the green-dot indicator should
+                                           // mark (set by updateEndpointFuelStrip when
+                                           // it picks a hover-driven target; null when
+                                           // the panel falls back to the endpoint state)
+
+    /**
+     * Closest-point projection of (px,py) onto segment (ax,ay)-(bx,by).
+     * Returns { x, y, distSq } where (x,y) is the projected point clamped
+     * to the segment's endpoints, and distSq is the squared distance from
+     * the input point to that projection.
+     */
+    function projectPointOnSegment(px, py, ax, ay, bx, by) {
+        const dx = bx - ax, dy = by - ay;
+        const len2 = dx*dx + dy*dy;
+        if (len2 === 0) {
+            const ex = px - ax, ey = py - ay;
+            return { x: ax, y: ay, distSq: ex*ex + ey*ey };
+        }
+        let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+        t = Math.max(0, Math.min(1, t));
+        const cx = ax + t * dx, cy = ay + t * dy;
+        const ex = px - cx, ey = py - cy;
+        return { x: cx, y: cy, distSq: ex*ex + ey*ey };
+    }
+
+    /**
+     * Looks for a route segment under the cursor. Returns
+     *   { startId, projX, projY }
+     * where startId is the mapNodeId at the segment's earlier end (closer
+     * to startpoint) and (projX, projY) is the closest point ON THE
+     * SEGMENT to the cursor, in image-pixel coords. Returns null when no
+     * segment is within `maxDist`. Only meaningful when an endpoint is
+     * pinned and a route exists; caller should check those preconditions.
+     */
+    function findHoveredRouteSegment(mouseX, mouseY, maxDist) {
+        if (!pinnedEndpoint || !traverseResult || !mapData) return null;
+        const treeNodeIds = getTreeNodeIds(pinnedEndpoint);
+        if (!treeNodeIds || !treeNodeIds.length) return null;
+        const idx = selectedRouteIndex % treeNodeIds.length;
+        const pathNodes = getPathToRoot(treeNodeIds[idx]);
+        if (!pathNodes || pathNodes.length < 2) return null;
+        const points = mapData.points;
+        const maxSq = maxDist * maxDist;
+        let best = null;
+        let bestSq = Infinity;
+        // pathNodes is ordered root → endpoint, so [i] is the start of
+        // segment i (closer to startpoint), [i+1] is its end.
+        for (let i = 0; i < pathNodes.length - 1; i++) {
+            const a = points[pathNodes[i].nodeId];
+            const b = points[pathNodes[i+1].nodeId];
+            if (!a || !b) continue;
+            const ax = a.x * imgW, ay = a.y * imgH;
+            const bx = b.x * imgW, by = b.y * imgH;
+            const proj = projectPointOnSegment(mouseX, mouseY, ax, ay, bx, by);
+            if (proj.distSq < bestSq && proj.distSq <= maxSq) {
+                bestSq = proj.distSq;
+                best = { startId: pathNodes[i].nodeId, projX: proj.x, projY: proj.y };
+            }
+        }
+        return best;
+    }
+
+    async function loadStripChitCoords() {
+        try {
+            const r = await fetch('/chit-editor/chits', { cache: 'no-store' });
+            if (!r.ok) return;
+            const j = await r.json();
+            const arr = Array.isArray(j.chits) ? j.chits : [];
+            const map = {};
+            for (const c of arr) {
+                // New schema: {step, x, y}. Old (auto-migrated by editor):
+                // {mass, x, y} where `mass` was a 1-based click index, so
+                // step = mass - 1.
+                if (typeof c.step === 'number') map[c.step] = { x: c.x, y: c.y };
+                else if (typeof c.mass === 'number') map[c.mass - 1] = { x: c.x, y: c.y };
+            }
+            stripChitCoords = map;
+            updateEndpointFuelStrip();
+        } catch (e) {
+            console.warn('chit coords: load failed', e);
+        }
+    }
+
+    /**
+     * Captures the strip background's natural pixel dimensions once it's
+     * loaded — we need them as the SVG viewBox so the chit positions
+     * scale with the panel width. Called from the init flow; safe if the
+     * image element doesn't exist (returns silently).
+     */
+    function bindStripImg() {
+        const img = document.getElementById('endpoint-strip-bg');
+        if (!img) return;
+        const onReady = () => {
+            stripImgNaturalSize = { w: img.naturalWidth, h: img.naturalHeight };
+            const svg = document.getElementById('endpoint-strip-svg');
+            if (svg) svg.setAttribute('viewBox', `0 0 ${img.naturalWidth} ${img.naturalHeight}`);
+            updateEndpointFuelStrip();
+        };
+        if (img.complete && img.naturalWidth > 0) onReady();
+        else img.addEventListener('load', onReady);
+    }
+
+    /**
+     * Hide / show / reposition the endpoint fuel-strip overlay. Cheap
+     * (≈10 DOM writes) — over-calling is fine. Bails silently on any
+     * unmet precondition.
+     */
+    function updateEndpointFuelStrip() {
+        const overlay = document.getElementById('endpoint-fuel-strip');
+        if (!overlay) return;
+
+        // Reset the green-dot indicator at the top of every call. The
+        // selection logic below sets it only for hover-driven targets.
+        fuelStripHoverIndicatorId = null;
+
+        // Master toggle (checkbox in #debug-toggle bar) — fastest hide path.
+        const enableCb = document.getElementById('show-fuel-strip-cb');
+        if (enableCb && !enableCb.checked) { overlay.style.display = 'none'; return; }
+
+        if (!traverseResult || !reachableNodes
+            || !stripChitCoords || !stripImgNaturalSize || !mapData) {
+            overlay.style.display = 'none'; return;
+        }
+
+        // Decide which PathNode's fuel state to display:
+        //
+        //   - When an endpoint is pinned: priority is
+        //         hovered node on route  >  hovered route segment  >  endpoint
+        //     For a hovered SEGMENT we show the state at the segment's start
+        //     (the node closer to the startpoint), so the user sees the fuel
+        //     BEFORE the move that traversed that edge.
+        //
+        //   - When NOT pinned: show the hovered node's state (if any
+        //     reachable node is under the cursor). With nothing hovered,
+        //     hide the panel — there's no "current state" to show.
+        let targetPathNode = null;
+
+        if (pinnedEndpoint) {
+            const treeNodeIds = getTreeNodeIds(pinnedEndpoint);
+            if (!treeNodeIds || treeNodeIds.length === 0) {
+                overlay.style.display = 'none'; return;
+            }
+            const idx = selectedRouteIndex; // pinned uses the currently selected route
+            const pathNodes = getPathToRoot(treeNodeIds[idx % treeNodeIds.length]);
+            if (!pathNodes || pathNodes.length === 0) {
+                overlay.style.display = 'none'; return;
+            }
+
+            const onRouteHover = hoveredNode
+                    ? pathNodes.find(pn => pn.nodeId === hoveredNode) : null;
+            const segStartHover = (!onRouteHover && hoveredRouteSegmentStartId)
+                    ? pathNodes.find(pn => pn.nodeId === hoveredRouteSegmentStartId) : null;
+
+            if (onRouteHover) {
+                targetPathNode = onRouteHover;
+                fuelStripHoverIndicatorId = onRouteHover.nodeId;
+            } else if (segStartHover) {
+                targetPathNode = segStartHover;
+                fuelStripHoverIndicatorId = segStartHover.nodeId;
+            } else {
+                targetPathNode = pathNodes[pathNodes.length - 1];
+                // No indicator — falling back to the endpoint state.
+            }
+        } else {
+            // No pin — only show on hover over a reachable node.
+            if (!hoveredNode || !reachableNodes[hoveredNode]) {
+                overlay.style.display = 'none'; return;
+            }
+            const treeNodeIds = getTreeNodeIds(hoveredNode);
+            if (!treeNodeIds || treeNodeIds.length === 0) {
+                overlay.style.display = 'none'; return;
+            }
+            const pathNodes = getPathToRoot(treeNodeIds[0]); // best route
+            targetPathNode = pathNodes && pathNodes[pathNodes.length - 1];
+            // The hover-preview already implies what's selected, so we
+            // don't draw an extra indicator dot in this branch.
+        }
+
+        if (!targetPathNode) { overlay.style.display = 'none'; return; }
+
+        const dryMass = parseInt(document.getElementById('dry-mass').value)
+                     || cfgI('ui.dry.mass.default', 4);
+        const dryStep = massToStripStep(dryMass);
+        // Clamp wet step to MAX (TODO: replace with explicit input validation
+        // — currently dryMass + fuel > 32 is rejected by the backend, so
+        // this clamp is a safety net rather than a real path).
+        let wetStep = dryStep + (targetPathNode.fuelStepsRemaining || 0);
+        if (wetStep > STRIP_MAX_STEP) wetStep = STRIP_MAX_STEP;
+
+        const dryCoord = stripChitCoords[dryStep];
+        const wetCoord = stripChitCoords[wetStep];
+        if (!dryCoord || !wetCoord) {
+            // User hasn't placed a coord for one of the steps in /chit-editor.
+            // Silently hide rather than render with a missing chit.
+            overlay.style.display = 'none'; return;
+        }
+
+        // Build chit SVG: two filled circles + "Dry"/"Wet" text labels.
+        // When chits coincide (zero fuel left), nudge Dry slightly left.
+        const W = stripImgNaturalSize.w, H = stripImgNaturalSize.h;
+        const r = Math.min(W, H) * 0.05;
+        const fontSize = Math.round(r * 0.55);
+        const dx = (dryStep === wetStep) ? -r * 0.6 : 0;
+        const svg = document.getElementById('endpoint-strip-svg');
+        if (!svg) { overlay.style.display = 'none'; return; }
+        svg.innerHTML =
+            `<circle class="endpoint-chit-circle wet"
+                     cx="${wetCoord.x * W}" cy="${wetCoord.y * H}" r="${r}"/>
+             <text class="endpoint-chit-label"
+                   x="${wetCoord.x * W}" y="${wetCoord.y * H}"
+                   font-size="${fontSize}">Wet</text>
+             <circle class="endpoint-chit-circle dry"
+                     cx="${dryCoord.x * W + dx}" cy="${dryCoord.y * H}" r="${r}"/>
+             <text class="endpoint-chit-label"
+                   x="${dryCoord.x * W + dx}" y="${dryCoord.y * H}"
+                   font-size="${fontSize}">Dry</text>`;
+
+        // Panel is pinned to the upper-left corner via CSS — nothing to
+        // compute per-frame. Just reveal it.
+        overlay.style.display = 'block';
     }
 
     function applyConfigToForm() {
@@ -761,6 +1067,12 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
         persistTabs();
     });
 
+    // "Show fuel strip" toggle — purely visual, no replan needed.
+    document.getElementById('show-fuel-strip-cb').addEventListener('change', () => {
+        updateEndpointFuelStrip();
+        draw();   // hides/shows the on-route green hover dot
+    });
+
     // Toggling Venus-flyby-disable re-plans the current start, so the new
     // routing constraint takes effect without the user having to click again.
     document.getElementById('no-venus-cb').addEventListener('change', () => {
@@ -938,6 +1250,13 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
         window.addEventListener('scroll', hide, true);
         window.addEventListener('resize', hide);
     })();
+
+    // Independent of the main load chain — fire as soon as the script
+    // runs so the chit coords are usually ready by the time a route is
+    // pinned. Failures are swallowed inside loadStripChitCoords so they
+    // can't block anything else.
+    loadStripChitCoords();
+    bindStripImg();
 
     // --- Load config, then map data, then image ---
     fetch('/api/config')
@@ -1236,10 +1555,19 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
         return path;
     }
 
-    // --- Active endpoint: pinned takes priority, hovered is temporary preview ---
+    // --- Active endpoint -------------------------------------------------
+    //   - When an endpoint is pinned, it stays pinned regardless of hover.
+    //     The displayed route, route-info card, and arrow-key cycling all
+    //     stay locked on the pinned endpoint until the user clears with
+    //     Esc / starts a new route. (The fuel-strip overlay reads its own
+    //     hover state separately to update mid-route — see
+    //     updateEndpointFuelStrip.)
+    //   - With no pin, hovering a reachable node previews the best route
+    //     to it.
     function getActiveEndpoint() {
+        if (pinnedEndpoint) return pinnedEndpoint;
         if (hoveredNode && reachableNodes && reachableNodes[hoveredNode]) return hoveredNode;
-        return pinnedEndpoint;
+        return null;
     }
 
     // --- Get tree node IDs for a given map node (endpoints first, then all reachable) ---
@@ -1285,6 +1613,34 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
                 updateDebugRoute();
                 updateRouteInfo();
             }
+        }
+        // Route-segment hover detection: only when an endpoint is pinned
+        // (no route line drawn otherwise) AND the node-hover above didn't
+        // already pick up a node — covers the gap when the cursor is
+        // between two consecutive route nodes.
+        if (pinnedEndpoint && !hoveredNode && mapData) {
+            const seg = findHoveredRouteSegment(
+                    event.offsetX, event.offsetY,
+                    cfgI('ui.route.segment.hover.radius', 18));
+            const newStartId = seg ? seg.startId : null;
+            if (newStartId !== hoveredRouteSegmentStartId) {
+                hoveredRouteSegmentStartId = newStartId;
+                hoveredRouteSegmentProj   = seg ? { x: seg.projX, y: seg.projY } : null;
+                needsDraw = true;
+                updateRouteInfo();   // re-renders the fuel-strip panel
+            } else if (seg) {
+                // Same segment, cursor moved along it — refresh the dot
+                // position so it tracks the cursor. The fuel-strip panel
+                // depends only on segment IDENTITY, so no re-render needed.
+                hoveredRouteSegmentProj = { x: seg.projX, y: seg.projY };
+                needsDraw = true;
+            }
+        } else if (hoveredRouteSegmentStartId) {
+            // Cursor moved away from segments-only territory — clear.
+            hoveredRouteSegmentStartId = null;
+            hoveredRouteSegmentProj   = null;
+            needsDraw = true;
+            updateRouteInfo();
         }
         if (debugMode && mapData) {
             const dbgId = findNearest(event.offsetX, event.offsetY, cfgI('ui.start.node.click.radius', 20));
@@ -1344,6 +1700,10 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
         const panel = document.getElementById('route-info');
         const leftArrow = document.getElementById('route-arrow-left');
         const rightArrow = document.getElementById('route-arrow-right');
+        // Re-evaluate the endpoint fuel-strip overlay every time route info
+        // refreshes (handles pin/unpin, route switch, dry-mass change).
+        // The function's own checks decide whether to actually show.
+        updateEndpointFuelStrip();
         const active = getActiveEndpoint();
         if (!active) { panel.style.display = 'none'; return; }
         const treeNodeIds = getTreeNodeIds(active);
@@ -2078,6 +2438,39 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
                 ctx.lineWidth = 2;
                 ctx.stroke();
             }
+        }
+
+        // Hover indicator dot: marks the route node whose fuel state the
+        // panel is currently reading. Driven by fuelStripHoverIndicatorId,
+        // which updateEndpointFuelStrip sets when the panel target was
+        // chosen by an active hover (on-route node OR route segment) and
+        // leaves null otherwise — so the dot only appears for explicit
+        // hovers, never for the fall-back endpoint state.
+        //
+        // Position selection:
+        //   - Segment-hover (indicator id == segment-start id, projection
+        //     is set): draw at the projected point so the dot rides the
+        //     cursor along the segment line.
+        //   - Otherwise: draw at the indicator node's centre.
+        if (fuelStripHoverIndicatorId) {
+            let dotX, dotY;
+            if (hoveredRouteSegmentStartId === fuelStripHoverIndicatorId
+                    && hoveredRouteSegmentProj) {
+                dotX = hoveredRouteSegmentProj.x;
+                dotY = hoveredRouteSegmentProj.y;
+            } else {
+                const p = points[fuelStripHoverIndicatorId];
+                if (!p) return;
+                dotX = p.x * imgW;
+                dotY = p.y * imgH;
+            }
+            ctx.beginPath();
+            ctx.arc(dotX, dotY, 6, 0, Math.PI * 2);
+            ctx.fillStyle = '#2ecc71';
+            ctx.fill();
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
         }
     }
 
