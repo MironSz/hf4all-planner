@@ -61,6 +61,13 @@ body { display: flex; height: 100vh; background: #1a1a2e; color: #eee; font-fami
 #sidebar { width: 300px; background: #16213e; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; border-left: 1px solid #333; }
 h2 { font-size: 14px; color: #7ec8e3; margin-bottom: 4px; }
 label { display: block; font-size: 12px; margin-bottom: 2px; color: #aaa; }
+/* Sidebar form labels carry an inline `?` tooltip glyph. Each engine-row
+   column is barely wider than "Base Thrust: ?", so any sub-pixel font
+   rounding can push the glyph onto a 2nd line in one column while a
+   sibling stays single-line — that's what gives the row a vertical
+   stagger. Force single-line; minor horizontal overflow into the 6 px
+   gap is acceptable and invisible in practice. */
+#sidebar label { white-space: nowrap; }
 input[type="number"] { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #555; color: #eee; font-family: monospace; font-size: 13px; }
 input[type="checkbox"] { margin-right: 6px; }
 .engine-block { background: #0f3460; padding: 8px; border-radius: 4px; border: 1px solid #333; }
@@ -72,9 +79,16 @@ button:hover { background: #c73650; }
 button:disabled { background: #555; cursor: not-allowed; }
 #status { font-size: 11px; color: #888; min-height: 40px; }
 #node-info { font-size: 12px; color: #ccc; min-height: 30px; background: #0f3460; padding: 8px; border-radius: 4px; }
-#debug-toggle { position: fixed; bottom: 12px; left: 12px; z-index: 100; display: flex; align-items: center; gap: 6px; font-size: 11px; color: #888; }
-#debug-toggle label { color: #888; margin: 0; cursor: pointer; user-select: none; }
-#debug-toggle input { cursor: pointer; }
+#debug-toggle { position: fixed; bottom: 12px; left: 12px; z-index: 100; display: flex; align-items: center; gap: 8px;
+                font-size: 12px; color: #e6e6e6;
+                padding: 6px 10px;
+                background: rgba(15, 52, 96, 0.85);
+                border: 1px solid #2a4a72;
+                border-radius: 5px;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5); }
+#debug-toggle label { color: #e6e6e6; margin: 0; cursor: pointer; user-select: none; font-size: 12px; }
+#debug-toggle input { cursor: pointer; transform: scale(1.05); margin-right: 1px; }
+#debug-toggle:hover { background: rgba(20, 60, 110, 0.95); border-color: #3a5e8a; }
 .route-arrow { width: 14px; flex: 0 0 14px; background: #143359; color: #7ec8e3; display: flex; align-items: center; justify-content: center; cursor: pointer; user-select: none; font-size: 11px; line-height: 1; }
 .route-arrow:hover { background: #1e4a7a; color: #fff; }
 #route-arrow-left  { border-radius: 4px 0 0 4px; }
@@ -163,6 +177,12 @@ body.sidebar-collapsed #sidebar { display: none; }
 #rotate-ccw   { left: 728px; }
 #rotate-reset { left: 766px; }
 #rotate-cw    { left: 804px; }
+/* When the fuel-strip panel is hidden (toggle off, no pinned endpoint,
+   data not loaded, etc.), reclaim the upper-left corner for the
+   rotation triplet so it doesn't sit awkwardly in mid-screen. */
+body.fuel-strip-hidden #rotate-ccw   { left: 12px; }
+body.fuel-strip-hidden #rotate-reset { left: 50px; }
+body.fuel-strip-hidden #rotate-cw    { left: 88px; }
 #sidebar-clear:hover, #sidebar-prev:hover, #sidebar-next:hover { background: #1b3a70; color: #fff; }
 #sidebar-clear { top: 12px; }
 #sidebar-prev  { top: 48px; right: 144px; }
@@ -534,6 +554,17 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
      * (≈10 DOM writes) — over-calling is fine. Bails silently on any
      * unmet precondition.
      */
+    /** Show or hide the fuel-strip panel AND toggle the
+     *  body.fuel-strip-hidden class so the rotation buttons can swap
+     *  between "right of strip" (visible) and "upper-left corner"
+     *  (hidden) via CSS. Always go through this helper rather than
+     *  setting overlay.style.display directly. */
+    function setFuelStripVisible(visible) {
+        const overlay = document.getElementById('endpoint-fuel-strip');
+        if (overlay) overlay.style.display = visible ? 'block' : 'none';
+        document.body.classList.toggle('fuel-strip-hidden', !visible);
+    }
+
     function updateEndpointFuelStrip() {
         const overlay = document.getElementById('endpoint-fuel-strip');
         if (!overlay) return;
@@ -544,76 +575,77 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
 
         // Master toggle (checkbox in #debug-toggle bar) — fastest hide path.
         const enableCb = document.getElementById('show-fuel-strip-cb');
-        if (enableCb && !enableCb.checked) { overlay.style.display = 'none'; return; }
+        if (enableCb && !enableCb.checked) { setFuelStripVisible(false); return; }
 
-        if (!traverseResult || !reachableNodes
-            || !stripChitCoords || !stripImgNaturalSize || !mapData) {
-            overlay.style.display = 'none'; return;
+        // Mandatory data for any rendering at all.
+        if (!stripChitCoords || !stripImgNaturalSize) {
+            setFuelStripVisible(false); return;
         }
 
-        // Decide which PathNode's fuel state to display:
+        // Decide which PathNode's fuel state to display, or fall back
+        // to the user's form-input initial state (dry + fuel) when no
+        // route or hover gives us a specific target:
         //
-        //   - When an endpoint is pinned: priority is
-        //         hovered node on route  >  hovered route segment  >  endpoint
-        //     For a hovered SEGMENT we show the state at the segment's start
-        //     (the node closer to the startpoint), so the user sees the fuel
-        //     BEFORE the move that traversed that edge.
-        //
-        //   - When NOT pinned: show the hovered node's state (if any
-        //     reachable node is under the cursor). With nothing hovered,
-        //     hide the panel — there's no "current state" to show.
+        //   - Endpoint pinned + cursor on the selected route node: that node
+        //   - Endpoint pinned + cursor on a route segment:          segment's earlier node
+        //   - Endpoint pinned + cursor elsewhere:                   the endpoint
+        //   - No pin + hovering a reachable node:                   that node's best-route endpoint
+        //   - Otherwise:                                            FALLBACK — show
+        //                                                           dryMass + fuel from the form
         let targetPathNode = null;
 
-        if (pinnedEndpoint) {
-            const treeNodeIds = getTreeNodeIds(pinnedEndpoint);
-            if (!treeNodeIds || treeNodeIds.length === 0) {
-                overlay.style.display = 'none'; return;
-            }
-            const idx = selectedRouteIndex; // pinned uses the currently selected route
-            const pathNodes = getPathToRoot(treeNodeIds[idx % treeNodeIds.length]);
-            if (!pathNodes || pathNodes.length === 0) {
-                overlay.style.display = 'none'; return;
-            }
+        if (traverseResult && reachableNodes && mapData) {
+            if (pinnedEndpoint) {
+                const treeNodeIds = getTreeNodeIds(pinnedEndpoint);
+                if (treeNodeIds && treeNodeIds.length > 0) {
+                    const idx = selectedRouteIndex; // pinned uses the currently selected route
+                    const pathNodes = getPathToRoot(treeNodeIds[idx % treeNodeIds.length]);
+                    if (pathNodes && pathNodes.length > 0) {
+                        const onRouteHover = hoveredNode
+                                ? pathNodes.find(pn => pn.nodeId === hoveredNode) : null;
+                        const segStartHover = (!onRouteHover && hoveredRouteSegmentStartId)
+                                ? pathNodes.find(pn => pn.nodeId === hoveredRouteSegmentStartId) : null;
 
-            const onRouteHover = hoveredNode
-                    ? pathNodes.find(pn => pn.nodeId === hoveredNode) : null;
-            const segStartHover = (!onRouteHover && hoveredRouteSegmentStartId)
-                    ? pathNodes.find(pn => pn.nodeId === hoveredRouteSegmentStartId) : null;
-
-            if (onRouteHover) {
-                targetPathNode = onRouteHover;
-                fuelStripHoverIndicatorId = onRouteHover.nodeId;
-            } else if (segStartHover) {
-                targetPathNode = segStartHover;
-                fuelStripHoverIndicatorId = segStartHover.nodeId;
-            } else {
-                targetPathNode = pathNodes[pathNodes.length - 1];
-                // No indicator — falling back to the endpoint state.
+                        if (onRouteHover) {
+                            targetPathNode = onRouteHover;
+                            fuelStripHoverIndicatorId = onRouteHover.nodeId;
+                        } else if (segStartHover) {
+                            targetPathNode = segStartHover;
+                            fuelStripHoverIndicatorId = segStartHover.nodeId;
+                        } else {
+                            targetPathNode = pathNodes[pathNodes.length - 1];
+                        }
+                    }
+                }
+            } else if (hoveredNode && reachableNodes[hoveredNode]) {
+                const treeNodeIds = getTreeNodeIds(hoveredNode);
+                if (treeNodeIds && treeNodeIds.length > 0) {
+                    const pathNodes = getPathToRoot(treeNodeIds[0]); // best route
+                    targetPathNode = pathNodes && pathNodes[pathNodes.length - 1];
+                }
             }
-        } else {
-            // No pin — only show on hover over a reachable node.
-            if (!hoveredNode || !reachableNodes[hoveredNode]) {
-                overlay.style.display = 'none'; return;
-            }
-            const treeNodeIds = getTreeNodeIds(hoveredNode);
-            if (!treeNodeIds || treeNodeIds.length === 0) {
-                overlay.style.display = 'none'; return;
-            }
-            const pathNodes = getPathToRoot(treeNodeIds[0]); // best route
-            targetPathNode = pathNodes && pathNodes[pathNodes.length - 1];
-            // The hover-preview already implies what's selected, so we
-            // don't draw an extra indicator dot in this branch.
+            // else: no specific target — fall through to form-input fallback
         }
-
-        if (!targetPathNode) { overlay.style.display = 'none'; return; }
 
         const dryMass = parseInt(document.getElementById('dry-mass').value)
                      || cfgI('ui.dry.mass.default', 4);
         const dryStep = massToStripStep(dryMass);
+        let wetStep;
+        if (targetPathNode) {
+            wetStep = dryStep + (targetPathNode.fuelStepsRemaining || 0);
+        } else {
+            // Fallback: render the user's form-input initial state — Dry
+            // chit at dryMass, Wet chit at dryMass + fuel (in tanks/red-line
+            // steps, converted to fuel-strip steps). Useful before any
+            // start node is picked, or when nothing is hovered/pinned.
+            const fuel = parseInt(document.getElementById('fuel').value)
+                      || cfgI('ui.fuel.default', 15);
+            const wetMass = Math.min(32, dryMass + Math.max(0, fuel));
+            wetStep = massToStripStep(wetMass);
+        }
         // Clamp wet step to MAX (TODO: replace with explicit input validation
         // — currently dryMass + fuel > 32 is rejected by the backend, so
         // this clamp is a safety net rather than a real path).
-        let wetStep = dryStep + (targetPathNode.fuelStepsRemaining || 0);
         if (wetStep > STRIP_MAX_STEP) wetStep = STRIP_MAX_STEP;
 
         const dryCoord = stripChitCoords[dryStep];
@@ -621,7 +653,7 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
         if (!dryCoord || !wetCoord) {
             // User hasn't placed a coord for one of the steps in /chit-editor.
             // Silently hide rather than render with a missing chit.
-            overlay.style.display = 'none'; return;
+            setFuelStripVisible(false); return;
         }
 
         // Build chit SVG: two filled circles + "Dry"/"Wet" text labels.
@@ -631,7 +663,7 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
         const fontSize = Math.round(r * 0.55);
         const dx = (dryStep === wetStep) ? -r * 0.6 : 0;
         const svg = document.getElementById('endpoint-strip-svg');
-        if (!svg) { overlay.style.display = 'none'; return; }
+        if (!svg) { setFuelStripVisible(false); return; }
         svg.innerHTML =
             `<circle class="endpoint-chit-circle wet"
                      cx="${wetCoord.x * W}" cy="${wetCoord.y * H}" r="${r}"/>
@@ -646,7 +678,7 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
 
         // Panel is pinned to the upper-left corner via CSS — nothing to
         // compute per-frame. Just reveal it.
-        overlay.style.display = 'block';
+        setFuelStripVisible(true);
     }
 
     function applyConfigToForm() {
@@ -2631,6 +2663,12 @@ body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center
     });
     document.getElementById('fuel').addEventListener('change', () => { fireTraverse(); persistTabs(); });
     document.getElementById('dry-mass').addEventListener('change', () => { fireTraverse(); persistTabs(); });
+    // Live-update the fuel-strip overlay as the user types in the
+    // dry-mass / fuel inputs. The change-listener above will also fire
+    // a traverse, but we don't want the strip's fallback rendering to
+    // wait for the network round-trip.
+    document.getElementById('fuel').addEventListener('input', updateEndpointFuelStrip);
+    document.getElementById('dry-mass').addEventListener('input', updateEndpointFuelStrip);
 
     // Sidebar collapse toggle. Persisted to localStorage so the choice sticks
     // across reloads.
