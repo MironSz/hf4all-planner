@@ -14,7 +14,7 @@ public class Main {
     public static void main(String[] args) {
         initLogging();
         int port = args.length > 0 ? Integer.parseInt(args[0]) : Config.serverPort();
-        PlannerServer server = new PlannerServer(port);
+        PlannerServer server = new PlannerServer(port, Config.allowDebugEndpoints());
         server.start();
     }
 

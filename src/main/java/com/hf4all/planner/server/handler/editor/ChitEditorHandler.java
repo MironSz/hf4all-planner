@@ -49,6 +49,12 @@ public final class ChitEditorHandler implements HttpHandler {
 
     private static final String NO_CACHE = "no-store, no-cache, must-revalidate, max-age=0";
 
+    private final boolean allowDebugEndpoints;
+
+    public ChitEditorHandler(boolean allowDebugEndpoints) {
+        this.allowDebugEndpoints = allowDebugEndpoints;
+    }
+
     @Override
     public void handle(HttpExchange exchange) throws IOException {
         String path   = exchange.getRequestURI().getPath();
@@ -60,6 +66,13 @@ public final class ChitEditorHandler implements HttpHandler {
             } else if ("/chit-editor/chits".equals(path) && "GET".equals(method)) {
                 serveChits(exchange);
             } else if ("/chit-editor/save".equals(path) && "POST".equals(method)) {
+                if (!allowDebugEndpoints) {
+                    byte[] msg = "chit-editor saves are disabled on this server".getBytes(StandardCharsets.UTF_8);
+                    exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=UTF-8");
+                    exchange.sendResponseHeaders(403, msg.length);
+                    try (var os = exchange.getResponseBody()) { os.write(msg); }
+                    return;
+                }
                 if (!exchange.getRemoteAddress().getAddress().isLoopbackAddress()) {
                     byte[] msg = "chit-editor edits are only accepted from localhost".getBytes(StandardCharsets.UTF_8);
                     exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=UTF-8");

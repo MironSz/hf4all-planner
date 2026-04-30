@@ -22,10 +22,12 @@ public final class PlannerServer {
     private static final Logger LOG = Logger.getLogger(PlannerServer.class.getName());
 
     private final int port;
+    private final boolean allowDebugEndpoints;
     private HttpServer server;
 
-    public PlannerServer(int port) {
+    public PlannerServer(int port, boolean allowDebugEndpoints) {
         this.port = port;
+        this.allowDebugEndpoints = allowDebugEndpoints;
     }
 
     public void start() {
@@ -42,28 +44,32 @@ public final class PlannerServer {
         server.createContext(Config.endpointMap(), new MapHandler());
         server.createContext(Config.endpointTraverse(), new TraverseHandler(map));
         server.createContext(Config.endpointConfig(), new ConfigHandler());
-        server.createContext("/hex-editor", new HexEditorHandler());
-        server.createContext("/celestial-body-editor", new CelestialBodyEditorHandler());
-        server.createContext("/chit-editor", new ChitEditorHandler());
-        server.createContext(Config.endpointStop(), exchange -> {
-            // Only the local machine can shut the server down. With the
-            // server bound to a public port (e.g. :80) anyone could
-            // otherwise call this URL and kill it. The check matches
-            // HexEditorHandler's save-endpoint guard.
-            if (!exchange.getRemoteAddress().getAddress().isLoopbackAddress()) {
-                LOG.warning(() -> "Rejected non-local stop attempt from "
-                        + exchange.getRemoteAddress().getAddress().getHostAddress());
-                byte[] msg = "stop endpoint is only accepted from localhost".getBytes();
-                exchange.sendResponseHeaders(403, msg.length);
-                try (var os = exchange.getResponseBody()) { os.write(msg); }
-                return;
-            }
-            byte[] body = "Server stopping.".getBytes();
-            exchange.sendResponseHeaders(200, body.length);
-            try (var os = exchange.getResponseBody()) { os.write(body); }
-            LOG.info("Stop requested. Shutting down...");
-            server.stop(Config.serverStopDelaySeconds());
-        });
+        server.createContext("/hex-editor", new HexEditorHandler(allowDebugEndpoints));
+        server.createContext("/celestial-body-editor", new CelestialBodyEditorHandler(allowDebugEndpoints));
+        server.createContext("/chit-editor", new ChitEditorHandler(allowDebugEndpoints));
+        if (allowDebugEndpoints) {
+            server.createContext(Config.endpointStop(), exchange -> {
+                // Only the local machine can shut the server down. With the
+                // server bound to a public port (e.g. :80) anyone could
+                // otherwise call this URL and kill it. The check matches
+                // HexEditorHandler's save-endpoint guard.
+                if (!exchange.getRemoteAddress().getAddress().isLoopbackAddress()) {
+                    LOG.warning(() -> "Rejected non-local stop attempt from "
+                            + exchange.getRemoteAddress().getAddress().getHostAddress());
+                    byte[] msg = "stop endpoint is only accepted from localhost".getBytes();
+                    exchange.sendResponseHeaders(403, msg.length);
+                    try (var os = exchange.getResponseBody()) { os.write(msg); }
+                    return;
+                }
+                byte[] body = "Server stopping.".getBytes();
+                exchange.sendResponseHeaders(200, body.length);
+                try (var os = exchange.getResponseBody()) { os.write(body); }
+                LOG.info("Stop requested. Shutting down...");
+                server.stop(Config.serverStopDelaySeconds());
+            });
+        } else {
+            LOG.info("Debug endpoints disabled: stop endpoint not registered, editor saves will return 403.");
+        }
         server.createContext("/", new IndexHandler());
 
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());

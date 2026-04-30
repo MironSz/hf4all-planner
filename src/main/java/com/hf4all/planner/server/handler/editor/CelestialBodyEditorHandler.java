@@ -42,6 +42,12 @@ public final class CelestialBodyEditorHandler implements HttpHandler {
 
     private static final String NO_CACHE = "no-store, no-cache, must-revalidate, max-age=0";
 
+    private final boolean allowDebugEndpoints;
+
+    public CelestialBodyEditorHandler(boolean allowDebugEndpoints) {
+        this.allowDebugEndpoints = allowDebugEndpoints;
+    }
+
     @Override
     public void handle(HttpExchange exchange) throws IOException {
         String path   = exchange.getRequestURI().getPath();
@@ -53,6 +59,13 @@ public final class CelestialBodyEditorHandler implements HttpHandler {
             } else if ("/celestial-body-editor/bodies".equals(path) && "GET".equals(method)) {
                 serveBodies(exchange);
             } else if ("/celestial-body-editor/save".equals(path) && "POST".equals(method)) {
+                if (!allowDebugEndpoints) {
+                    byte[] msg = "celestial-body-editor saves are disabled on this server".getBytes(StandardCharsets.UTF_8);
+                    exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=UTF-8");
+                    exchange.sendResponseHeaders(403, msg.length);
+                    try (var os = exchange.getResponseBody()) { os.write(msg); }
+                    return;
+                }
                 if (!exchange.getRemoteAddress().getAddress().isLoopbackAddress()) {
                     byte[] msg = "celestial-body-editor edits are only accepted from localhost".getBytes(StandardCharsets.UTF_8);
                     exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=UTF-8");

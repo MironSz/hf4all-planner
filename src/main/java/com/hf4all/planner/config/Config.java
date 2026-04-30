@@ -51,25 +51,30 @@ public final class Config {
         return Integer.parseInt(get(p, key).trim());
     }
 
+    private static boolean getBoolean(Properties p, String key) {
+        return Boolean.parseBoolean(get(p, key).trim());
+    }
+
     // -------------------------------------------------------------------------
     // Server
     // -------------------------------------------------------------------------
 
-    public static int    serverPort()              { return getInt(SERVER, "server.port"); }
-    public static int    serverStopDelaySeconds()  { return getInt(SERVER, "server.stop.delay.seconds"); }
-    public static String endpointMap()             { return get(SERVER,    "server.endpoint.map"); }
-    public static String endpointTraverse()        { return get(SERVER,    "server.endpoint.traverse"); }
-    public static String endpointConfig()          { return get(SERVER,    "server.endpoint.config"); }
-    public static String endpointStop()            { return get(SERVER,    "server.endpoint.stop"); }
-    public static String corsAllowOrigin()         { return get(SERVER,    "server.cors.allow.origin"); }
-    public static String cacheHtml()               { return get(SERVER,    "server.cache.html"); }
-    public static int    cacheAssetsSeconds()      { return getInt(SERVER, "server.cache.assets.seconds"); }
-    public static int    cacheMapSeconds()         { return getInt(SERVER, "server.cache.map.seconds"); }
-    public static String staticPrefix()            { return get(SERVER,    "server.static.prefix"); }
-    public static String mapResource()             { return get(SERVER,    "server.map.resource"); }
-    public static int    requestMaxEngines()       { return getInt(SERVER, "server.request.max.engines"); }
-    public static int    requestMaxFuel()          { return getInt(SERVER, "server.request.max.fuel"); }
-    public static int    requestMaxDryMass()       { return getInt(SERVER, "server.request.max.dry.mass"); }
+    public static int     serverPort()              { return getInt(SERVER,     "server.port"); }
+    public static int     serverStopDelaySeconds()  { return getInt(SERVER,     "server.stop.delay.seconds"); }
+    public static boolean allowDebugEndpoints()     { return getBoolean(SERVER, "server.debug.endpoints.allow"); }
+    public static String  endpointMap()             { return get(SERVER,        "server.endpoint.map"); }
+    public static String  endpointTraverse()        { return get(SERVER,        "server.endpoint.traverse"); }
+    public static String  endpointConfig()          { return get(SERVER,        "server.endpoint.config"); }
+    public static String  endpointStop()            { return get(SERVER,        "server.endpoint.stop"); }
+    public static String  corsAllowOrigin()         { return get(SERVER,        "server.cors.allow.origin"); }
+    public static String  cacheHtml()               { return get(SERVER,        "server.cache.html"); }
+    public static int     cacheAssetsSeconds()      { return getInt(SERVER,     "server.cache.assets.seconds"); }
+    public static int     cacheMapSeconds()         { return getInt(SERVER,     "server.cache.map.seconds"); }
+    public static String  staticPrefix()            { return get(SERVER,        "server.static.prefix"); }
+    public static String  mapResource()             { return get(SERVER,        "server.map.resource"); }
+    public static int     requestMaxEngines()       { return getInt(SERVER,     "server.request.max.engines"); }
+    public static int     requestMaxFuel()          { return getInt(SERVER,     "server.request.max.fuel"); }
+    public static int     requestMaxDryMass()       { return getInt(SERVER,     "server.request.max.dry.mass"); }
 
     // -------------------------------------------------------------------------
     // Planner
