@@ -14,8 +14,11 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.concurrent.Executors;
+import java.util.logging.Logger;
 
 public final class PlannerServer {
+
+    private static final Logger LOG = Logger.getLogger(PlannerServer.class.getName());
 
     private final int port;
     private HttpServer server;
@@ -25,9 +28,9 @@ public final class PlannerServer {
     }
 
     public void start() {
-        System.out.println("Loading solar map...");
+        LOG.info("Loading solar map...");
         SolarMap map = MapLoader.loadDefault();
-        System.out.printf("Map loaded: %s%n", map);
+        LOG.info(() -> "Map loaded: " + map);
 
         try {
             server = HttpServer.create(new InetSocketAddress(port), 0);
@@ -41,10 +44,22 @@ public final class PlannerServer {
         server.createContext("/hex-editor", new HexEditorHandler());
         server.createContext("/celestial-body-editor", new CelestialBodyEditorHandler());
         server.createContext(Config.endpointStop(), exchange -> {
+            // Only the local machine can shut the server down. With the
+            // server bound to a public port (e.g. :80) anyone could
+            // otherwise call this URL and kill it. The check matches
+            // HexEditorHandler's save-endpoint guard.
+            if (!exchange.getRemoteAddress().getAddress().isLoopbackAddress()) {
+                LOG.warning(() -> "Rejected non-local stop attempt from "
+                        + exchange.getRemoteAddress().getAddress().getHostAddress());
+                byte[] msg = "stop endpoint is only accepted from localhost".getBytes();
+                exchange.sendResponseHeaders(403, msg.length);
+                try (var os = exchange.getResponseBody()) { os.write(msg); }
+                return;
+            }
             byte[] body = "Server stopping.".getBytes();
             exchange.sendResponseHeaders(200, body.length);
             try (var os = exchange.getResponseBody()) { os.write(body); }
-            System.out.println("Stop requested. Shutting down...");
+            LOG.info("Stop requested. Shutting down...");
             server.stop(Config.serverStopDelaySeconds());
         });
         server.createContext("/", new IndexHandler());
@@ -52,7 +67,7 @@ public final class PlannerServer {
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         server.start();
 
-        System.out.printf("Server running at http://localhost:%d/%n", port);
+        LOG.info(() -> "Server running at http://localhost:" + port + "/");
     }
 
     public void stop() {

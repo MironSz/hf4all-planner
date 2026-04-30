@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.logging.Logger;
 
 /**
  * Loads a {@link SolarMap} from the HF4A JSON map format (data-hf4-v2.json).
@@ -38,6 +39,8 @@ import java.util.Map;
  * (risk = max(RADIATION - thrust, 0)).
  */
 public final class MapLoader {
+
+    private static final Logger LOG = Logger.getLogger(MapLoader.class.getName());
 
     /**
      * Default radiation severity assigned to all RADHAZ nodes.
@@ -112,7 +115,7 @@ public final class MapLoader {
             MapNode a = lookup.get(aId);
             MapNode bNode = lookup.get(bId);
             if (a == null || bNode == null) {
-                System.err.println("[MapLoader] Skipping dead edge: " + edgeStr);
+                LOG.warning("Skipping dead edge: " + edgeStr);
                 continue;
             }
             b.addEdge(a, bNode);
@@ -131,7 +134,7 @@ public final class MapLoader {
                 try {
                     b.setEdgeLabel(fromNode, toNode, toEntry.getValue().getAsString());
                 } catch (IllegalArgumentException ex) {
-                    System.err.println("[MapLoader] Bad edge label skipped: " + ex.getMessage());
+                    LOG.warning("Bad edge label skipped: " + ex.getMessage());
                 }
             }
         }
