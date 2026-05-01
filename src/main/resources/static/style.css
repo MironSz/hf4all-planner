@@ -1,0 +1,176 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { display: flex; height: 100vh; background: #1a1a2e; color: #eee; font-family: monospace; overflow: hidden; }
+#map-container { flex: 1; position: relative; overflow: hidden; }
+#main { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+#main img { display: block; transition: filter 180ms ease-out; }
+#main canvas { position: absolute; top: 0; left: 0; }
+#main #hex-mask-overlay { position: absolute; top: 0; left: 0; pointer-events: none; }
+#main #hex-mask-overlay .hide-mask polygon { stroke: none; }
+
+/* Endpoint fuel-strip overlay — flush against the top-left corner of the
+   map container. The strip image's dark-navy background is alpha-cut so
+   the panel reads as floating glyphs over the map; no panel chrome
+   (border / shadow / radius) since there's no rectangle to outline. */
+#endpoint-fuel-strip {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 50;
+    width: 720px;
+    pointer-events: none;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 0;
+}
+#endpoint-fuel-strip img {
+    width: 100%;
+    display: block;
+    border-radius: 0;
+}
+#endpoint-fuel-strip svg {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    pointer-events: none;
+}
+.endpoint-chit-circle { stroke: #fff; stroke-width: 4; }
+.endpoint-chit-circle.dry { fill: #a2273c; }   /* mid wine red — between #e94560 and #5c0a18 */
+.endpoint-chit-circle.wet { fill: #4681a0; }   /* mid steel blue — between #7ec8e3 and #0d3a5c */
+.endpoint-chit-label { font-family: monospace; font-weight: 700; fill: #fff;
+                       stroke: #000; stroke-width: 3; paint-order: stroke;
+                       text-anchor: middle; dominant-baseline: central;
+                       pointer-events: none; user-select: none; }
+#sidebar { width: 300px; background: #16213e; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; border-left: 1px solid #333; }
+h2 { font-size: 14px; color: #7ec8e3; margin-bottom: 4px; }
+label { display: block; font-size: 12px; margin-bottom: 2px; color: #aaa; }
+/* Sidebar form labels carry an inline `?` tooltip glyph. Each engine-row
+   column is barely wider than "Base Thrust: ?", so any sub-pixel font
+   rounding can push the glyph onto a 2nd line in one column while a
+   sibling stays single-line — that's what gives the row a vertical
+   stagger. Force single-line; minor horizontal overflow into the 6 px
+   gap is acceptable and invisible in practice. */
+#sidebar label { white-space: nowrap; }
+input[type="number"] { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #555; color: #eee; font-family: monospace; font-size: 13px; }
+input[type="checkbox"] { margin-right: 6px; }
+.engine-block { background: #0f3460; padding: 8px; border-radius: 4px; border: 1px solid #333; }
+.engine-block h3 { font-size: 12px; color: #e94560; margin-bottom: 6px; }
+.engine-row { display: flex; gap: 6px; margin-bottom: 4px; }
+.engine-row > div { flex: 1; }
+button { padding: 8px 16px; background: #e94560; color: white; border: none; cursor: pointer; font-family: monospace; font-size: 13px; border-radius: 4px; margin-bottom: 4px; }
+button:hover { background: #c73650; }
+button:disabled { background: #555; cursor: not-allowed; }
+#status { font-size: 11px; color: #888; min-height: 40px; }
+#node-info { font-size: 12px; color: #ccc; min-height: 30px; background: #0f3460; padding: 8px; border-radius: 4px; }
+#debug-toggle { position: fixed; bottom: 12px; left: 12px; z-index: 100; display: flex; align-items: center; gap: 8px;
+                font-size: 12px; color: #e6e6e6;
+                padding: 6px 10px;
+                background: rgba(15, 52, 96, 0.85);
+                border: 1px solid #2a4a72;
+                border-radius: 5px;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5); }
+#debug-toggle label { color: #e6e6e6; margin: 0; cursor: pointer; user-select: none; font-size: 12px; }
+#debug-toggle input { cursor: pointer; transform: scale(1.05); margin-right: 1px; }
+#debug-toggle:hover { background: rgba(20, 60, 110, 0.95); border-color: #3a5e8a; }
+.route-arrow { width: 14px; flex: 0 0 14px; background: #143359; color: #7ec8e3; display: flex; align-items: center; justify-content: center; cursor: pointer; user-select: none; font-size: 11px; line-height: 1; }
+.route-arrow:hover { background: #1e4a7a; color: #fff; }
+#route-arrow-left  { border-radius: 4px 0 0 4px; }
+#route-arrow-right { border-radius: 0 4px 4px 0; }
+#tab-strip { display: flex; align-items: center; gap: 4px; margin: -16px -16px 4px -16px; padding: 6px 8px; background: #0a1a30; border-bottom: 1px solid #333; }
+#tab-list { flex: 1; display: flex; gap: 2px; overflow-x: auto; min-width: 0; }
+#tab-list::-webkit-scrollbar { height: 4px; }
+#tab-list::-webkit-scrollbar-thumb { background: #333; }
+.tab { background: #0f3460; border: 1px solid #222; border-radius: 4px; padding: 3px 4px 3px 8px; cursor: pointer; font-size: 11px; display: flex; align-items: center; gap: 4px; white-space: nowrap; user-select: none; color: #aaa; }
+.tab:hover { background: #143359; color: #ddd; }
+.tab.active { background: #16213e; color: #7ec8e3; border-color: #555; }
+.tab .tab-label { max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+.tab .tab-action { color: #888; cursor: pointer; padding: 0 3px; font-size: 12px; line-height: 1; border-radius: 2px; }
+.tab .tab-action:hover { color: #fff; background: #1e4a7a; }
+#new-tab { padding: 2px 8px; background: #0f3460; color: #7ec8e3; border: 1px solid #555; border-radius: 4px; cursor: pointer; font-size: 14px; line-height: 1; margin: 0; flex: 0 0 auto; }
+#new-tab:hover { background: #1b3a70; color: #fff; }
+#copy-route-btn { display: none; margin-top: 6px; padding: 2px 8px; background: #143359; color: #7ec8e3; border: 1px solid #555; border-radius: 3px; cursor: pointer; font-family: monospace; font-size: 11px; line-height: 1; }
+#copy-route-btn:hover { background: #1e4a7a; color: #fff; }
+#copy-route-btn.copied { background: #1a5b2a; color: #b0f0b0; border-color: #2e7a3e; }
+
+/* ---- Site filter panel ---- */
+#site-filter { margin-top: 10px; padding: 0; background: #0f3460; border-radius: 4px; font-size: 12px; color: #ccc; }
+.site-filter-header { display: flex; align-items: center; gap: 6px; padding: 8px; cursor: pointer; user-select: none; }
+.site-filter-header:hover { background: #143359; border-radius: 4px; }
+.site-filter-toggle { display: inline-block; width: 10px; color: #7ec8e3; font-size: 10px; transition: transform 0.15s; }
+.site-filter-toggle.open { transform: rotate(90deg); }
+.site-filter-summary { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.site-filter-summary .match-count { color: #888; margin-left: 6px; }
+.site-filter-reset { background: transparent; color: #888; border: none; padding: 0 4px; cursor: pointer; font-size: 14px; line-height: 1; margin: 0; display: none; }
+.site-filter-reset.show { display: inline-block; }
+.site-filter-reset:hover { color: #fff; background: #1e4a7a; border-radius: 2px; }
+.site-filter-body { padding: 4px 8px 8px; display: none; }
+.site-filter-body.open { display: block; }
+.filter-section { padding: 6px 0; border-top: 1px solid #1a3758; }
+.filter-section:first-child { border-top: none; }
+.filter-section .filter-label { font-size: 11px; color: #7ec8e3; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 6px; }
+.mode-toggle { background: #143359; color: #7ec8e3; border: 1px solid #2a4a72; padding: 1px 6px; font-size: 10px; text-transform: none; border-radius: 3px; margin: 0; line-height: 1.3; cursor: pointer; letter-spacing: 0; font-family: monospace; }
+.mode-toggle:hover { background: #1e4a7a; color: #fff; }
+.filter-section .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.filter-section .chips label { font-size: 12px; margin: 0; color: #ccc; }
+.shortcut-row { display: flex; gap: 6px; margin-top: 4px; }
+.shortcut-row button { background: #143359; color: #7ec8e3; border: 1px solid #2a4a72; padding: 2px 8px; font-size: 11px; border-radius: 3px; margin: 0; }
+.shortcut-row button:hover { background: #1e4a7a; color: #fff; }
+.range-row { display: flex; align-items: center; gap: 6px; }
+.range-row input[type="number"] { width: 70px; padding: 3px 6px; font-size: 12px; }
+.range-row .sep { color: #666; }
+.flag-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; }
+.flag-cb-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #ccc; margin: 0; cursor: pointer; }
+.flag-cb-row input { margin: 0; }
+select { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #555; color: #eee; font-family: monospace; font-size: 12px; }
+
+/* ---- "How to use" instructions panel ---- */
+.instructions-panel { background: #0f3460; border-radius: 4px; font-size: 12px; color: #ccc; }
+.instructions-panel summary { padding: 8px; cursor: pointer; user-select: none; color: #7ec8e3; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; list-style: none; }
+.instructions-panel summary::-webkit-details-marker { display: none; }
+.instructions-panel summary::before { content: '▶'; display: inline-block; margin-right: 6px; transition: transform 0.15s; }
+.instructions-panel[open] summary::before { transform: rotate(90deg); }
+.instructions-panel summary:hover { background: #143359; border-radius: 4px; }
+.instructions-panel[open] summary { border-bottom: 1px solid #1a3758; border-radius: 4px 4px 0 0; }
+.instructions-body { padding: 8px 10px 10px; }
+.instructions-body p { margin: 0 0 6px 0; line-height: 1.45; }
+.instructions-body p:last-child { margin-bottom: 0; }
+.instructions-body b { color: #eee; }
+.instructions-body kbd { background: #143359; border: 1px solid #2a4a72; border-radius: 3px; padding: 0 4px; font-family: monospace; font-size: 11px; color: #7ec8e3; }
+
+/* ---- Help-tip "?" glyph with hover tooltip ---- */
+.tip { display: inline-block; width: 14px; height: 14px; line-height: 13px; text-align: center; border-radius: 50%; background: #143359; color: #7ec8e3; border: 1px solid #2a4a72; font-size: 10px; font-weight: bold; font-family: monospace; cursor: help; margin-left: 4px; position: relative; vertical-align: middle; user-select: none; }
+.tip:hover { background: #1e4a7a; color: #fff; }
+/* Shared tooltip popup — positioned dynamically by JS so it never overflows
+   the viewport. Pseudo-element approach was abandoned because CSS cannot
+   read the popup's own width to flip alignment near edges. */
+#tip-popup { position: fixed; display: none; width: 220px; max-width: calc(100vw - 8px); padding: 6px 8px; background: #0a1a30; color: #eee; border: 1px solid #2a4a72; border-radius: 4px; font-size: 11px; font-family: monospace; font-weight: normal; line-height: 1.4; white-space: normal; text-align: left; z-index: 200; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,0.5); }
+
+/* ---- Sidebar collapse toggle ---- */
+#sidebar-toggle { position: fixed; top: 12px; right: 12px; z-index: 110; width: 28px; height: 28px; padding: 0; margin: 0; background: #0f3460; color: #7ec8e3; border: 1px solid #555; border-radius: 4px; cursor: pointer; font-size: 14px; line-height: 1; display: flex; align-items: center; justify-content: center; }
+#sidebar-toggle:hover { background: #1b3a70; color: #fff; }
+body.sidebar-collapsed #sidebar { display: none; }
+#sidebar-clear, #sidebar-prev, #sidebar-next { position: fixed; right: 48px; z-index: 110; height: 28px; padding: 0 10px; margin: 0; background: #0f3460; color: #7ec8e3; border: 1px solid #555; border-radius: 4px; cursor: pointer; font-size: 12px; line-height: 1; display: none; }
+#rotate-ccw, #rotate-cw, #rotate-reset { position: fixed; top: 8px; z-index: 110; width: 32px; height: 32px; padding: 0; margin: 0; background: #0f3460; color: #7ec8e3; border: 1px solid #555; border-radius: 4px; cursor: pointer; font-size: 18px; line-height: 30px; text-align: center; display: inline-flex; align-items: center; justify-content: center; }
+#rotate-ccw:hover, #rotate-cw:hover, #rotate-reset:hover { background: #1b3a70; color: #fff; }
+#rotate-reset { font-size: 12px; }
+/* Rotation triplet sits immediately right of the fuel-strip panel
+   (#endpoint-fuel-strip is 720 px wide at left:0, so 728 = strip width
+   + 8 px gap). Buttons themselves are 34 px wide (32 + 1 px border each
+   side); 4 px gap between them. */
+#rotate-ccw   { left: 728px; }
+#rotate-reset { left: 766px; }
+#rotate-cw    { left: 804px; }
+/* When the fuel-strip panel is hidden (toggle off, no pinned endpoint,
+   data not loaded, etc.), reclaim the upper-left corner for the
+   rotation triplet so it doesn't sit awkwardly in mid-screen. */
+body.fuel-strip-hidden #rotate-ccw   { left: 12px; }
+body.fuel-strip-hidden #rotate-reset { left: 50px; }
+body.fuel-strip-hidden #rotate-cw    { left: 88px; }
+#sidebar-clear:hover, #sidebar-prev:hover, #sidebar-next:hover { background: #1b3a70; color: #fff; }
+#sidebar-clear { top: 12px; }
+#sidebar-prev  { top: 48px; right: 144px; }
+#sidebar-next  { top: 48px; }
+body.sidebar-collapsed #sidebar-clear,
+body.sidebar-collapsed #sidebar-prev,
+body.sidebar-collapsed #sidebar-next { display: inline-flex; align-items: center; }
