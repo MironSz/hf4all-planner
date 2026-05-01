@@ -208,7 +208,14 @@ export function updateEndpointFuelStrip() {
                  || cfgI('ui.dry.mass.default', 4);
     const dryStep = massToStripStep(dryMass);
     let wetStep;
-    if (targetPathNode) {
+    // Flight animation in progress — wet chit slides continuously to
+    // match the junker's current fuel-step state. Snap to the nearest
+    // integer step (chit-coords are only placed at integer step
+    // positions). Overrides the static endpoint/hover targets while
+    // active so the panel mirrors the in-flight ship.
+    if (state.flightAnim && typeof state.flightAnim.wetStepNow === 'number') {
+        wetStep = Math.round(state.flightAnim.wetStepNow);
+    } else if (targetPathNode) {
         wetStep = dryStep + (targetPathNode.fuelStepsRemaining || 0);
     } else {
         // Fallback: render the user's form-input initial state. The Fuel

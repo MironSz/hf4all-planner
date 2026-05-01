@@ -43,6 +43,12 @@ export const state = {
     hoveredRouteSegmentProj: null,    // {x,y} in image-pixel coords: cursor projection
     fuelStripHoverIndicatorId: null,  // mapNodeId for the green-dot indicator
 
+    // --- Flight animation state ---
+    // Set by startFlightAnimation when a route is pinned; cleared at end
+    // of the run or when the pin clears. While non-null, draw.js draws
+    // the junker on top of the route line via drawFlight().
+    flightAnim: null,
+
     // --- DOM refs (populated once by main.js) ---
     bgImg: null,
     canvas: null,

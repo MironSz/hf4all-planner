@@ -165,23 +165,47 @@ public final class FuelStrip {
     // Weight class
     // -------------------------------------------------------------------------
 
-    /** HF4A weight class modifier given the integer Wet Mass. (H3c) */
-    public static int weightClassModForWetMass(int wetMass) {
-        return switch (wetMass) {
-            case 1       ->  +2; // Wisp
-            case 2       ->  +1; // Probe
-            case 3       ->   0; // Scout
-            case 4, 5    ->  -1; // Transport
-            default      ->  -2; // Tug (6..32)
-        };
+    // Class boundaries are defined in FUEL-STRIP STEP positions (HF4A H3c
+     // playmat bands), not integer Wet Mass alone — the same integer mass
+     // can span two classes when fractional positions cross a boundary.
+     // Heaviest position still in each class:
+     //
+     //   step  8 (= WM 1+8/9)  → Wisp upper bound
+     //   step 20 (= WM 4+1/3)  → Probe upper bound
+     //   step 29 (= WM 8)      → Scout upper bound
+     //   step 40 (= WM 16)     → Transport upper bound
+     //   step 56 (= WM 32)     → Tug upper bound (= MAX_WET_MASS)
+     //
+    /** HF4A weight class modifier for a fuel-strip step position
+     *  (0 = WM 1, 56 = WM 32). The chit's actual position on the strip
+     *  determines its class — fractional positions are honoured. */
+    public static int weightClassModForStep(int stepFromMass1) {
+        if (stepFromMass1 <=  8) return +2; // Wisp      (WM ≤ 1+8/9)
+        if (stepFromMass1 <= 20) return +1; // Probe     (WM ≤ 4+1/3)
+        if (stepFromMass1 <= 29) return  0; // Scout     (WM ≤ 8)
+        if (stepFromMass1 <= 40) return -1; // Transport (WM ≤ 16)
+        return -2;                          // Tug       (WM ≤ 32)
     }
 
     /**
-     * Weight class modifier given (dryMass, fuelStepsRemaining). Convenience
-     * wrapper around {@link #wetMassAt} + {@link #weightClassModForWetMass}.
+     * HF4A weight class modifier for a chit sitting at exact integer
+     * Wet Mass. Equivalent to {@code weightClassModForStep(stepsBetween(1, wetMass))}.
+     * Note: classes are defined on fuel-step positions, so this convenience
+     * is only correct when the chit IS at the integer mass — not at a
+     * fractional position past it.
+     */
+    public static int weightClassModForWetMass(int wetMass) {
+        return weightClassModForStep(stepsBetween(MIN_DRY_MASS, wetMass));
+    }
+
+    /**
+     * Weight class modifier given (dryMass, fuelStepsRemaining). The
+     * chit's strip position is {@code dryStep + fuelStepsRemaining};
+     * class is read off that position directly.
      */
     public static int weightClassMod(int dryMass, int fuelStepsRemaining) {
-        return weightClassModForWetMass(wetMassAt(dryMass, fuelStepsRemaining));
+        int dryStep = stepsBetween(MIN_DRY_MASS, dryMass);
+        return weightClassModForStep(dryStep + fuelStepsRemaining);
     }
 
     // -------------------------------------------------------------------------
@@ -189,54 +213,45 @@ public final class FuelStrip {
     // -------------------------------------------------------------------------
 
     /**
-     * For each target weight class below the current one, this array gives
-     * the smallest Wet Mass that's NOT in the target class — i.e. the WM
-     * the chit would sit at immediately after crossing the class's upper
-     * boundary going UP. Pairs with CLASS_TARGET_MOD below.
-     *
-     * <p>Classes: Transport spans WM {4,5}, so entering Transport from Tug
-     * means crossing out of WM=6 (= Tug). Scout is just WM=3, so upper
-     * exclusive is WM=4. Probe is WM=2 → upper exclusive WM=3. Wisp is
-     * WM=1 → upper exclusive WM=2.
+     * Heaviest fuel-strip step position still in each class (Transport,
+     * Scout, Probe, Wisp). Iteration order = lightening: jettisoning to
+     * each successive entry requires more fuel dumped. Tug isn't an
+     * entry — it's the implicit "current class" before any jettison.
      */
-    private static final int[] CLASS_UPPER_EXCLUSIVE = { 6, 4, 3, 2 };
+    private static final int[] CLASS_TOP_STEP = { 40, 29, 20, 8 };
 
     /**
      * The amounts (in fuel steps to jettison) that would each move the chit
      * to a *different* weight class than the current state. Returns at most
      * 4 entries. Empty if no jettison can change the class (e.g. already at
-     * Wisp, or dryMass keeps the class fixed).
+     * Wisp, or dryMass keeps the class fixed because target band requires
+     * lower WM than dryMass itself).
      *
      * <p>Each returned amount is the MINIMUM jettison needed to just cross
-     * into the target class. Jettisoning more within the same class band
-     * is strictly Pareto-dominated (less fuel for no benefit).
-     *
-     * <p>Crucially, the minimum jettison leaves the chit at the TOP of the
-     * target class's fuel-step range, not at the exact WM integer boundary.
-     * For Tug → Wisp with dry=1, fuelSteps=45: the minimum jettison is 37
-     * (leaving 8 fuel-steps, still WM=1 = Wisp), NOT 45 (which would leave
-     * zero fuel — unusable for subsequent burns).
+     * into the target class — i.e. the chit lands on the heaviest position
+     * still in the target class's band. Jettisoning more within the same
+     * band is strictly Pareto-dominated.
      */
     public static int[] jettisonAmountsForClassChange(int dryMass, int fuelStepsRemaining) {
-        int currentMod = weightClassMod(dryMass, fuelStepsRemaining);
+        int dryStep = stepsBetween(MIN_DRY_MASS, dryMass);
+        int currentWetStep = dryStep + fuelStepsRemaining;
+        int currentMod = weightClassModForStep(currentWetStep);
 
-        int[] out = new int[CLASS_UPPER_EXCLUSIVE.length];
+        int[] out = new int[CLASS_TOP_STEP.length];
         int n = 0;
         int lastMod = currentMod;
-        for (int upperExclusive : CLASS_UPPER_EXCLUSIVE) {
-            // If dryMass ≥ upperExclusive, the target class requires WM < dryMass
-            // (impossible — chit can't cross Dry). Skip it.
-            if (upperExclusive <= dryMass) continue;
+        for (int targetTopStep : CLASS_TOP_STEP) {
+            // If dryStep already exceeds the target class's top, the chit
+            // physically can't reach that band (Wet ≥ Dry).
+            if (dryStep > targetTopStep) continue;
 
-            // Max fuel-steps still classified as target class.
-            int upperFuel = stepsBetween(dryMass, upperExclusive) - 1;
-            if (upperFuel >= fuelStepsRemaining) continue; // already in (or below) this class
+            // Already at or below the target band? Skip.
+            if (currentWetStep <= targetTopStep) continue;
 
-            // Weight-class mod of the target class = mod at WM = upperExclusive - 1.
-            int targetMod = weightClassModForWetMass(upperExclusive - 1);
+            int targetMod = weightClassModForStep(targetTopStep);
             if (targetMod == lastMod) continue;
 
-            int jettison = fuelStepsRemaining - upperFuel;
+            int jettison = currentWetStep - targetTopStep;
             out[n++] = jettison;
             lastMod = targetMod;
         }

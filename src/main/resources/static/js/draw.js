@@ -11,6 +11,7 @@
 import { state } from './state.js';
 import { cfgI, cfgF } from './config.js';
 import { weightClassMod, weightClassName } from './fuelStrip.js';
+import { drawFlight } from './flightAnimation.js';
 import { getActiveEndpoint, getActiveRouteIndex, getTreeNodeIds, getPathToRoot } from './routeTree.js';
 import { readSiteFilter } from './siteFilter.js';
 import { rotateAboutCentre } from './rotation.js';
@@ -504,6 +505,11 @@ function drawInner() {
             ctx.stroke();
         }
     }
+
+    // Junker flying sprite — drawn over the route line and start
+    // marker, under the hover indicator dot. No-op when no flight is
+    // active (state.flightAnim == null).
+    drawFlight(ctx);
 
     // Hover indicator dot: marks the route node whose fuel state the
     // panel is currently reading. Driven by fuelStripHoverIndicatorId,

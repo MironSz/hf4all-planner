@@ -14,22 +14,40 @@ export const FUEL_STRIP_INTERVALS = [
 // Used by the endpoint-fuel-strip chit editor mapping.
 export const STRIP_MAX_STEP = 56;
 
-// Mirrors FuelStrip.weightClassModForWetMass on the backend (HF4A H3c).
-export function weightClassMod(wetMass) {
-    if (wetMass <= 1) return +2;
-    if (wetMass === 2) return +1;
-    if (wetMass === 3) return 0;
-    if (wetMass <= 5) return -1;
+// Mirrors FuelStrip.weightClassModForStep on the backend (HF4A H3c).
+// Class boundaries are defined on FUEL-STRIP STEP positions, not just
+// integer Wet Mass — the same integer mass can fall in two classes when
+// the chit is at a fractional position. Heaviest position still in each
+// class:
+//   step  8 (= 1+8/9)  → Wisp upper bound
+//   step 20 (= 4+1/3)  → Probe upper bound
+//   step 29 (= 8)      → Scout upper bound
+//   step 40 (= 16)     → Transport upper bound
+//   step 56 (= 32)     → Tug upper bound
+export function weightClassModForStep(step) {
+    if (step <=  8) return +2;
+    if (step <= 20) return +1;
+    if (step <= 29) return  0;
+    if (step <= 40) return -1;
     return -2;
 }
 
-// HF4A weight class name for a given Wet Mass.
-export function weightClassName(wetMass) {
-    if (wetMass <= 1) return 'Wisp';
-    if (wetMass === 2) return 'Probe';
-    if (wetMass === 3) return 'Scout';
-    if (wetMass <= 5) return 'Transport';
+export function weightClassNameForStep(step) {
+    if (step <=  8) return 'Wisp';
+    if (step <= 20) return 'Probe';
+    if (step <= 29) return 'Scout';
+    if (step <= 40) return 'Transport';
     return 'Tug';
+}
+
+// Convenience: weight class for a chit AT exact integer Wet Mass.
+// Equivalent to {@code weightClassModForStep(massToStripStep(M))}.
+export function weightClassMod(wetMass) {
+    return weightClassModForStep(massToStripStep(wetMass));
+}
+
+export function weightClassName(wetMass) {
+    return weightClassNameForStep(massToStripStep(wetMass));
 }
 
 // Express `fuelSteps` remaining above `dryMass` as

@@ -7,6 +7,7 @@ import { getActiveEndpoint, getActiveRouteIndex, getTreeNodeIds, getPathToRoot }
 import { updateEndpointFuelStrip } from './endpointFuelStripOverlay.js';
 import { draw } from './draw.js';
 import { persistTabs } from './tabs.js';
+import { startFlightAnimation } from './flightAnimation.js';
 
 export function updateRouteInfo() {
     const panel = document.getElementById('route-info');
@@ -72,6 +73,9 @@ export function cycleRoute(delta) {
     updateDebugRoute();
     updateRouteInfo();
     persistTabs();
+    // Replay the flight along the newly-selected route. Internally
+    // no-ops when no endpoint is pinned (hovered cycle stays silent).
+    startFlightAnimation();
 }
 
 // Builds the textual route dump rendered in the debug panel and copied to

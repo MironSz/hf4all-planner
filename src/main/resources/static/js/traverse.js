@@ -10,9 +10,19 @@ import { buildTreeIndex } from './routeTree.js';
 import { draw } from './draw.js';
 import { persistTabs } from './tabs.js';
 import { parseFuelText } from './fuelStrip.js';
+import { updateRouteInfo, updateDebugRoute } from './routeInfo.js';
+import { startFlightAnimation } from './flightAnimation.js';
 
 export function fireTraverse() {
     if (!state.selectedNode) return;
+    // Capture the existing pin + route index BEFORE clearing them so a
+    // refire (settings tweak, share-URL paste, …) can restore the
+    // user's selection if the same endpoint is still reachable in the
+    // new tree. Without this, every refire forces the user to re-click
+    // their endpoint — and a pasted share link would always land on
+    // "no route selected".
+    const intendedPin        = state.pinnedEndpoint;
+    const intendedRouteIndex = state.selectedRouteIndex;
     state.pinnedEndpoint = null;
     state.selectedRouteIndex = 0;
 
@@ -91,7 +101,27 @@ export function fireTraverse() {
         document.getElementById('status').textContent =
                 routeCount + ' reachable sites found in ' + elapsedStr
                 + '. Hover to see routes. [' + data.status + ']';
+
+        // Restore the prior pin + route index when the same endpoint is
+        // still reachable. Route index is clamped against the new pareto
+        // count — a refire with different settings can grow or shrink
+        // the per-endpoint route list.
+        if (intendedPin && data.endpoints && Array.isArray(data.endpoints[intendedPin])) {
+            state.pinnedEndpoint = intendedPin;
+            const cap = Math.max(1, data.endpoints[intendedPin].length);
+            state.selectedRouteIndex = Math.max(0, Math.min(intendedRouteIndex || 0, cap - 1));
+        }
+
         draw();
+        // After a successful pin restore, the sidebar route-info panel
+        // and the on-canvas junker need to refresh against the new tree.
+        // (When no pin is restored, the user can hover/click to engage
+        // the panel as normal — those listeners already trigger refresh.)
+        if (state.pinnedEndpoint) {
+            updateRouteInfo();
+            updateDebugRoute();
+            startFlightAnimation();
+        }
         persistTabs();
     })
     .catch(err => {

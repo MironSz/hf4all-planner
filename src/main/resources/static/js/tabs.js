@@ -16,6 +16,7 @@ import { addEngineBlock } from './engineForm.js';
 import { fireTraverse } from './traverse.js';
 import { draw } from './draw.js';
 import { updateRouteInfo, updateDebugRoute } from './routeInfo.js';
+import { writeShareToUrlFromTab, readShareFromUrl, SHARE_FIELDS } from './urlState.js';
 
 const TABS_STORAGE_KEY     = 'hf4a-tabs';
 const TABS_STORAGE_VERSION = 1;
@@ -266,6 +267,10 @@ export function persistTabs() {
     clearTimeout(persistDebounce);
     persistDebounce = setTimeout(() => {
         if (state.tabsReady) snapshotActiveTabFromDom();
+        // Mirror the active tab's shareable fields into the URL hash so
+        // the address bar is always a paste-able plan link. Cheap when
+        // unchanged (writeShareToUrlFromTab no-ops on identical hash).
+        if (state.activeTab) writeShareToUrlFromTab(state.activeTab.state);
         const payload = {
             version: TABS_STORAGE_VERSION,
             activeTabId: state.activeTab ? state.activeTab.id : null,
@@ -326,6 +331,34 @@ export function initTabs() {
     state.activeTab = null;
     state.tabsReady = true;
     activateTab(target);
+    // If the address bar carries a share hash, override the active tab's
+    // restored state with the pasted plan and refire the traverse. The
+    // share takes precedence over localStorage on purpose — opening a
+    // shared link is meant to show the shared plan, not the recipient's
+    // last-edited one.
+    const share = readShareFromUrl();
+    if (share) applyShareToActiveTab(share);
+}
+
+/**
+ * Slot a decoded share payload (whitelist of SHARE_FIELDS) onto the
+ * active tab and re-render. The traverseResult is dropped so
+ * renderActiveTabToDom() will refire the search locally — recipients
+ * recompute the tree, they don't paste it.
+ *
+ * Called both from initTabs (on page load with `#s=...`) and from a
+ * `hashchange` listener in main.js (live paste into the address bar).
+ */
+export function applyShareToActiveTab(share) {
+    if (!share || !state.activeTab) return;
+    const s = state.activeTab.state;
+    for (const k of SHARE_FIELDS) {
+        if (share[k] !== undefined) s[k] = share[k];
+    }
+    if (s.siteFilter) s.siteFilter = migrateSiteFilter(s.siteFilter);
+    s.traverseResult = null;
+    if (state.mapData && state.imgW) renderActiveTabToDom();
+    persistTabs();
 }
 
 // Wires the static "+" new-tab button. Called once at startup by main.js.

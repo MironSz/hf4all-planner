@@ -8,6 +8,7 @@ import { updateRouteInfo, updateDebugRoute } from './routeInfo.js';
 import { fireTraverse } from './traverse.js';
 import { persistTabs } from './tabs.js';
 import { findHoveredRouteSegment } from './endpointFuelStripOverlay.js';
+import { startFlightAnimation, cancelFlightAnimation } from './flightAnimation.js';
 
 export function initCanvas() {
     state.imgW = state.bgImg.naturalWidth  || cfgI('ui.image.fallback.width',  5000);
@@ -78,6 +79,10 @@ function onCanvasClick(event) {
             updateDebugRoute();
             updateRouteInfo();
             persistTabs();
+            // Kick off the junker flying along the chosen route.
+            // Plays once, stops at the endpoint. Cancelling the pin
+            // (ESC / new start) cancels mid-flight via clearRoutes.
+            startFlightAnimation();
             return;
         }
         return; // click on nothing — ignore (ESC to clear)
@@ -164,6 +169,7 @@ export function clearRoutes() {
     state.traverseResult = null;
     state.treeIndex = null;
     state.reachableNodes = null;
+    cancelFlightAnimation();   // stop junker if mid-flight
     document.getElementById('node-info').textContent = 'Click a node on the map to select start';
     document.getElementById('status').textContent = '';
     draw();

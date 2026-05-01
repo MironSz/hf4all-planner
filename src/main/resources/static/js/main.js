@@ -7,7 +7,8 @@
 import { state, ROTATION_STEP_RAD } from './state.js';
 import { setConfig, applyConfigToForm } from './config.js';
 import { initCanvas, clearRoutes } from './canvas.js';
-import { initTabs, initTabStripButton, persistTabs } from './tabs.js';
+import { initTabs, initTabStripButton, persistTabs, applyShareToActiveTab } from './tabs.js';
+import { readShareFromUrl } from './urlState.js';
 import { fireTraverse } from './traverse.js';
 import { draw } from './draw.js';
 import { updateRouteInfo, updateDebugRoute, cycleRoute, initRouteInfo } from './routeInfo.js';
@@ -19,6 +20,7 @@ import { initHexMask } from './hexMask.js';
 import { loadStripChitCoords, bindStripImg, updateEndpointFuelStrip } from './endpointFuelStripOverlay.js';
 import { setRotation, nudgeRotation } from './rotation.js';
 import { getActiveEndpoint, getTreeNodeIds } from './routeTree.js';
+import { startFlightAnimation } from './flightAnimation.js';
 
 // Capture DOM refs that other modules read off `state`. The IIFE in the
 // original file did this at script-parse time; with `<script type=module>`
@@ -103,6 +105,16 @@ fetch('/api/config')
             });
     });
 
+// Live-paste support: if the user replaces the URL hash in the address
+// bar (or follows a share link in an already-open tab), re-apply the
+// pasted plan onto the active tab. `history.replaceState` writes from
+// our own code don't fire hashchange, so this only catches genuine
+// outside changes.
+window.addEventListener('hashchange', () => {
+    const share = readShareFromUrl();
+    if (share) applyShareToActiveTab(share);
+});
+
 // --- Keyboard #1: ESC clears selection, arrows cycle routes. ---
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
@@ -123,12 +135,14 @@ document.addEventListener('keydown', (e) => {
         updateDebugRoute();
         updateRouteInfo();
         persistTabs();
+        startFlightAnimation();
     } else if (e.key === 'ArrowLeft') {
         state.selectedRouteIndex = (state.selectedRouteIndex - 1 + ids.length) % ids.length;
         draw();
         updateDebugRoute();
         updateRouteInfo();
         persistTabs();
+        startFlightAnimation();
     }
 });
 
