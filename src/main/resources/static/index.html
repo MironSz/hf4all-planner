@@ -97,8 +97,8 @@
             <input type="number" id="dry-mass" value="4" min="1" max="23">
         </div>
         <div>
-            <label>Fuel (0-31): <span class="tip" data-tip="Fuel steps on the Wet-Mass strip above dry mass (0–31). One step is consumed per burn; strip intervals shrink as mass drops. Higher total mass causes smaller thrust.">?</span></label>
-            <input type="number" id="fuel" value="15" min="0" max="31">
+            <label>Fuel: <span class="tip" data-tip="Fuel-strip step distance from Dry to Wet chit. Type a plain integer (5 = 5 fuel steps) OR fractional notation (1+5/6 = 1 mass + 5/6 of the way into the next interval). Drag the chits on the strip to set this visually. The fraction's denominator must match the wet-position interval (2↔3 has 6 sub-steps, 5↔6 has 3, 11↔12+ has none). Higher total mass causes smaller thrust.">?</span></label>
+            <input type="text" id="fuel" value="15" autocomplete="off" inputmode="text">
         </div>
     </div>
 

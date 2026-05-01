@@ -13,10 +13,10 @@ export function setConfig(cfg) {
 }
 
 export function applyConfigToForm() {
+    // Fuel is now a free-form text input ("5", "1+5/6", etc.) — `min`
+    // and `max` no longer apply (parser enforces the strip-step cap).
     const fuel = document.getElementById('fuel');
-    fuel.value = cfgI('ui.fuel.default', 15);
-    fuel.min   = cfgI('ui.fuel.min', 0);
-    fuel.max   = cfgI('ui.fuel.max', 31);
+    fuel.value = String(cfgI('ui.fuel.default', 15));
     const dry = document.getElementById('dry-mass');
     dry.value = cfgI('ui.dry.mass.default', 4);
     dry.min   = cfgI('ui.dry.mass.min', 1);

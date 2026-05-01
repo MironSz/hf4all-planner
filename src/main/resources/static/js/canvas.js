@@ -109,6 +109,10 @@ function onCanvasMouseMove(event) {
         const nodeId = findNearest(event.offsetX, event.offsetY, cfgI('ui.node.click.radius', 40), state.reachableNodes);
         if (nodeId !== state.hoveredNode) {
             state.hoveredNode = nodeId;
+            // Each new hover starts a fresh preview at the best route.
+            // (When pinned, the pinned route's selectedRouteIndex stays
+            // sticky regardless of where the cursor is.)
+            if (!state.pinnedEndpoint) state.selectedRouteIndex = 0;
             needsDraw = true;
             updateDebugRoute();
             updateRouteInfo();

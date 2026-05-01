@@ -19,12 +19,17 @@ class PathfinderTest {
     private static SolarMap map;
 
     /**
-     * Default ship: dryMass=4, fuel=15 (Wet 19, Tug class → -2 thrust mod).
+     * Default ship: dryMass=4, fuelSteps=24 (Wet 19, Tug class → -2 thrust mod).
      * Default engine has baseThrust=5 so net thrust at Tug = 3 — matching the
      * pre-mass-tracking tests that assumed a fixed thrust of 3.
+     *
+     * <p>The {@code fuelSteps=24} is the step count {@code stepsBetween(4, 19)}
+     * (= INTERVALS[4..18] summed). Historically the test seeded with
+     * {@code fuel=15} (water tanks) and let the backend convert; the API
+     * now takes step counts directly.
      */
-    private static final int DEFAULT_DRY  = 4;
-    private static final int DEFAULT_FUEL = 15;
+    private static final int DEFAULT_DRY        = 4;
+    private static final int DEFAULT_FUEL_STEPS = 24;
     private static final EngineSpec DEFAULT_ENGINE = new EngineSpec(5, 2, false, 0);
 
     @BeforeAll
@@ -32,14 +37,13 @@ class PathfinderTest {
         map = MapLoader.loadDefault();
     }
 
-    /** Initial fuel steps the default loadout grants (used to convert
-     *  "steps spent" expectations into "remaining" assertions). */
+    /** Alias preserved for tests that read "initial steps" semantically. */
     private static int defaultInitialSteps() {
-        return FuelStrip.initialFuelSteps(DEFAULT_DRY, DEFAULT_FUEL);
+        return DEFAULT_FUEL_STEPS;
     }
 
     private static TraverseRequest defaultRequest(String startId) {
-        return new TraverseRequest(startId, List.of(DEFAULT_ENGINE), DEFAULT_DRY, DEFAULT_FUEL);
+        return new TraverseRequest(startId, List.of(DEFAULT_ENGINE), DEFAULT_DRY, DEFAULT_FUEL_STEPS);
     }
 
     /**
@@ -104,7 +108,7 @@ class PathfinderTest {
 
         EngineSpec highEngine = new EngineSpec(13, 2, false, 0);
         TraverseRequest highThrust = new TraverseRequest(
-                startId, List.of(highEngine), DEFAULT_DRY, /* fuel = */ 20);
+                startId, List.of(highEngine), DEFAULT_DRY, /* fuelSteps for fuel=20 tanks = */ 29);
 
         TraverseResponse highResponse = Pathfinder.traverse(map, highThrust);
         assertEquals("ok", highResponse.status());
@@ -301,9 +305,9 @@ class PathfinderTest {
     @Test
     void lazyJettisonNeverReducesEndpoints() {
         TraverseRequest noJet = new TraverseRequest(
-                "334", List.of(DEFAULT_ENGINE), DEFAULT_DRY, DEFAULT_FUEL, false, false);
+                "334", List.of(DEFAULT_ENGINE), DEFAULT_DRY, DEFAULT_FUEL_STEPS, false, false);
         TraverseRequest withJet = new TraverseRequest(
-                "334", List.of(DEFAULT_ENGINE), DEFAULT_DRY, DEFAULT_FUEL, false, true);
+                "334", List.of(DEFAULT_ENGINE), DEFAULT_DRY, DEFAULT_FUEL_STEPS, false, true);
 
         TraverseResponse rNo = Pathfinder.traverse(map, noJet);
         TraverseResponse rJet = Pathfinder.traverse(map, withJet);
@@ -326,7 +330,7 @@ class PathfinderTest {
     void lazyJettisonProducesNoEventsWhenNotNeeded() {
         EngineSpec overpowered = new EngineSpec(30, 2, false, 0);
         TraverseRequest req = new TraverseRequest(
-                "334", List.of(overpowered), DEFAULT_DRY, DEFAULT_FUEL, false, true);
+                "334", List.of(overpowered), DEFAULT_DRY, DEFAULT_FUEL_STEPS, false, true);
         TraverseResponse r = Pathfinder.traverse(map, req);
         assertEquals("ok", r.status());
 
@@ -376,9 +380,9 @@ class PathfinderTest {
         EngineSpec noAb = new EngineSpec(5, 2, 1, false, 0, 0, 0);
         EngineSpec withAb = new EngineSpec(5, 2, 1, false, 0, 1, 1);
         TraverseResponse rNo = Pathfinder.traverse(map,
-                new TraverseRequest("334", List.of(noAb), DEFAULT_DRY, DEFAULT_FUEL, false, false));
+                new TraverseRequest("334", List.of(noAb), DEFAULT_DRY, DEFAULT_FUEL_STEPS, false, false));
         TraverseResponse rAb = Pathfinder.traverse(map,
-                new TraverseRequest("334", List.of(withAb), DEFAULT_DRY, DEFAULT_FUEL, false, false));
+                new TraverseRequest("334", List.of(withAb), DEFAULT_DRY, DEFAULT_FUEL_STEPS, false, false));
         assertEquals("ok", rNo.status());
         assertEquals("ok", rAb.status());
         assertTrue(rAb.endpoints().size() >= rNo.endpoints().size(),
@@ -395,7 +399,7 @@ class PathfinderTest {
     void afterburnedHereOnlyOnTurnStart() {
         EngineSpec eng = new EngineSpec(5, 2, 1, false, 0, 1, 1);
         TraverseResponse r = Pathfinder.traverse(map,
-                new TraverseRequest("334", List.of(eng), DEFAULT_DRY, DEFAULT_FUEL, false, true));
+                new TraverseRequest("334", List.of(eng), DEFAULT_DRY, DEFAULT_FUEL_STEPS, false, true));
         assertEquals("ok", r.status());
 
         // Within any single turn, at most ONE PathNode in any root-to-endpoint
@@ -456,7 +460,7 @@ class PathfinderTest {
         // change the fuel deduction WOULD imply if it fed back.
         EngineSpec eng = new EngineSpec(5, 2, 1, false, 0, 4, 1);
         TraverseResponse r = Pathfinder.traverse(map,
-                new TraverseRequest("334", List.of(eng), DEFAULT_DRY, DEFAULT_FUEL, false, false));
+                new TraverseRequest("334", List.of(eng), DEFAULT_DRY, DEFAULT_FUEL_STEPS, false, false));
         assertEquals("ok", r.status());
         // Find any AB-bearing node and verify gain == 1 (engine config),
         // not 2 (which would happen if the fuel deduction stacked another
@@ -497,10 +501,12 @@ class PathfinderTest {
         // The +2 difference unlocks any size-3 / size-4 sites that the +1 variant misses.
         EngineSpec hf4a = new EngineSpec(4, 2, 1, false, 0, 1, 1);
         EngineSpec tw   = new EngineSpec(4, 2, 1, false, 0, 1, 3);
+        // dry=1, fuel=20 tanks → fuelSteps = stepsBetween(1, 21) = 45.
+        final int FUEL_STEPS_DRY1_FUEL20 = 45;
         TraverseResponse rHf  = Pathfinder.traverse(map,
-                new TraverseRequest("334", List.of(hf4a), 1, 20, false, false));
+                new TraverseRequest("334", List.of(hf4a), 1, FUEL_STEPS_DRY1_FUEL20, false, false));
         TraverseResponse rTw  = Pathfinder.traverse(map,
-                new TraverseRequest("334", List.of(tw),   1, 20, false, false));
+                new TraverseRequest("334", List.of(tw),   1, FUEL_STEPS_DRY1_FUEL20, false, false));
         assertEquals("ok", rHf.status());
         assertEquals("ok", rTw.status());
         assertTrue(rTw.endpoints().size() >= rHf.endpoints().size(),
@@ -519,7 +525,7 @@ class PathfinderTest {
         // baseThrust=30 → trivially clears every gate; AB is always wasted.
         EngineSpec overpowered = new EngineSpec(30, 2, 1, false, 0, 1, 1);
         TraverseResponse r = Pathfinder.traverse(map,
-                new TraverseRequest("334", List.of(overpowered), DEFAULT_DRY, DEFAULT_FUEL, false, false));
+                new TraverseRequest("334", List.of(overpowered), DEFAULT_DRY, DEFAULT_FUEL_STEPS, false, false));
         assertEquals("ok", r.status());
 
         int abNodes = 0;

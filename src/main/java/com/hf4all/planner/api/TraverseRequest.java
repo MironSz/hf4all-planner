@@ -8,12 +8,18 @@ import java.util.List;
  * <ul>
  *   <li>{@code dryMass} — sum of card + cargo masses (the Dry Mass chit
  *       position on the fuel strip; range 1..23).</li>
- *   <li>{@code fuel} — number of water tanks loaded (red-line steps);
- *       starting Wet Mass = {@code dryMass + fuel}, capped at 32.</li>
+ *   <li>{@code fuelSteps} — fuel-strip step count between the Dry and
+ *       Wet chits (i.e. {@code wetStep - dryStep} on the black line).
+ *       Already in the planner's internal unit, no conversion needed.
+ *       Caller validates the wet position lies on the strip
+ *       ({@code wetStep ≤ 56}, equivalently
+ *       {@code stepsBetween(1, dryMass) + fuelSteps ≤ 56}).</li>
  * </ul>
  *
- * <p>The planner converts these into a {@code fuelStepsRemaining} count
- * via the (non-linear) {@link com.hf4all.planner.model.FuelStrip}.
+ * <p>Historically this field was {@code fuel} (number of water tanks
+ * loaded, red-line). It got renamed when the front-end started supporting
+ * fractional Wet Mass positions (e.g. {@code 2+5/6}); the strip's step
+ * count is the natural shared unit between client and server.
  *
  * <p>{@code allowFuelJettison} enables the turn-start jettison branching
  * described in HF4A rules F3d / G1f: dumping fuel to drop into a lighter
@@ -25,12 +31,12 @@ public record TraverseRequest(
     String startNodeId,
     List<EngineSpec> engines,
     int dryMass,
-    int fuel,
+    int fuelSteps,
     boolean disableVenusFlyby,
     boolean allowFuelJettison
 ) {
     /** Convenience constructor: defaults flags to false. */
-    public TraverseRequest(String startNodeId, List<EngineSpec> engines, int dryMass, int fuel) {
-        this(startNodeId, engines, dryMass, fuel, false, false);
+    public TraverseRequest(String startNodeId, List<EngineSpec> engines, int dryMass, int fuelSteps) {
+        this(startNodeId, engines, dryMass, fuelSteps, false, false);
     }
 }

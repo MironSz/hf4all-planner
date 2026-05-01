@@ -58,15 +58,16 @@ export function updateRouteInfo() {
 }
 
 // Arrow clicks mirror the ArrowLeft/ArrowRight key behavior: cycle the
-// selected Pareto route for the active endpoint, pinning the endpoint if
-// it was only hovered.
+// selected Pareto route for the active endpoint. Pin status is preserved —
+// hovered routes stay hovered, pinned routes stay pinned. (See
+// routeTree.js getActiveRouteIndex / canvas.js onCanvasMouseMove for the
+// per-hover index reset that makes this work.)
 export function cycleRoute(delta) {
     const active = getActiveEndpoint();
     if (!active) return;
     const ids = getTreeNodeIds(active);
     if (!ids || ids.length <= 1) return;
     state.selectedRouteIndex = (state.selectedRouteIndex + delta + ids.length) % ids.length;
-    if (!state.pinnedEndpoint) state.pinnedEndpoint = active;
     draw();
     updateDebugRoute();
     updateRouteInfo();
@@ -86,7 +87,7 @@ function buildRouteDetailText() {
     // Ship config — read fresh from DOM so the dump matches the current
     // form values (these are also what the last /api/traverse used).
     const dryMass = parseInt(document.getElementById('dry-mass').value) || 0;
-    const fuel    = parseInt(document.getElementById('fuel').value)     || 0;
+    const fuelText = document.getElementById('fuel').value;
     const engines = Array.from(document.querySelectorAll('.engine-block')).map(b => ({
         baseThrust:   parseInt(b.querySelector('.e-base-thrust').value) || 0,
         fuel:         parseInt(b.querySelector('.e-fuel').value)        || 0,
@@ -106,7 +107,7 @@ function buildRouteDetailText() {
         `Route ${idx + 1}/${treeNodeIds.length}`,
         `Start:  ${labelOf(state.selectedNode)}`,
         `End:    ${labelOf(active)}`,
-        `Mass:   dry=${dryMass}, fuel=${fuel}`,
+        `Mass:   dry=${dryMass}, fuel=${fuelText}`,
         `Engines (${engines.length}):`,
         ...engines.map((e, i) =>
             `  e${i + 1}: thrust=${e.baseThrust}, fuel/burn=${e.fuel}, pivots=${e.pivots}` +

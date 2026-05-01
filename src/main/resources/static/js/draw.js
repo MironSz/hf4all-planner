@@ -3,12 +3,31 @@
 // handlers. Other modules (currently just hexMask) push hooks into
 // state.drawHooks; we flush them at the end so the previous behaviour of
 // the monkey-patched draw() is preserved.
+//
+// While a route is shown, the dash pattern on each segment animates to
+// indicate travel direction (forward = dashes flow start→end). This
+// requires re-running draw() at frame rate, which is driven by a
+// self-perpetuating rAF tick that auto-stops once no route is active.
 import { state } from './state.js';
-import { cfgI } from './config.js';
+import { cfgI, cfgF } from './config.js';
 import { weightClassMod, weightClassName } from './fuelStrip.js';
 import { getActiveEndpoint, getActiveRouteIndex, getTreeNodeIds, getPathToRoot } from './routeTree.js';
 import { readSiteFilter } from './siteFilter.js';
 import { rotateAboutCentre } from './rotation.js';
+
+// rAF-driven animation tick. Single-flight via animRafId; draw() arms it
+// at the end of each render when a route is active, animTick re-arms via
+// draw(); both stop the moment getActiveEndpoint() goes null.
+let animRafId = null;
+function ensureRouteAnimation() {
+    if (animRafId !== null) return;
+    animRafId = requestAnimationFrame(routeAnimTick);
+}
+function routeAnimTick() {
+    animRafId = null;
+    if (!getActiveEndpoint()) return; // route gone — let the chain end
+    draw();                           // re-renders with new dash offset
+}
 
 export function draw() {
     drawInner();
@@ -17,6 +36,8 @@ export function draw() {
     // updateHexMasks unconditionally — including when the inner draw
     // bailed out via an early return.
     for (const hook of state.drawHooks) hook();
+    // Keep the marching-dash animation running while a route is shown.
+    if (getActiveEndpoint()) ensureRouteAnimation();
 }
 
 function drawInner() {
@@ -73,25 +94,50 @@ function drawInner() {
             // is traversed across multiple turns, each turn gets its own
             // parallel line (offset perpendicular to the edge) instead of
             // overdrawing a single colored line.
+            //
+            // Each turn entry is {turn, forward}: `forward` is true when the
+            // player travelled from the entry's `a` (lex-smaller endpoint) to
+            // `b`, false when they went the other way. The dash flow direction
+            // below uses this to decide the sign of lineDashOffset.
             const segmentsByEdge = new Map();
             for (let i = 1; i < pathNodes.length; i++) {
-                const a = pathNodes[i - 1].nodeId;
-                const b = pathNodes[i].nodeId;
-                const key = a < b ? a + '|' + b : b + '|' + a;
+                const from = pathNodes[i - 1].nodeId;
+                const to   = pathNodes[i].nodeId;
+                const key = from < to ? from + '|' + to : to + '|' + from;
                 const turn = pathNodes[i].turns;
                 if (!segmentsByEdge.has(key)) {
+                    const a = from < to ? from : to;
+                    const b = from < to ? to   : from;
                     segmentsByEdge.set(key, { a, b, turns: [] });
                 }
                 const entry = segmentsByEdge.get(key);
+                const forward = (from === entry.a);
                 // De-dupe identical (edge, turn) pairs — a single turn can
                 // produce only one directed traversal per edge in a valid
                 // path, but guard anyway.
-                if (!entry.turns.includes(turn)) entry.turns.push(turn);
+                if (!entry.turns.find(t => t.turn === turn)) {
+                    entry.turns.push({ turn, forward });
+                }
             }
 
             const lineWidth = cfgI('ui.route.line.width', 8);
             const spacing = cfgI('ui.route.line.spacing', 9); // perpendicular gap between parallel lines
             ctx.lineWidth = lineWidth;
+
+            // Marching-dash animation: dashes flow in the player's direction
+            // of travel along each segment (start → end). Cyclic offset based
+            // on performance.now() so the redraw frequency doesn't matter.
+            // Convention: increasing lineDashOffset shifts the pattern toward
+            // the line's start, so the visible flow is end → start. We want
+            //   forward (a → b drawn a → b on screen): flow points to end → use NEGATIVE offset
+            //   backward (b → a drawn a → b on screen): flow points to start → use POSITIVE offset
+            const dashLen = cfgI('ui.route.dash.len', 12);
+            const gapLen  = cfgI('ui.route.gap.len',  8);
+            const flowSpeed = cfgF('ui.route.flow.px.per.sec', 30);
+            const dashCycle = dashLen + gapLen;
+            const flow = (performance.now() / 1000 * flowSpeed) % dashCycle;
+            ctx.setLineDash([dashLen, gapLen]);
+
             // Capture every parallel-offset route line as we draw it, so
             // the segment-label placer below can avoid painting over them.
             const routeLines = [];
@@ -103,21 +149,49 @@ function drawInner() {
                 const x2 = pb.x * imgW, y2 = pb.y * imgH;
                 const dx = x2 - x1, dy = y2 - y1;
                 const len = Math.hypot(dx, dy) || 1;
-                // Unit perpendicular vector
+                // Unit perpendicular: in screen coords (y growing down) this
+                // points to the RIGHT of the canonical a → b direction.
                 const px = -dy / len, py = dx / len;
-                turns.sort((u, v) => u - v);
-                const n = turns.length;
-                for (let k = 0; k < n; k++) {
-                    const offset = (k - (n - 1) / 2) * spacing;
-                    const ox = px * offset, oy = py * offset;
-                    ctx.strokeStyle = turnColors[(turns[k] - 1) % turnColors.length];
+
+                const drawOne = (t, signedOffset) => {
+                    const ox = px * signedOffset, oy = py * signedOffset;
+                    ctx.strokeStyle = turnColors[(t.turn - 1) % turnColors.length];
+                    ctx.lineDashOffset = t.forward ? -flow : flow;
                     ctx.beginPath();
                     ctx.moveTo(x1 + ox, y1 + oy);
                     ctx.lineTo(x2 + ox, y2 + oy);
                     ctx.stroke();
                     routeLines.push({ x1: x1 + ox, y1: y1 + oy, x2: x2 + ox, y2: y2 + oy });
+                };
+
+                // Side-of-travel convention (right-hand traffic): each line
+                // sits on the RIGHT of its own travel direction. So:
+                //   - Forward turns (a → b in canonical orientation) use
+                //     POSITIVE offsets along (px, py)  → right of canonical.
+                //   - Backward turns (b → a) use NEGATIVE offsets → right of
+                //     their own travel direction (= left of canonical).
+                // This keeps a there-and-back pair consistently splayed
+                // ("two cars passing on a road") regardless of whether the
+                // outbound or return trip happened first in turn order.
+                //
+                // When the edge is traversed in only ONE direction (any
+                // multiplicity) we centre the bundle on the canonical line
+                // for readability — there's no opposing traffic to avoid.
+                const forwards  = turns.filter(t => t.forward).sort((u, v) => u.turn - v.turn);
+                const backwards = turns.filter(t => !t.forward).sort((u, v) => u.turn - v.turn);
+                if (forwards.length > 0 && backwards.length > 0) {
+                    forwards .forEach((t, i) => drawOne(t, +spacing * (0.5 + i)));
+                    backwards.forEach((t, i) => drawOne(t, -spacing * (0.5 + i)));
+                } else {
+                    const all = forwards.length > 0 ? forwards : backwards;
+                    const n = all.length;
+                    all.forEach((t, k) => drawOne(t, (k - (n - 1) / 2) * spacing));
                 }
             }
+            // Reset dash state so connector lines below + any other strokes
+            // outside this block stay solid.
+            ctx.setLineDash([]);
+            ctx.lineDashOffset = 0;
 
             // --- Engine-segment labels ---
             // A "segment" is a contiguous run of moves within a single turn

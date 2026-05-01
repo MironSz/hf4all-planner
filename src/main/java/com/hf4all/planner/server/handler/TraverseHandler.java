@@ -77,14 +77,20 @@ public final class TraverseHandler implements HttpHandler {
         }
         int minFuel = Config.fuelMin();
         int maxFuel = Config.requestMaxFuel();
-        if (request.fuel() < minFuel || request.fuel() > maxFuel) {
-            return "fuel must be between " + minFuel + " and " + maxFuel;
+        if (request.fuelSteps() < minFuel || request.fuelSteps() > maxFuel) {
+            return "fuelSteps must be between " + minFuel + " and " + maxFuel;
         }
-        // Wet Mass cap (HF4A F3a). Caught again inside Pathfinder, but a
-        // friendlier 400 here than burying the error in a 200 response body.
-        int wet = request.dryMass() + request.fuel();
-        if (wet > 32) {
-            return "wetMass (dryMass + fuel) = " + wet + " exceeds the 32 cap (HF4A F3a)";
+        // Wet-step cap. The Wet chit must land on the 57-position fuel
+        // strip; equivalently the wet integer mass cannot exceed 32 (HF4A F3a).
+        // Caught again inside Pathfinder, but a friendlier 400 here than
+        // burying the error in a 200 response body.
+        int dryStep = com.hf4all.planner.model.FuelStrip.stepsBetween(1, request.dryMass());
+        int wetStep = dryStep + request.fuelSteps();
+        int totalSteps = com.hf4all.planner.model.FuelStrip.stepsBetween(
+                1, com.hf4all.planner.model.FuelStrip.MAX_WET_MASS);
+        if (wetStep > totalSteps) {
+            return "wetStep (dryStep + fuelSteps) = " + wetStep
+                    + " exceeds the " + totalSteps + "-step strip cap (HF4A F3a)";
         }
         return null;
     }

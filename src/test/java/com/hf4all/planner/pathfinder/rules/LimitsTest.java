@@ -47,21 +47,24 @@ class LimitsTest {
     }
 
     /**
-     * No endpoint's {@code fuelSpent} may exceed the configured fuel budget.
-     * Run with {@code fuel=5} and assert every tree node stays within.
+     * No endpoint's {@code fuelSpent} may exceed the configured fuel-step
+     * budget. Run with a small fuelSteps value and assert every tree node
+     * stays within.
      */
     @Test
     void maxFuelBudgetRespected() {
         SolarMap sub = MapSubgraph.extract(fullMap, "334", 4);
 
         EngineSpec engine = new EngineSpec(5, 2, false, 0);
-        int fuel = 5;
-        TraverseResponse r = traverse(sub, "334", engine, fuel);
+        // Old test: fuel=5 tanks at dry=4 → 12 fuel-steps. Preserved
+        // semantically so reachability scenarios match the prior pass.
+        int fuelSteps = 12;
+        TraverseResponse r = traverse(sub, "334", engine, fuelSteps);
         assertEquals("ok", r.status());
 
         int worst = maxFuelInTree(r.tree());
-        assertTrue(worst <= fuel,
-                "no tree node may exceed the fuel budget (" + fuel + "); saw " + worst);
+        assertTrue(worst <= fuelSteps,
+                "no tree node may exceed the fuel-step budget (" + fuelSteps + "); saw " + worst);
     }
 
     // --- tree traversal helpers ---------------------------------------

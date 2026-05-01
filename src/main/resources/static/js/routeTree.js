@@ -77,8 +77,13 @@ export function getTreeNodeIds(nodeId) {
     return unique;
 }
 
+// Active route index — always returns state.selectedRouteIndex.
+//
+// For hovered (un-pinned) endpoints we used to hard-return 0 here, which
+// meant arrow keys couldn't drive the preview without first pinning. The
+// hover-driven reset to 0 now lives in onCanvasMouseMove (so a fresh
+// hover still starts at the best route), and arrow keys can cycle freely
+// without changing pin status.
 export function getActiveRouteIndex() {
-    const active = getActiveEndpoint();
-    if (active === state.pinnedEndpoint) return state.selectedRouteIndex;
-    return 0; // hover always shows first route
+    return state.selectedRouteIndex;
 }

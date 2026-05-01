@@ -29,7 +29,7 @@ import java.util.List;
  *   <li>Two engines: a high-thrust chemical + a fuel-efficient solar, so the
  *       search exercises both the weight-class-modifier code path and the
  *       solar-zone code path.</li>
- *   <li>Mass / fuel: {@link #DRY_MASS} / {@link #FUEL_TANKS}.</li>
+ *   <li>Mass / fuel: {@link #DRY_MASS} / {@link #FUEL_STEPS}.</li>
  *   <li>{@code allowFuelJettison = true} so the lazy-jettison branching is
  *       also measured.</li>
  * </ul>
@@ -52,7 +52,9 @@ public final class BenchmarkRun {
 
     private static final String START_NODE_ID = "334";
     private static final int    DRY_MASS      = 4;
-    private static final int    FUEL_TANKS    = 20;
+    /** Fuel-strip step count between Dry and Wet chits. dry=4, fuelSteps=29
+     *  ≡ wet=24, the same effective ship as fuel=20 tanks pre-rename. */
+    private static final int    FUEL_STEPS    = 29;
 
     /** High-thrust chemical engine: fast, burns fuel quickly. */
     private static final EngineSpec ENGINE_CHEMICAL =
@@ -90,7 +92,7 @@ public final class BenchmarkRun {
                 START_NODE_ID,
                 List.of(ENGINE_CHEMICAL, ENGINE_SOLAR),
                 DRY_MASS,
-                FUEL_TANKS,
+                FUEL_STEPS,
                 DISABLE_VENUS_FLYBY,
                 ALLOW_FUEL_JETTISON);
 
@@ -119,7 +121,7 @@ public final class BenchmarkRun {
         System.out.println("Benchmark complete");
         System.out.println("  start         = " + START_NODE_ID);
         System.out.println("  engines       = " + ENGINE_CHEMICAL + " + " + ENGINE_SOLAR);
-        System.out.println("  dry/fuel      = " + DRY_MASS + "/" + FUEL_TANKS);
+        System.out.println("  dry/fuelSteps = " + DRY_MASS + "/" + FUEL_STEPS);
         System.out.println("  jettison      = " + ALLOW_FUEL_JETTISON);
         System.out.println("  elapsed       = " + elapsedMs + " ms");
         System.out.println("  tree nodes    = " + treeNodes);

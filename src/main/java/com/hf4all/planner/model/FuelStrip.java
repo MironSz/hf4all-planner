@@ -103,6 +103,28 @@ public final class FuelStrip {
     }
 
     /**
+     * Validates a request specified directly in fuel-strip steps. Enforces
+     * the strip's geometry: the Wet chit (at {@code dryStep + fuelSteps})
+     * must land inside [0, 56].
+     *
+     * @throws IllegalArgumentException if either bound is violated
+     */
+    public static void validateFuelSteps(int dryMass, int fuelSteps) {
+        if (dryMass < MIN_DRY_MASS || dryMass > MAX_DRY_MASS) {
+            throw new IllegalArgumentException("dryMass out of range: " + dryMass);
+        }
+        if (fuelSteps < 0) throw new IllegalArgumentException("fuelSteps must be >= 0");
+        int dryStep = stepsBetween(MIN_DRY_MASS, dryMass);
+        int wetStep = dryStep + fuelSteps;
+        int totalSteps = stepsBetween(MIN_DRY_MASS, MAX_WET_MASS);
+        if (wetStep > totalSteps) {
+            throw new IllegalArgumentException(
+                    "wetStep " + wetStep + " exceeds total fuel-strip steps " + totalSteps
+                  + " (dryMass=" + dryMass + ", fuelSteps=" + fuelSteps + ")");
+        }
+    }
+
+    /**
      * Integer Wet Mass position the chit sits at (or just past), given the
      * Dry Mass and the chit's current fuel-step distance above Dry Mass.
      *

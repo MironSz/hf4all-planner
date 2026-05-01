@@ -36,7 +36,7 @@ class ErrorHandlingTest {
         TraverseRequest req = new TraverseRequest(
                 "this-node-does-not-exist",
                 List.of(new EngineSpec(5, 2, false, 0)),
-                4, 20);
+                4, 29);
 
         TraverseResponse r = Pathfinder.traverse(sub, req);
 
@@ -48,7 +48,7 @@ class ErrorHandlingTest {
 
     @Test
     void emptyEngineListReturnsError() {
-        TraverseRequest req = new TraverseRequest("334", List.of(), 4, 20);
+        TraverseRequest req = new TraverseRequest("334", List.of(), 4, 29);
 
         TraverseResponse r = Pathfinder.traverse(sub, req);
 

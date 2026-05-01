@@ -9,6 +9,7 @@ import { state } from './state.js';
 import { buildTreeIndex } from './routeTree.js';
 import { draw } from './draw.js';
 import { persistTabs } from './tabs.js';
+import { parseFuelText } from './fuelStrip.js';
 
 export function fireTraverse() {
     if (!state.selectedNode) return;
@@ -36,11 +37,20 @@ export function fireTraverse() {
         return;
     }
 
+    // Fuel field is now free-form text supporting "5", "1+5/6", "0+3/4",
+    // etc. Parse against the current dryMass; on parse failure we send 0
+    // and let the UI's red-border affordance show the error (the field's
+    // own input handler does that).
+    const dryMass = parseInt(document.getElementById('dry-mass').value) || 0;
+    const fuelText = document.getElementById('fuel').value;
+    const parsed = parseFuelText(fuelText, dryMass);
+    const fuelSteps = parsed.ok ? parsed.fuelSteps : 0;
+
     const request = {
         startNodeId: state.selectedNode,
         engines: engines,
-        dryMass: parseInt(document.getElementById('dry-mass').value) || 0,
-        fuel: parseInt(document.getElementById('fuel').value) || 0,
+        dryMass: dryMass,
+        fuelSteps: fuelSteps,
         disableVenusFlyby: document.getElementById('no-venus-cb').checked,
         allowFuelJettison: document.getElementById('allow-jettison-cb').checked
     };

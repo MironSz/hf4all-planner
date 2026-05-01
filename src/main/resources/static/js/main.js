@@ -109,17 +109,18 @@ document.addEventListener('keydown', (e) => {
     if (!active) return;
     const ids = getTreeNodeIds(active);
     if (!ids || ids.length <= 1) return;
+    // Arrow keys cycle the selected pareto route. They DON'T pin a hovered
+    // endpoint — pin status is preserved as-is. Moving the cursor to a
+    // different reachable node resets selectedRouteIndex back to 0 (handled
+    // in onCanvasMouseMove).
     if (e.key === 'ArrowRight') {
         state.selectedRouteIndex = (state.selectedRouteIndex + 1) % ids.length;
-        // pin if we're cycling via arrows on a hovered (non-pinned) node
-        if (!state.pinnedEndpoint) { state.pinnedEndpoint = active; }
         draw();
         updateDebugRoute();
         updateRouteInfo();
         persistTabs();
     } else if (e.key === 'ArrowLeft') {
         state.selectedRouteIndex = (state.selectedRouteIndex - 1 + ids.length) % ids.length;
-        if (!state.pinnedEndpoint) { state.pinnedEndpoint = active; }
         draw();
         updateDebugRoute();
         updateRouteInfo();

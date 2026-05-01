@@ -91,14 +91,13 @@ public final class Pathfinder {
         if (request.engines() == null || request.engines().isEmpty()) {
             return error(request.startNodeId(), "at least one engine required");
         }
-        int initialSteps;
         try {
-            initialSteps = FuelStrip.initialFuelSteps(request.dryMass(), request.fuel());
+            FuelStrip.validateFuelSteps(request.dryMass(), request.fuelSteps());
         } catch (IllegalArgumentException e) {
             return error(request.startNodeId(), e.getMessage());
         }
         return new Pathfinder(map, request.engines(),
-                request.dryMass(), initialSteps,
+                request.dryMass(), request.fuelSteps(),
                 request.disableVenusFlyby(), request.allowFuelJettison()).run(start);
     }
 

@@ -17,8 +17,14 @@
 // =====================================================================
 import { state } from './state.js';
 import { cfgI } from './config.js';
-import { STRIP_MAX_STEP, massToStripStep } from './fuelStrip.js';
+import { STRIP_MAX_STEP, massToStripStep, parseFuelText, formatFuelSteps,
+         INTEGER_MASS_STEPS } from './fuelStrip.js';
 import { getTreeNodeIds, getPathToRoot } from './routeTree.js';
+import { fireTraverse } from './traverse.js';
+import { persistTabs } from './tabs.js';
+
+// Drag state for chit dragging — null when not dragging.
+let chitDrag = null;   // { which: 'dry'|'wet', startX, startY }
 
 let stripChitCoords = null;          // { stepIndex: {x, y} }, x/y in [0,1]
 let stripImgNaturalSize = null;      // { w, h } once the bg image loads
@@ -205,14 +211,14 @@ export function updateEndpointFuelStrip() {
     if (targetPathNode) {
         wetStep = dryStep + (targetPathNode.fuelStepsRemaining || 0);
     } else {
-        // Fallback: render the user's form-input initial state — Dry
-        // chit at dryMass, Wet chit at dryMass + fuel (in tanks/red-line
-        // steps, converted to fuel-strip steps). Useful before any
-        // start node is picked, or when nothing is hovered/pinned.
-        const fuel = parseInt(document.getElementById('fuel').value)
-                  || cfgI('ui.fuel.default', 15);
-        const wetMass = Math.min(32, dryMass + Math.max(0, fuel));
-        wetStep = massToStripStep(wetMass);
+        // Fallback: render the user's form-input initial state. The Fuel
+        // field is now free-form ("5", "1+5/6", etc.) — parse it via the
+        // shared helper. On parse failure (text invalid, denom mismatch),
+        // treat as zero so we still render the Dry chit.
+        const fuelText = document.getElementById('fuel').value;
+        const parsed = parseFuelText(fuelText, dryMass);
+        const fuelSteps = parsed.ok ? parsed.fuelSteps : 0;
+        wetStep = dryStep + fuelSteps;
     }
     // Clamp wet step to MAX (TODO: replace with explicit input validation
     // — currently dryMass + fuel > 32 is rejected by the backend, so
@@ -236,12 +242,12 @@ export function updateEndpointFuelStrip() {
     const svg = document.getElementById('endpoint-strip-svg');
     if (!svg) { setFuelStripVisible(false); return; }
     svg.innerHTML =
-        `<circle class="endpoint-chit-circle wet"
+        `<circle class="endpoint-chit-circle wet" data-chit="wet" data-step="${wetStep}"
                  cx="${wetCoord.x * W}" cy="${wetCoord.y * H}" r="${r}"/>
          <text class="endpoint-chit-label"
                x="${wetCoord.x * W}" y="${wetCoord.y * H}"
                font-size="${fontSize}">Wet</text>
-         <circle class="endpoint-chit-circle dry"
+         <circle class="endpoint-chit-circle dry" data-chit="dry" data-step="${dryStep}"
                  cx="${dryCoord.x * W + dx}" cy="${dryCoord.y * H}" r="${r}"/>
          <text class="endpoint-chit-label"
                x="${dryCoord.x * W + dx}" y="${dryCoord.y * H}"
@@ -251,3 +257,137 @@ export function updateEndpointFuelStrip() {
     // compute per-frame. Just reveal it.
     setFuelStripVisible(true);
 }
+
+// ---- Drag-to-edit ----------------------------------------------------
+//
+// Both Dry and Wet chits are draggable. Dry snaps only to integer-mass
+// steps (per HF4A F2 — Dry Mass is always integer). Wet snaps to any
+// recorded chit coordinate. Constraints:
+//
+//   - Wet step ≥ Dry step (drag stops at the boundary; cursor can keep
+//     moving but the chit doesn't).
+//   - The snapped step must have a placed coordinate in chits-edited.json.
+//
+// Continuous chit motion during drag updates the form fields live AND
+// re-renders the strip via updateEndpointFuelStrip. /api/traverse only
+// fires once on mouseup, so the planner runs at most one search per
+// drag interaction.
+
+function panelToImageCoords(clientX, clientY) {
+    if (!stripImgNaturalSize) return null;
+    const overlay = document.getElementById('endpoint-fuel-strip');
+    const img = document.getElementById('endpoint-strip-bg');
+    if (!overlay || !img) return null;
+    const rect = img.getBoundingClientRect();
+    const sx = (clientX - rect.left) / rect.width  * stripImgNaturalSize.w;
+    const sy = (clientY - rect.top)  / rect.height * stripImgNaturalSize.h;
+    return { x: sx, y: sy };
+}
+
+function nearestSnapStep(imgX, imgY, which, currentDryStep, currentWetStep) {
+    if (!stripChitCoords || !stripImgNaturalSize) return null;
+    // Candidate steps: Dry can only land on integer-mass positions; Wet
+    // on any of the 57. Constraint: dryStep ≤ wetStep always.
+    const allSteps = [];
+    if (which === 'dry') {
+        for (const s of INTEGER_MASS_STEPS) {
+            if (s <= currentWetStep) allSteps.push(s);
+        }
+    } else {
+        for (let s = currentDryStep; s <= STRIP_MAX_STEP; s++) {
+            allSteps.push(s);
+        }
+    }
+    let bestStep = null, bestDistSq = Infinity;
+    const W = stripImgNaturalSize.w, H = stripImgNaturalSize.h;
+    for (const s of allSteps) {
+        const c = stripChitCoords[s];
+        if (!c) continue;
+        const cx = c.x * W, cy = c.y * H;
+        const dx = imgX - cx, dy = imgY - cy;
+        const dSq = dx * dx + dy * dy;
+        if (dSq < bestDistSq) { bestDistSq = dSq; bestStep = s; }
+    }
+    return bestStep;
+}
+
+/** dryStep that corresponds to a given integer-mass step. Reverse of
+ *  massToStripStep. Walks INTEGER_MASS_STEPS to find the matching mass. */
+function stepToIntegerMass(step) {
+    for (let m = 1; m <= 32; m++) {
+        if (INTEGER_MASS_STEPS[m - 1] === step) return m;
+    }
+    return null;
+}
+
+function onChitMouseDown(e) {
+    const target = e.target;
+    if (!target || !target.dataset || !target.dataset.chit) return;
+    e.preventDefault();
+    e.stopPropagation();
+    chitDrag = { which: target.dataset.chit };
+    document.addEventListener('mousemove', onChitMouseMove);
+    document.addEventListener('mouseup', onChitMouseUp);
+}
+
+function onChitMouseMove(e) {
+    if (!chitDrag) return;
+    const img = panelToImageCoords(e.clientX, e.clientY);
+    if (!img) return;
+
+    // Read current state from the form (the source of truth between drags).
+    const dryEl = document.getElementById('dry-mass');
+    const fuelEl = document.getElementById('fuel');
+    const dryMass = parseInt(dryEl.value) || 0;
+    const dryStep = massToStripStep(dryMass);
+    const parsedFuel = parseFuelText(fuelEl.value, dryMass);
+    const wetStep = dryStep + (parsedFuel.ok ? parsedFuel.fuelSteps : 0);
+
+    const snap = nearestSnapStep(img.x, img.y, chitDrag.which, dryStep, wetStep);
+    if (snap == null) return;
+
+    if (chitDrag.which === 'dry') {
+        const newDry = stepToIntegerMass(snap);
+        if (newDry == null || newDry === dryMass) return;
+        // Preserve the wet STEP — that's the same dry-mass-change behavior
+        // as typing a new value into the dry-mass input.
+        const newDryStep = snap;
+        const newFuelSteps = Math.max(0, wetStep - newDryStep);
+        dryEl.value  = String(newDry);
+        fuelEl.value = formatFuelSteps(newFuelSteps, newDry);
+        state.lastDryMass = newDry;
+    } else {
+        // Wet drag — recompute fuelSteps relative to current Dry.
+        const newFuelSteps = Math.max(0, snap - dryStep);
+        fuelEl.value = formatFuelSteps(newFuelSteps, dryMass);
+    }
+    updateEndpointFuelStrip();
+}
+
+function onChitMouseUp() {
+    if (!chitDrag) return;
+    chitDrag = null;
+    document.removeEventListener('mousemove', onChitMouseMove);
+    document.removeEventListener('mouseup', onChitMouseUp);
+    // Each drag-end fires a traverse — per the user's spec.
+    fireTraverse();
+    persistTabs();
+}
+
+// Single delegated handler on the SVG element — survives innerHTML
+// rewrites by updateEndpointFuelStrip (which replaces the chit nodes).
+(function bindChitDragOnce() {
+    function tryBind() {
+        const svg = document.getElementById('endpoint-strip-svg');
+        if (!svg) return false;
+        svg.addEventListener('mousedown', onChitMouseDown);
+        return true;
+    }
+    if (!tryBind()) {
+        // SVG element exists from page load, so this should be a no-op
+        // delay — but in case the DOM isn't ready yet, retry on the
+        // first updateEndpointFuelStrip call indirectly via a tiny
+        // microtask.
+        Promise.resolve().then(tryBind);
+    }
+})();

@@ -23,7 +23,11 @@ const TABS_STORAGE_VERSION = 1;
 function makeDefaultTabState() {
     return {
         dryMass: cfgI('ui.dry.mass.default', 4),
-        fuel: cfgI('ui.fuel.default', 15),
+        // fuelText is the user-typed Fuel input. Stored as a string so
+        // fractional values like "1+5/6" survive a tab switch. Parsed
+        // each time it's used. Old saves persisted an integer `fuel`;
+        // renderActiveTabToDom() reads either form for back-compat.
+        fuelText: String(cfgI('ui.fuel.default', 15)),
         engines: [{
             baseThrust:       cfgI('ui.engine.thrust.default', 3),
             fuelConsumption:  cfgI('ui.engine.fuel.default',   2),
@@ -56,7 +60,7 @@ function snapshotActiveTabFromDom() {
     if (!state.activeTab || !state.tabsReady) return;
     const s = state.activeTab.state;
     s.dryMass = parseInt(document.getElementById('dry-mass').value) || 0;
-    s.fuel = parseInt(document.getElementById('fuel').value) || 0;
+    s.fuelText = document.getElementById('fuel').value;
     s.engines = [];
     document.querySelectorAll('.engine-block').forEach(b => {
         s.engines.push({
@@ -98,7 +102,12 @@ function renderActiveTabToDom() {
     const s = state.activeTab.state;
 
     document.getElementById('dry-mass').value      = (s.dryMass != null) ? s.dryMass : cfgI('ui.dry.mass.default', 4);
-    document.getElementById('fuel').value          = s.fuel;
+    // Back-compat: older tab saves stored an integer `fuel`; new ones
+    // store `fuelText` (which may be fractional, e.g. "1+5/6").
+    document.getElementById('fuel').value =
+            (s.fuelText != null) ? s.fuelText
+          : (s.fuel    != null) ? String(s.fuel)
+          : String(cfgI('ui.fuel.default', 15));
     document.getElementById('no-venus-cb').checked       = !!s.disableVenusFlyby;
     document.getElementById('allow-jettison-cb').checked = (s.allowFuelJettison !== false);
     document.getElementById('debug-cb').checked    = !!s.debug;

@@ -28,18 +28,19 @@ public final class RuleTestSupport {
 
     /** Default Dry Mass for tests that don't care about specific weight class. */
     public static final int DRY_DEFAULT  = 4;
-    /** Default fuel (water tanks loaded). With DRY_DEFAULT this gives Wet 24 (Tug class). */
-    public static final int FUEL_DEFAULT = 20;
+    /** Default fuel-strip step count between Dry and Wet chits.
+     *  29 ≡ "20 water tanks at dry=4" pre-rename → wet=24 (Tug class). */
+    public static final int FUEL_DEFAULT = 29;
 
     private RuleTestSupport() {}
 
     public static TraverseResponse traverse(SolarMap map, String startId,
-                                     List<EngineSpec> engines, int fuel) {
-        return Pathfinder.traverse(map, new TraverseRequest(startId, engines, DRY_DEFAULT, fuel));
+                                     List<EngineSpec> engines, int fuelSteps) {
+        return Pathfinder.traverse(map, new TraverseRequest(startId, engines, DRY_DEFAULT, fuelSteps));
     }
 
-    public static TraverseResponse traverse(SolarMap map, String startId, EngineSpec engine, int fuel) {
-        return traverse(map, startId, List.of(engine), fuel);
+    public static TraverseResponse traverse(SolarMap map, String startId, EngineSpec engine, int fuelSteps) {
+        return traverse(map, startId, List.of(engine), fuelSteps);
     }
 
     /** Collect all unique (fuel|turns|hazards|radRoll) cost vectors reported for a node. */
