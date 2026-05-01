@@ -18,9 +18,9 @@
 <body>
 <div id="debug-toggle">
     <input type="checkbox" id="debug-cb"><label for="debug-cb">Debug</label>
-    <input type="checkbox" id="show-fuel-strip-cb" style="margin-left:12px;" checked><label for="show-fuel-strip-cb">Show fuel strip</label><span class="tip" data-tip="Show the rulebook fuel strip with Dry / Wet chits at the hovered or pinned endpoint's final state. Toggle off to hide the panel entirely.">?</span>
-    <input type="checkbox" id="no-venus-cb" style="margin-left:12px;"><label for="no-venus-cb">Disable Venus flyby</label><span class="tip" data-tip="Exclude Venus gravity-assist flybys from planned routes.">?</span>
-    <input type="checkbox" id="allow-jettison-cb" style="margin-left:12px;" checked><label for="allow-jettison-cb">Allow fuel jettison</label><span class="tip" data-tip="Allow planner to drop fuel mid-route to improve thrust. May cause finding routes to take longer.">?</span>
+    <input type="checkbox" id="show-fuel-strip-cb" style="margin-left:12px;" checked><label for="show-fuel-strip-cb">Show fuel strip</label><span class="tip" data-tip-key="show-fuel-strip">?</span>
+    <input type="checkbox" id="no-venus-cb" style="margin-left:12px;"><label for="no-venus-cb">Disable Venus flyby</label><span class="tip" data-tip-key="no-venus">?</span>
+    <input type="checkbox" id="allow-jettison-cb" style="margin-left:12px;" checked><label for="allow-jettison-cb">Allow fuel jettison</label><span class="tip" data-tip-key="allow-jettison">?</span>
 </div>
 <button id="sidebar-toggle" type="button" title="Hide / show side panel">»</button>
 <button id="sidebar-clear" type="button" title="Clear selected routes (Esc)">Clear routes</button>
@@ -93,11 +93,11 @@
 
     <div class="engine-row">
         <div>
-            <label>Dry Mass (1-23): <span class="tip" data-tip="Ship mass without fuel, on the HF4A Wet-Mass strip (1–23). Higher total mass causes smaller thrust.">?</span></label>
+            <label>Dry Mass (1-23): <span class="tip" data-tip-key="dry-mass">?</span></label>
             <input type="number" id="dry-mass" value="4" min="1" max="23">
         </div>
         <div>
-            <label>Fuel: <span class="tip" data-tip="Fuel-strip step distance from Dry to Wet chit. Type a plain integer (5 = 5 fuel steps) OR fractional notation (1+5/6 = 1 mass + 5/6 of the way into the next interval). Drag the chits on the strip to set this visually. The fraction's denominator must match the wet-position interval (2↔3 has 6 sub-steps, 5↔6 has 3, 11↔12+ has none). Higher total mass causes smaller thrust.">?</span></label>
+            <label>Fuel: <span class="tip" data-tip-key="fuel">?</span></label>
             <input type="text" id="fuel" value="15" autocomplete="off" inputmode="text">
         </div>
     </div>
@@ -141,7 +141,7 @@
                     Modifiers
                     <button type="button" id="flags-mode-toggle" class="mode-toggle"
                             title="Toggle between ANY-OF and ALL-OF">(any-of)</button>
-                    <span class="tip" data-tip="ANY-OF: match sites with at least one selected modifier. ALL-OF: match only sites that have every selected modifier.">?</span>
+                    <span class="tip" data-tip-key="filter-mode">?</span>
                 </div>
                 <div class="flag-grid" id="site-flag-grid"></div>
             </div>
@@ -167,6 +167,7 @@
             <p><b>Clear routes</b> — Press <kbd>Esc</kbd>, or use the <b>Clear routes</b> button (when panel hidden).</p>
             <p><b>Switch routes</b> — <kbd>←</kbd>/<kbd>→</kbd>, the <b>◄</b>/<b>►</b> arrows on the route card, or <b>Prev/Next</b> buttons.</p>
             <p><b>Add engine</b> — Click <b>+ Add Engine</b>; configure thrust/fuel/pivots/solar. Hover <b>?</b> glyphs for help.</p>
+            <p><b>Set ship loadout</b> — Type Dry Mass and Fuel in the form, OR drag the red <b>Dry</b> / blue <b>Wet</b> chits on the fuel strip in the upper-left of the map. Each drag re-runs the planner.</p>
             <p><b>Use filter</b> — Press <kbd>F</kbd> or click the <b>Filter</b> header. Matching sites get a green hex outline; rest of map dims. <b>✕</b> or <kbd>Shift+F</kbd> resets.</p>
             <p><b>Hide / show panel</b> — Use the <b>»</b> / <b>«</b> button (top-right).</p>
             <p><b>Rotate map</b> — Press <kbd>Q</kbd> / <kbd>E</kbd>, use the <b>⟲</b> / <b>⟳</b> buttons (top-left), or twist with two fingers on a touchscreen.</p>

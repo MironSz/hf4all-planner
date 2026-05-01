@@ -57,6 +57,7 @@ public final class IndexHandler implements HttpHandler {
         if (path.endsWith(".jpg"))  return "image/jpeg";
         if (path.endsWith(".png"))  return "image/png";
         if (path.endsWith(".css"))  return "text/css; charset=UTF-8";
+        if (path.endsWith(".json")) return "application/json; charset=UTF-8";
         return null;
     }
 

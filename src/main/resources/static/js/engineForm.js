@@ -9,6 +9,7 @@ import { persistTabs } from './tabs.js';
 import { updateEndpointFuelStrip } from './endpointFuelStripOverlay.js';
 import { parseFuelText, formatFuelSteps, massToStripStep, STRIP_MAX_STEP }
         from './fuelStrip.js';
+import { inflateTooltips } from './tooltip.js';
 
 // CSS hook applied when the Fuel input has unparseable text. Cleared on
 // next valid edit. Visible affordance + we suppress fireTraverse while
@@ -54,19 +55,19 @@ export function addEngineBlock(initial) {
             <button class="e-remove" style="padding:2px 8px;font-size:11px;margin:0">X</button>
         </div>
         <div class="engine-row">
-            <div><label>Base Thrust: <span class="tip" data-tip="Engine thrust per burn before adjustments.">?</span></label><input type="number" class="e-base-thrust" value="${thrustDef}" min="0" max="20"></div>
-            <div><label>Fuel/burn: <span class="tip" data-tip="Fuel steps this engine consumes per burn. Most engines are 1–2; high-thrust engines cost more.">?</span></label><input type="number" class="e-fuel" value="${fuelDef}" min="0" max="20"></div>
+            <div><label>Base Thrust: <span class="tip" data-tip-key="engine.base-thrust">?</span></label><input type="number" class="e-base-thrust" value="${thrustDef}" min="0" max="20"></div>
+            <div><label>Fuel/burn: <span class="tip" data-tip-key="engine.fuel">?</span></label><input type="number" class="e-fuel" value="${fuelDef}" min="0" max="20"></div>
         </div>
         <div class="engine-row">
-            <div><label>Pivots: <span class="tip" data-tip="Lets you turn at non-Lagrange nodes without ending the turn or performing double burn.">?</span></label><input type="number" class="e-pivots" value="${pivotsDef}" min="0" max="5"></div>
+            <div><label>Pivots: <span class="tip" data-tip-key="engine.pivots">?</span></label><input type="number" class="e-pivots" value="${pivotsDef}" min="0" max="5"></div>
             <div style="display:flex;flex-direction:column;gap:2px">
-                <label><input type="checkbox" class="e-solar"${solarDef ? ' checked' : ''}>Solar <span class="tip" data-tip="Solar-powered engine: thrust scales with distance from the Sun.">?</span></label>
-                <label><input type="checkbox" class="e-afterburn"${abOnDef ? ' checked' : ''}>Afterburn <span class="tip" data-tip="Once per movement: spend fuel to gain net thrust.">?</span></label>
+                <label><input type="checkbox" class="e-solar"${solarDef ? ' checked' : ''}>Solar <span class="tip" data-tip-key="engine.solar">?</span></label>
+                <label><input type="checkbox" class="e-afterburn"${abOnDef ? ' checked' : ''}>Afterburn <span class="tip" data-tip-key="engine.afterburn">?</span></label>
             </div>
         </div>
         <div class="engine-row engine-ab-row" style="display:${abOnDef ? 'flex' : 'none'}">
-            <div><label>AB cost: <span class="tip" data-tip="Fuel steps spent per afterburn use.">?</span></label><input type="number" class="e-ab-cost" value="${abCostDef}" min="1" max="20"></div>
-            <div><label>AB gain: <span class="tip" data-tip="Net-thrust gained per afterburn use.">?</span></label><input type="number" class="e-ab-gain" value="${abGainDef}" min="1" max="10"></div>
+            <div><label>AB cost: <span class="tip" data-tip-key="engine.ab-cost">?</span></label><input type="number" class="e-ab-cost" value="${abCostDef}" min="1" max="20"></div>
+            <div><label>AB gain: <span class="tip" data-tip-key="engine.ab-gain">?</span></label><input type="number" class="e-ab-gain" value="${abGainDef}" min="1" max="10"></div>
         </div>
     `;
     const abCb  = div.querySelector('.e-afterburn');
@@ -85,6 +86,10 @@ export function addEngineBlock(initial) {
     });
     document.getElementById('engines-container').appendChild(div);
     renumberEngines();
+    // Populate data-tip on the freshly-inserted [data-tip-key] spans.
+    // Cheap; safe even before the JSON load completes (becomes a no-op
+    // and re-runs at load time via loadTooltips).
+    inflateTooltips(div);
     if (!state.suppressFire) fireTraverse();
 }
 

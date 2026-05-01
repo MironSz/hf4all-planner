@@ -1,0 +1,19 @@
+{
+  "show-fuel-strip": "Show the rulebook fuel strip with Dry / Wet chits at the hovered or pinned endpoint's final state. Toggle off to hide the panel entirely.",
+  "no-venus": "Exclude Venus gravity-assist flybys from planned routes.",
+  "allow-jettison": "Allow planner to drop fuel mid-route to improve thrust. May cause finding routes to take longer.",
+
+  "dry-mass": "Ship mass without fuel, on the HF4A Wet-Mass strip (1–23). Higher total mass causes smaller thrust. You can also drag the red Dry chit on the fuel strip in the upper-left to set this visually.",
+
+  "fuel": "Fuel-strip step distance from Dry to Wet chit. Three ways to set: (1) type a plain integer (5 = 5 fuel steps); (2) type fractional notation (1+5/6 = 1 mass + 5/6 of the way into the next interval); (3) drag the blue Wet chit on the fuel strip in the upper-left.",
+
+  "filter-mode": "ANY-OF: match sites with at least one selected modifier. ALL-OF: match only sites that have every selected modifier.",
+
+  "engine.base-thrust": "Engine thrust per burn before adjustments.",
+  "engine.fuel":        "Fuel steps this engine consumes per burn. Most engines are 1–2; high-thrust engines cost more.",
+  "engine.pivots":      "Lets you turn at non-Lagrange nodes without ending the turn or performing double burn.",
+  "engine.solar":       "Solar-powered engine: thrust scales with distance from the Sun.",
+  "engine.afterburn":   "Once per movement: spend fuel to gain net thrust.",
+  "engine.ab-cost":     "Fuel steps spent per afterburn use.",
+  "engine.ab-gain":     "Net-thrust gained per afterburn use."
+}

@@ -13,7 +13,7 @@ import { draw } from './draw.js';
 import { updateRouteInfo, updateDebugRoute, cycleRoute, initRouteInfo } from './routeInfo.js';
 import { initEngineForm } from './engineForm.js';
 import { initSearchBox } from './search.js';
-import { initTooltip } from './tooltip.js';
+import { initTooltip, loadTooltips } from './tooltip.js';
 import { initSiteFilter, handleFilterKey } from './siteFilter.js';
 import { initHexMask } from './hexMask.js';
 import { loadStripChitCoords, bindStripImg, updateEndpointFuelStrip } from './endpointFuelStripOverlay.js';
@@ -32,6 +32,10 @@ state.container = document.getElementById('map-container');
 // One-shot wiring for the various feature modules.
 initTabStripButton();
 initTooltip();
+// Fire-and-forget; once the JSON resolves it runs `inflateTooltips` to
+// populate `data-tip` on every `[data-tip-key]` element. Failure is
+// non-fatal (tooltips simply stay empty for any keyed element).
+loadTooltips();
 initSearchBox();
 initSiteFilter();
 initRouteInfo();
