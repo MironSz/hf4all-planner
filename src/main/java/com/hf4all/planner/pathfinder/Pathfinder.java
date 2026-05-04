@@ -600,25 +600,19 @@ public final class Pathfinder {
     private List<SearchState> expandCruise(SearchState current, Neighbor neighbor,
                                            String prevNode, boolean oneWay, boolean sameNode) {
         MapNode dest = neighbor.node;
-        // Mid-movement thrust is FROZEN per H3 — base thrust, weight class,
-        // and afterburn were all snapshotted at turn-start. The only thing
-        // that legitimately changes mid-move is the solar-zone modifier
-        // (when the ship crosses heliocentric zones). For non-solar engines,
-        // preserve current.thrust verbatim. For solar engines, apply the
-        // delta between the destination zone and the current node's zone —
-        // do NOT re-derive thrust via effectiveThrust, which would also
-        // recompute weight class from post-afterburn fuel and erase both
-        // the jettison decision AND the afterburn gain.
-        int newThrust;
-        if (sameNode) {
-            newThrust = current.thrust;
-        } else if (engines.get(current.engineIndex).solarPowered()) {
-            int oldSolar = current.node.solarMod();
-            int newSolar = dest.solarMod();
-            newThrust = current.thrust + (newSolar - oldSolar);
-        } else {
-            newThrust = current.thrust;
-        }
+        // Net thrust is FROZEN for the entire movement per H3 ("calculated
+        // once before movement begins"). Base thrust, weight class (post-
+        // jettison), solar mod (at START node), afterburn — all snapshotted
+        // at turn-start. Crossing a heliocentric-zone boundary mid-move does
+        // NOT update net thrust: the H3 calculation uses solar mod at the
+        // start node, and that's what gates landing/liftoff/burn-limit/
+        // force-turn for the rest of the move (H3, H5c, H6a).
+        //
+        // Engine operational status is a separate concern (per H2b: solar
+        // engines become non-operational in the Neptune zone) — handled in
+        // expandBurn via the destThrust check, which guards burn entry but
+        // does NOT modify the frozen net thrust.
+        int newThrust = current.thrust;
         boolean isHazard = !sameNode && dest.hazard();
         int newHazards   = current.hazards + (isHazard ? 1 : 0);
         int newRadRoll   = sameNode
