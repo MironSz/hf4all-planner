@@ -66,6 +66,13 @@ public final class TraverseHandler implements HttpHandler {
     private String validate(TraverseRequest request) {
         if (request == null) return "empty request";
         if (request.startNodeId() == null || request.startNodeId().isBlank()) return "startNodeId is required";
+        // HF4A H5e "No Stopping": you may not end (or start) movement on a
+        // lander-burn space. Reject upfront with a clear 400 rather than
+        // letting Pathfinder return an empty endpoint set.
+        var startNode = map.nodeById(request.startNodeId());
+        if (startNode != null && !startNode.landing().isZero()) {
+            return "cannot start on a lander-burn space (HF4A H5e): " + request.startNodeId();
+        }
         if (request.engines() == null || request.engines().isEmpty()) return "at least one engine required";
         int maxEngines = Config.requestMaxEngines();
         if (request.engines().size() > maxEngines) return "at most " + maxEngines + " engines allowed";

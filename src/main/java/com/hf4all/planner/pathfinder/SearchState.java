@@ -70,12 +70,22 @@ final class SearchState {
      */
     final boolean afterburnedThisMove;
 
+    /**
+     * Bitmask of engine indices that are permanently decommissioned (HF4A
+     * H6b sail aerobrake-hazard rule, etc.). Once an engine's bit is set,
+     * subsequent turn-starts skip that engine and the ship can only use
+     * remaining alive engines (or coast if all are gone). Propagated
+     * unchanged through every {@code expand*}.
+     */
+    final long decommissionedEngines;
+
     SearchState(MapNode node, String entryLabel, int engineIndex,
                 int burnsRemaining, int pivotsRemaining, int freeBurns, int thrust,
                 int fuelStepsRemaining, Fraction partialStepsThisMove, int jettisonedAtTurnStart,
                 int turn, int hazards, int worstRadRoll,
                 int visitedNodes, String previousNodeId, SearchState parent, List<String> bonusSites,
-                SearchState turnStart, boolean afterburnedThisMove) {
+                SearchState turnStart, boolean afterburnedThisMove,
+                long decommissionedEngines) {
         this.node = node;
         this.entryLabel = entryLabel;
         this.engineIndex = engineIndex;
@@ -94,6 +104,7 @@ final class SearchState {
         this.parent = parent;
         this.bonusSites = bonusSites;
         this.turnStart = turnStart;
+        this.decommissionedEngines = decommissionedEngines;
         this.afterburnedThisMove = afterburnedThisMove;
     }
 

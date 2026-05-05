@@ -15,5 +15,7 @@
   "engine.solar":       "Solar-powered engine: thrust scales with distance from the Sun.",
   "engine.afterburn":   "Once per movement: spend fuel to gain net thrust.",
   "engine.ab-cost":     "Fuel steps spent per afterburn use.",
-  "engine.ab-gain":     "Net-thrust gained per afterburn use."
+  "engine.ab-gain":     "Net-thrust gained per afterburn use.",
+  "engine.mag-sail":    "Mag Sail thruster: each radiation belt entered grants Bonus Burns equal to the belt's severity, once per belt per movement.",
+  "engine.aerobrake-decom": "Sail card: engine is destroyed (permanently non-operational) on entering an Aerobrake Hazard."
 }

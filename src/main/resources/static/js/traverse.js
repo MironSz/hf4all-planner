@@ -38,7 +38,9 @@ export function fireTraverse() {
             solarPowered: block.querySelector('.e-solar').checked,
             bonusPivots: parseInt(block.querySelector('.e-pivots').value) || 0,
             afterburnFuelCost: abCost,
-            afterburnThrustGain: abGain
+            afterburnThrustGain: abGain,
+            magSail: block.querySelector('.e-mag-sail').checked,
+            decommissionsOnAerobrake: block.querySelector('.e-aerobrake-decom').checked
         });
     });
 

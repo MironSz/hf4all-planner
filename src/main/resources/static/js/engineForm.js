@@ -32,7 +32,8 @@ function renumberEngines() {
 }
 
 // initial: optional {baseThrust, fuelConsumption, solarPowered, bonusPivots,
-// canAfterburn, afterburnFuelCost, afterburnThrustGain}.
+// canAfterburn, afterburnFuelCost, afterburnThrustGain, magSail,
+// decommissionsOnAerobrake}.
 // When called from a tab restore, state.suppressFire is true so we don't
 // fire a traverse for every engine block being rebuilt.
 export function addEngineBlock(initial) {
@@ -47,6 +48,8 @@ export function addEngineBlock(initial) {
     const abOnDef   = !!(initial && initial.canAfterburn);
     const abCostDef = (initial && initial.afterburnFuelCost  != null) ? initial.afterburnFuelCost  : 1;
     const abGainDef = (initial && initial.afterburnThrustGain != null) ? initial.afterburnThrustGain : 1;
+    const magDef    = !!(initial && initial.magSail);
+    const aerodecDef= !!(initial && initial.decommissionsOnAerobrake);
     const div = document.createElement('div');
     div.className = 'engine-block';
     div.innerHTML = `
@@ -68,6 +71,10 @@ export function addEngineBlock(initial) {
         <div class="engine-row engine-ab-row" style="display:${abOnDef ? 'flex' : 'none'}">
             <div><label>AB cost: <span class="tip" data-tip-key="engine.ab-cost">?</span></label><input type="number" class="e-ab-cost" value="${abCostDef}" min="1" max="20"></div>
             <div><label>AB gain: <span class="tip" data-tip-key="engine.ab-gain">?</span></label><input type="number" class="e-ab-gain" value="${abGainDef}" min="1" max="10"></div>
+        </div>
+        <div class="engine-row">
+            <div><label><input type="checkbox" class="e-mag-sail"${magDef ? ' checked' : ''}>Mag Sail <span class="tip" data-tip-key="engine.mag-sail">?</span></label></div>
+            <div><label><input type="checkbox" class="e-aerobrake-decom"${aerodecDef ? ' checked' : ''}>Aerobrake decom <span class="tip" data-tip-key="engine.aerobrake-decom">?</span></label></div>
         </div>
     `;
     const abCb  = div.querySelector('.e-afterburn');

@@ -32,7 +32,19 @@ public record EngineSpec(
      * the cost is deducted from fuelStepsRemaining but does NOT influence
      * the weight-class snapshot used for the same movement.
      */
-    int afterburnThrustGain
+    int afterburnThrustGain,
+    /**
+     * Mag Sail thruster (H8f): each radiation belt entered grants Bonus
+     * Burns equal to the belt's radiation severity, once per belt per
+     * movement. Same once-per-node enforcement as flyby spaces.
+     */
+    boolean magSail,
+    /**
+     * Sail card (H6b): immediately decommissioned on entering an Aerobrake
+     * Hazard. Once decommissioned, the engine cannot be re-activated for
+     * the rest of the search; remaining mid-move travel is coasting only.
+     */
+    boolean decommissionsOnAerobrake
 ) {
 
     public EngineSpec {
@@ -57,7 +69,8 @@ public record EngineSpec(
     /** Convenience constructor for integer fuel consumption (denominator = 1). */
     public EngineSpec(int baseThrust, int fuelConsumption,
                      boolean solarPowered, int bonusPivots) {
-        this(baseThrust, fuelConsumption, 1, solarPowered, bonusPivots, 0, 0);
+        this(baseThrust, fuelConsumption, 1, solarPowered, bonusPivots,
+                0, 0, false, false);
     }
 
     /** True if the engine can afterburn (cost > 0 and gain > 0). */

@@ -60,6 +60,8 @@ function serializeEngine(eng) {
     if (eng.bonusPivots)           parts.push(`pivots:${eng.bonusPivots}`);
     if (eng.afterburnFuelCost)     parts.push(`abCost:${eng.afterburnFuelCost}`);
     if (eng.afterburnThrustGain)   parts.push(`abGain:${eng.afterburnThrustGain}`);
+    if (eng.magSail)               parts.push('mag:1');
+    if (eng.decommissionsOnAerobrake) parts.push('aero:1');
     return parts.join(',');
 }
 
@@ -69,6 +71,7 @@ function parseEngine(s) {
         fuelConsumptionNum: 0, fuelConsumptionDen: 1,
         solarPowered: false, bonusPivots: 0,
         afterburnFuelCost: 0, afterburnThrustGain: 0,
+        magSail: false, decommissionsOnAerobrake: false,
     };
     if (!s) return out;
     for (const part of s.split(',')) {
@@ -93,6 +96,8 @@ function parseEngine(s) {
             case 'pivots':  out.bonusPivots = parseInt(v) || 0; break;
             case 'abCost':  out.afterburnFuelCost = parseInt(v) || 0; break;
             case 'abGain':  out.afterburnThrustGain = parseInt(v) || 0; break;
+            case 'mag':     out.magSail = (v === '1' || v === 'true'); break;
+            case 'aero':    out.decommissionsOnAerobrake = (v === '1' || v === 'true'); break;
         }
     }
     return out;

@@ -132,7 +132,7 @@ public final class Pathfinder {
                 initialFuelSteps, Fraction.ZERO, 0,
                 1, 0, 0,                       // turn=1 hazards=0 worstRadRoll=0
                 1, null, null, List.of(),
-                null, false);
+                null, false, 0L);
         addTurnStartStates(seeds, pseudoCurrent, initialFuelSteps, /*jettisoned=*/ 0,
                 /*turn=*/ 1, /*parent=*/ null);
         for (SearchState s : seeds) {
@@ -504,42 +504,78 @@ public final class Pathfinder {
             return List.of();
         }
 
+        EngineSpec engine = engines.get(current.engineIndex);
         List<SearchState> out = new ArrayList<>(2);
         boolean isHazard  = dest.hazard();
         boolean isLanding = !dest.landing().isZero();
         int newHazards   = current.hazards + (isHazard ? 1 : 0);
         int newRadRoll   = updatedRadRoll(current.worstRadRoll, dest, destThrust);
-        Fraction burnCost = engines.get(current.engineIndex).fuelConsumption();
+        // H5e: half-burn lander spaces (landing = 1/2) cost half the fuel
+        // steps of a full burn. landing == 1 (full burn) leaves cost unchanged.
+        Fraction burnCost = engine.fuelConsumption();
+        if (isLanding) burnCost = burnCost.multiply(dest.landing());
         int visitedInc   = dest.isDecorative() ? 0 : 1;
 
         Fraction newPartial = current.partialStepsThisMove.add(burnCost);
         Fraction fuelCap    = Fraction.of(current.fuelStepsRemaining);
 
+        // H8e Solar Oberth flyby: lander burn that grants Bonus Burns equal
+        // to the activated thruster's BASE thrust (not net), +1 if the ship
+        // afterburned this movement. Once per move per node (use bonusSites).
+        boolean oberthBoost = dest.solarOberth()
+                && !current.bonusSites.contains(dest.id());
+        int oberthBonusBurns = 0;
+        List<String> bonusSitesAfterEntry = current.bonusSites;
+        if (oberthBoost) {
+            oberthBonusBurns = engine.baseThrust();
+            if (current.afterburnedThisMove) oberthBonusBurns += 1;
+            bonusSitesAfterEntry = new ArrayList<>(current.bonusSites);
+            bonusSitesAfterEntry.add(dest.id());
+        }
+
+        // H6b sail-aerobrake decommission: a sail entering a hazard node
+        // is destroyed. Engine becomes permanently non-operational for the
+        // rest of the search; the resulting state has thrust=0, burns=0,
+        // and the engine's bit set in decommissionedEngines.
+        boolean willDecommission = isHazard
+                && engine.decommissionsOnAerobrake()
+                && (current.decommissionedEngines & (1L << current.engineIndex)) == 0;
+        long newDecom    = willDecommission
+                ? current.decommissionedEngines | (1L << current.engineIndex)
+                : current.decommissionedEngines;
+        int  thrustAfter = willDecommission ? 0 : current.thrust;
+        int  burnsAfter  = willDecommission ? 0 : current.burnsRemaining;
+
         // Option A: free burn (not allowed on a landing approach)
         if (current.freeBurns > 0 && !isLanding) {
             out.add(new SearchState(
                     dest, neighbor.direction, current.engineIndex,
-                    current.burnsRemaining, current.pivotsRemaining,
-                    oneWay ? 0 : current.freeBurns - 1, current.thrust,
+                    burnsAfter, current.pivotsRemaining,
+                    oneWay ? 0 : current.freeBurns - 1 + oberthBonusBurns, thrustAfter,
                     current.fuelStepsRemaining, current.partialStepsThisMove,
                     current.jettisonedAtTurnStart,
                     current.turn, newHazards, newRadRoll,
                     current.visitedNodes + visitedInc, prevNode, current,
-                    current.bonusSites,
-                    current.turnStart(), current.afterburnedThisMove));
+                    bonusSitesAfterEntry,
+                    current.turnStart(), current.afterburnedThisMove,
+                    newDecom));
         }
         // Option B: paid burn — H5d gate: fractional partial ≤ remaining
         if (current.burnsRemaining > 0 && !newPartial.isGreaterThan(fuelCap)) {
+            // burnsAfter accounts for paid-burn decrement *after* decommission
+            // (so post-decommission state has 0 burns, not −1).
+            int paidBurnsAfter = willDecommission ? 0 : (current.burnsRemaining - 1);
             out.add(new SearchState(
                     dest, neighbor.direction, current.engineIndex,
-                    current.burnsRemaining - 1, current.pivotsRemaining,
-                    oneWay ? 0 : current.freeBurns, current.thrust,
+                    paidBurnsAfter, current.pivotsRemaining,
+                    oneWay ? 0 : current.freeBurns + oberthBonusBurns, thrustAfter,
                     current.fuelStepsRemaining, newPartial,
                     current.jettisonedAtTurnStart,
                     current.turn, newHazards, newRadRoll,
                     current.visitedNodes + visitedInc, prevNode, current,
-                    current.bonusSites,
-                    current.turnStart(), current.afterburnedThisMove));
+                    bonusSitesAfterEntry,
+                    current.turnStart(), current.afterburnedThisMove,
+                    newDecom));
         }
         // Note: we deliberately do NOT trigger lazy jettison when we simply
         // ran out of burns this turn (burnsRemaining == 0). That fires for
@@ -566,7 +602,8 @@ public final class Pathfinder {
                     current.turn, current.hazards, current.worstRadRoll,
                     current.visitedNodes, prevNode, current,
                     current.bonusSites,
-                    current.turnStart(), current.afterburnedThisMove));
+                    current.turnStart(), current.afterburnedThisMove,
+                    current.decommissionedEngines));
         }
         // Option B: force-turn via 2 paid burns (requires an operational thruster)
         if (current.burnsRemaining > 1 && current.thrust > 0) {
@@ -583,7 +620,8 @@ public final class Pathfinder {
                         current.turn, current.hazards, current.worstRadRoll,
                         current.visitedNodes, prevNode, current,
                         current.bonusSites,
-                        current.turnStart(), current.afterburnedThisMove));
+                        current.turnStart(), current.afterburnedThisMove,
+                    current.decommissionedEngines));
             }
         } else if (current.thrust <= 0) {
             // Engine non-operational (e.g. solar in deep outer zone). Free
@@ -612,6 +650,7 @@ public final class Pathfinder {
         // engines become non-operational in the Neptune zone) — handled in
         // expandBurn via the destThrust check, which guards burn entry but
         // does NOT modify the frozen net thrust.
+        EngineSpec engine = engines.get(current.engineIndex);
         int newThrust = current.thrust;
         boolean isHazard = !sameNode && dest.hazard();
         int newHazards   = current.hazards + (isHazard ? 1 : 0);
@@ -626,19 +665,50 @@ public final class Pathfinder {
             newFreeBurns += dest.flybyBoost();
             newBonusSites.add(dest.id());
         }
-        // One-way edge zeroes out free burns (applies after flyby boost too).
+        // H8f Mag Sail: every radiation belt entered confers Bonus Burns
+        // (severity = node.radiation), once per belt per movement.
+        if (!sameNode && dest.isRadhaz() && engine.magSail()
+                && !current.bonusSites.contains(dest.id())) {
+            newFreeBurns += dest.radiation();
+            newBonusSites.add(dest.id());
+        }
+        // H8e Solar Oberth flyby (cruise entry): some maps tag a non-burn
+        // node (e.g. central lagrange of an Oberth structure) with the
+        // Oberth flag. Grant base-thrust bonus burns once per move.
+        // (expandBurn handles the canonical lander-burn-typed Oberth.)
+        if (!sameNode && dest.solarOberth()
+                && !current.bonusSites.contains(dest.id())) {
+            int oberth = engine.baseThrust();
+            if (current.afterburnedThisMove) oberth += 1;
+            newFreeBurns += oberth;
+            newBonusSites.add(dest.id());
+        }
+        // One-way edge zeroes out free burns (applies after flyby/magsail boost too).
         if (oneWay) newFreeBurns = 0;
+
+        // H6b sail-aerobrake decommission: a sail entering a hazard node
+        // is destroyed. Engine becomes permanently non-operational; state
+        // gets thrust=0 burns=0 so coasting is the only option for the rest
+        // of the move and waitTurn skips this engine onward.
+        boolean willDecommission = isHazard && engine.decommissionsOnAerobrake()
+                && (current.decommissionedEngines & (1L << current.engineIndex)) == 0;
+        long newDecom    = willDecommission
+                ? current.decommissionedEngines | (1L << current.engineIndex)
+                : current.decommissionedEngines;
+        int  thrustAfter = willDecommission ? 0 : newThrust;
+        int  burnsAfter  = willDecommission ? 0 : current.burnsRemaining;
 
         return List.of(new SearchState(
                 dest, neighbor.direction, current.engineIndex,
-                current.burnsRemaining, current.pivotsRemaining,
-                newFreeBurns, newThrust,
+                burnsAfter, current.pivotsRemaining,
+                newFreeBurns, thrustAfter,
                 current.fuelStepsRemaining, current.partialStepsThisMove,
                 current.jettisonedAtTurnStart,
                 current.turn, newHazards, newRadRoll,
                 current.visitedNodes + visitedInc,
                 prevNode, current, newBonusSites,
-                current.turnStart(), current.afterburnedThisMove));
+                current.turnStart(), current.afterburnedThisMove,
+                newDecom));
     }
 
     /**
@@ -681,7 +751,12 @@ public final class Pathfinder {
     private void addTurnStartStates(List<SearchState> out, SearchState current,
                                     int newFuelSteps, int jettisoned,
                                     int turn, SearchState parent) {
+        long decom = current.decommissionedEngines;
         for (int i = 0; i < engines.size(); i++) {
+            // Skip engines that have been permanently decommissioned (e.g.
+            // sail destroyed by an aerobrake hazard, H6b).
+            if ((decom & (1L << i)) != 0) continue;
+
             EngineSpec engine = engines.get(i);
             int noAbThrust = effectiveThrust(i, current.node, newFuelSteps);
 
@@ -714,8 +789,18 @@ public final class Pathfinder {
                 current.hazards, current.worstRadRoll,
                 current.visitedNodes, null, parent, List.of(),
                 null /* this IS a turn-start */,
-                afterburned);
+                afterburned, current.decommissionedEngines);
     }
+
+    /**
+     * Solar-powered engines become non-operational in zones whose solar
+     * modifier is at or below this threshold (H3c — Neptune J zone). Maps
+     * with deeper-than-Saturn zones should set {@code solarMod ≤ −5} on
+     * those nodes; this guard makes any such zone a hard shutdown rather
+     * than letting a high-base-thrust engine still produce positive net
+     * thrust there.
+     */
+    private static final int SOLAR_SHUTDOWN_SOLAR_MOD = -5;
 
     /**
      * Net thrust for an engine at a given node, with Wet Mass derived from
@@ -731,6 +816,12 @@ public final class Pathfinder {
      */
     private int effectiveThrust(int engineIndex, MapNode node, int fuelStepsRemaining) {
         EngineSpec engine = engines.get(engineIndex);
+        // H3c hard shutdown: solar engines in deep outer zones are non-
+        // operational regardless of base thrust. Returning 0 ensures the
+        // existing destThrust-≤-0 guards treat the engine as inoperative.
+        if (engine.solarPowered() && node.solarMod() <= SOLAR_SHUTDOWN_SOLAR_MOD) {
+            return 0;
+        }
         int wm = FuelStrip.wetMassAt(dryMass, fuelStepsRemaining);
         int weightMod = FuelStrip.weightClassModForWetMass(wm);
         int solar = engine.solarPowered() ? node.solarMod() : 0;

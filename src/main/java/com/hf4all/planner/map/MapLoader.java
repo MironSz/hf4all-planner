@@ -184,6 +184,12 @@ public final class MapLoader {
             b.solarMod(p.get("solarMod").getAsInt());
         }
 
+        // solarOberth — H8e flag; true on the lander burn that grants
+        // base-thrust bonus burns. Optional (defaults to false).
+        if (p.has("solarOberth") && !p.get("solarOberth").isJsonNull()) {
+            b.solarOberth(p.get("solarOberth").getAsBoolean());
+        }
+
         // siteName — may appear on any node type as a display label
         String siteName = getString(p, "siteName", null);
 

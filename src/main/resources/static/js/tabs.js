@@ -65,13 +65,15 @@ function snapshotActiveTabFromDom() {
     s.engines = [];
     document.querySelectorAll('.engine-block').forEach(b => {
         s.engines.push({
-            baseThrust:         parseInt(b.querySelector('.e-base-thrust').value) || 0,
-            fuelConsumption:    parseInt(b.querySelector('.e-fuel').value)   || 0,
-            solarPowered:       b.querySelector('.e-solar').checked,
-            bonusPivots:        parseInt(b.querySelector('.e-pivots').value) || 0,
-            canAfterburn:       b.querySelector('.e-afterburn').checked,
-            afterburnFuelCost:  parseInt(b.querySelector('.e-ab-cost').value) || 0,
-            afterburnThrustGain:parseInt(b.querySelector('.e-ab-gain').value) || 1,
+            baseThrust:              parseInt(b.querySelector('.e-base-thrust').value) || 0,
+            fuelConsumption:         parseInt(b.querySelector('.e-fuel').value)   || 0,
+            solarPowered:            b.querySelector('.e-solar').checked,
+            bonusPivots:             parseInt(b.querySelector('.e-pivots').value) || 0,
+            canAfterburn:            b.querySelector('.e-afterburn').checked,
+            afterburnFuelCost:       parseInt(b.querySelector('.e-ab-cost').value) || 0,
+            afterburnThrustGain:     parseInt(b.querySelector('.e-ab-gain').value) || 1,
+            magSail:                 b.querySelector('.e-mag-sail').checked,
+            decommissionsOnAerobrake:b.querySelector('.e-aerobrake-decom').checked,
         });
     });
     s.disableVenusFlyby = document.getElementById('no-venus-cb').checked;

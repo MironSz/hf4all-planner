@@ -36,22 +36,24 @@ public final class MapNode {
     private final int      thrustReq;   // min thrust to enter this landing burn (from JSON, 0 if none)
     private final int      flybyBoost;  // free burns granted (FLYBY / VENUS nodes only)
     private final int      solarMod;    // solar-power thrust modifier for this heliocentric zone; 0 if unlabeled
+    private final boolean  solarOberth; // H8e: this node IS the Solar Oberth flyby
     private final SiteData siteData;    // non-null only for SITE nodes
     private final String   label;       // optional display name for any node type (e.g. "LEO", "GEO")
 
     private MapNode(Builder b) {
-        this.id         = Objects.requireNonNull(b.id,   "id must not be null");
-        this.type       = Objects.requireNonNull(b.type, "type must not be null");
-        this.x          = b.x;
-        this.y          = b.y;
-        this.hazard     = b.hazard;
-        this.radiation  = b.radiation;
-        this.landing    = b.landing;
-        this.thrustReq  = b.thrustReq;
-        this.flybyBoost = b.flybyBoost;
-        this.solarMod   = b.solarMod;
-        this.siteData   = b.siteData;
-        this.label      = b.label;
+        this.id          = Objects.requireNonNull(b.id,   "id must not be null");
+        this.type        = Objects.requireNonNull(b.type, "type must not be null");
+        this.x           = b.x;
+        this.y           = b.y;
+        this.hazard      = b.hazard;
+        this.radiation   = b.radiation;
+        this.landing     = b.landing;
+        this.thrustReq   = b.thrustReq;
+        this.flybyBoost  = b.flybyBoost;
+        this.solarMod    = b.solarMod;
+        this.solarOberth = b.solarOberth;
+        this.siteData    = b.siteData;
+        this.label       = b.label;
     }
 
     // --- Accessors ---
@@ -70,6 +72,12 @@ public final class MapNode {
      * returns 0 for nodes that carry no zone label (loader default).
      */
     public int      solarMod()    { return solarMod; }
+    /**
+     * True if this node IS the Solar Oberth flyby (HF4A H8e). Bonus burns
+     * here equal the activated thruster's BASE thrust (not net) and grant
+     * one extra Bonus Burn when the ship afterburns at the same node.
+     */
+    public boolean  solarOberth() { return solarOberth; }
     /**
      * Non-null only when type == SITE.
      * Use {@code isSite()} before calling to avoid null checks everywhere.
@@ -130,16 +138,17 @@ public final class MapNode {
     public static final class Builder {
         private final String   id;
         private final NodeType type;
-        private double   x          = 0.0;
-        private double   y          = 0.0;
-        private boolean  hazard     = false;
-        private int      radiation  = 0;
-        private Fraction landing   = Fraction.ZERO;
-        private int      thrustReq = 0;
-        private int      flybyBoost = 0;
-        private int      solarMod   = 0;
-        private SiteData siteData   = null;
-        private String   label      = null;
+        private double   x           = 0.0;
+        private double   y           = 0.0;
+        private boolean  hazard      = false;
+        private int      radiation   = 0;
+        private Fraction landing     = Fraction.ZERO;
+        private int      thrustReq   = 0;
+        private int      flybyBoost  = 0;
+        private int      solarMod    = 0;
+        private boolean  solarOberth = false;
+        private SiteData siteData    = null;
+        private String   label       = null;
 
         private Builder(String id, NodeType type) {
             this.id   = id;
@@ -153,6 +162,7 @@ public final class MapNode {
         public Builder thrustReq(int thrustReq)      { this.thrustReq = thrustReq; return this; }
         public Builder flybyBoost(int boost)         { this.flybyBoost = boost; return this; }
         public Builder solarMod(int solarMod)        { this.solarMod = solarMod; return this; }
+        public Builder solarOberth(boolean solarOberth) { this.solarOberth = solarOberth; return this; }
         public Builder siteData(SiteData siteData)   { this.siteData = siteData; return this; }
         public Builder label(String label)           { this.label = label;       return this; }
 

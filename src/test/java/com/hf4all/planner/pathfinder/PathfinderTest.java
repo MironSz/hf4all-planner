@@ -406,8 +406,8 @@ class PathfinderTest {
      */
     @Test
     void afterburnNeverReducesEndpoints() {
-        EngineSpec noAb = new EngineSpec(5, 2, 1, false, 0, 0, 0);
-        EngineSpec withAb = new EngineSpec(5, 2, 1, false, 0, 1, 1);
+        EngineSpec noAb = new EngineSpec(5, 2, 1, false, 0, 0, 0, false, false);
+        EngineSpec withAb = new EngineSpec(5, 2, 1, false, 0, 1, 1, false, false);
         TraverseResponse rNo = Pathfinder.traverse(map,
                 new TraverseRequest("334", List.of(noAb), DEFAULT_DRY, DEFAULT_FUEL_STEPS, false, false));
         TraverseResponse rAb = Pathfinder.traverse(map,
@@ -426,7 +426,7 @@ class PathfinderTest {
      */
     @Test
     void afterburnedHereOnlyOnTurnStart() {
-        EngineSpec eng = new EngineSpec(5, 2, 1, false, 0, 1, 1);
+        EngineSpec eng = new EngineSpec(5, 2, 1, false, 0, 1, 1, false, false);
         TraverseResponse r = Pathfinder.traverse(map,
                 new TraverseRequest("334", List.of(eng), DEFAULT_DRY, DEFAULT_FUEL_STEPS, false, true));
         assertEquals("ok", r.status());
@@ -487,7 +487,7 @@ class PathfinderTest {
         // We don't actually need to compute — the assertion is that the
         // resulting thrust is no-AB-thrust + gain, regardless of any class
         // change the fuel deduction WOULD imply if it fed back.
-        EngineSpec eng = new EngineSpec(5, 2, 1, false, 0, 4, 1);
+        EngineSpec eng = new EngineSpec(5, 2, 1, false, 0, 4, 1, false, false);
         TraverseResponse r = Pathfinder.traverse(map,
                 new TraverseRequest("334", List.of(eng), DEFAULT_DRY, DEFAULT_FUEL_STEPS, false, false));
         assertEquals("ok", r.status());
@@ -528,8 +528,8 @@ class PathfinderTest {
     void afterburnTwStyleReachesMoreSitesThanHf4a() {
         // base=4 → no-AB net=2 at Tug. With HF4A gain=1: net=3. With TW gain=3: net=5.
         // The +2 difference unlocks any size-3 / size-4 sites that the +1 variant misses.
-        EngineSpec hf4a = new EngineSpec(4, 2, 1, false, 0, 1, 1);
-        EngineSpec tw   = new EngineSpec(4, 2, 1, false, 0, 1, 3);
+        EngineSpec hf4a = new EngineSpec(4, 2, 1, false, 0, 1, 1, false, false);
+        EngineSpec tw   = new EngineSpec(4, 2, 1, false, 0, 1, 3, false, false);
         // dry=1, fuel=20 tanks → fuelSteps = stepsBetween(1, 21) = 45.
         final int FUEL_STEPS_DRY1_FUEL20 = 45;
         TraverseResponse rHf  = Pathfinder.traverse(map,
@@ -552,7 +552,7 @@ class PathfinderTest {
     @Test
     void unusedAfterburnBranchesPrunedFromOutput() {
         // baseThrust=30 → trivially clears every gate; AB is always wasted.
-        EngineSpec overpowered = new EngineSpec(30, 2, 1, false, 0, 1, 1);
+        EngineSpec overpowered = new EngineSpec(30, 2, 1, false, 0, 1, 1, false, false);
         TraverseResponse r = Pathfinder.traverse(map,
                 new TraverseRequest("334", List.of(overpowered), DEFAULT_DRY, DEFAULT_FUEL_STEPS, false, false));
         assertEquals("ok", r.status());
