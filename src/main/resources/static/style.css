@@ -147,6 +147,52 @@ select { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #
 .instructions-body b { color: #eee; }
 .instructions-body kbd { background: #143359; border: 1px solid #2a4a72; border-radius: 3px; padding: 0 4px; font-family: monospace; font-size: 11px; color: #7ec8e3; }
 
+/* ---- Solar-cycle year tracker (12-spot horizontal strip) ----
+   Each spot is a 22 px circle coloured by season per the HF4A Sunspot
+   Cycle placard. Click a spot to set the current year; the selected one
+   gets a white outline + glow. Currently informational — the planner
+   doesn't yet read it (Belt-Roll season penalty / Venus flyby gating /
+   synodic-comet accessibility are all future hooks). */
+.solar-cycle { background: #0f3460; padding: 8px; border-radius: 4px; font-size: 12px; color: #ccc; }
+.solar-cycle-label { color: #7ec8e3; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+.solar-cycle-track { display: flex; gap: 4px; justify-content: space-between; align-items: center; }
+.solar-cycle-spot {
+    width: 22px; height: 22px; padding: 0;
+    border: 1px solid #1a3758;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 10px;
+    font-weight: bold;
+    color: #000;
+    background: #555;
+    display: flex; align-items: center; justify-content: center;
+    line-height: 1;
+    transition: transform 0.1s, box-shadow 0.1s;
+}
+.solar-cycle-spot.solar-red    { background: #e94560; }
+.solar-cycle-spot.solar-yellow { background: #f1c40f; }
+.solar-cycle-spot.solar-blue   { background: #3498db; color: #fff; }
+.solar-cycle-spot:hover { transform: scale(1.15); border-color: #fff; }
+.solar-cycle-spot.selected {
+    border: 2px solid #fff;
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.7);
+    transform: scale(1.2);
+}
+/* Subtle dot indicator for the "starting year" spot when it's not
+   itself the currently-displayed (selected) one. Lets the user see
+   both: where their mission begins, and what year they're at on the
+   currently-hovered/pinned endpoint. */
+.solar-cycle-spot.starting-year::after {
+    content: '';
+    position: absolute;
+    width: 4px; height: 4px;
+    background: #fff;
+    border-radius: 50%;
+    margin-top: -16px;
+    box-shadow: 0 0 3px rgba(255, 255, 255, 0.7);
+}
+.solar-cycle-spot { position: relative; }
+
 /* ---- Help-tip "?" glyph with hover tooltip ---- */
 .tip { display: inline-block; width: 14px; height: 14px; line-height: 13px; text-align: center; border-radius: 50%; background: #143359; color: #7ec8e3; border: 1px solid #2a4a72; font-size: 10px; font-weight: bold; font-family: monospace; cursor: help; margin-left: 4px; position: relative; vertical-align: middle; user-select: none; }
 .tip:hover { background: #1e4a7a; color: #fff; }

@@ -17,6 +17,7 @@ import { fireTraverse } from './traverse.js';
 import { draw } from './draw.js';
 import { updateRouteInfo, updateDebugRoute } from './routeInfo.js';
 import { writeShareToUrlFromTab, readShareFromUrl, SHARE_FIELDS } from './urlState.js';
+import { applySelectionFromState as applySolarSelection } from './solarCycle.js';
 
 const TABS_STORAGE_KEY     = 'hf4a-tabs';
 const TABS_STORAGE_VERSION = 1;
@@ -38,6 +39,8 @@ function makeDefaultTabState() {
         disableVenusFlyby: false,
         allowFuelJettison: true,
         debug:             false,
+        solarYear:         1,
+
         siteFilter:        makeDefaultSiteFilter(),
         searchQuery:       '',
         selectedNode:      null,
@@ -79,6 +82,10 @@ function snapshotActiveTabFromDom() {
     s.disableVenusFlyby = document.getElementById('no-venus-cb').checked;
     s.allowFuelJettison = document.getElementById('allow-jettison-cb').checked;
     s.debug             = document.getElementById('debug-cb').checked;
+    // solarYear is mutated only via the cycle widget click handler (setSolarYear)
+    // which writes directly into state.activeTab.state.solarYear. Re-read it
+    // here defensively in case the widget falls out of sync.
+    if (s.solarYear == null) s.solarYear = 1;
     s.siteFilter = readSiteFilterFromDom();
     s.searchQuery       = document.getElementById('search-input').value;
     s.selectedNode      = state.selectedNode;
@@ -118,6 +125,8 @@ function renderActiveTabToDom() {
     document.getElementById('search-input').value  = s.searchQuery || '';
     s.siteFilter = migrateSiteFilter(s.siteFilter);
     writeSiteFilterToDom(s.siteFilter);
+    if (s.solarYear == null) s.solarYear = 1;
+    applySolarSelection();
 
     // Rebuild engine blocks without firing traverse for each
     document.getElementById('engines-container').innerHTML = '';

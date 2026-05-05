@@ -17,5 +17,6 @@
   "engine.ab-cost":     "Fuel steps spent per afterburn use.",
   "engine.ab-gain":     "Net-thrust gained per afterburn use.",
   "engine.mag-sail":    "Mag Sail thruster: each radiation belt entered grants Bonus Burns equal to the belt's severity, once per belt per movement.",
-  "engine.aerobrake-decom": "Sail card: engine is destroyed (permanently non-operational) on entering an Aerobrake Hazard."
+  "engine.aerobrake-decom": "Sail card: engine is destroyed (permanently non-operational) on entering an Aerobrake Hazard.",
+  "solar.cycle":          "HF4A Sol Sunspot Cycle (1–12). Click a spot to set the STARTING year of the mission. The highlight then follows the currently hovered/pinned endpoint — turn 1 sits at the starting year, each subsequent turn advances one spot clockwise. The starting spot keeps a small white dot when it isn't the currently displayed year. Seasons are red / yellow / blue, four years each. (Currently informational — the planner doesn't yet apply season effects.)"
 }
