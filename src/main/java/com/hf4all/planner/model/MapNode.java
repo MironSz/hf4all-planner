@@ -37,6 +37,7 @@ public final class MapNode {
     private final int      flybyBoost;  // free burns granted (FLYBY / VENUS nodes only)
     private final int      solarMod;    // solar-power thrust modifier for this heliocentric zone; 0 if unlabeled
     private final boolean  solarOberth; // H8e: this node IS the Solar Oberth flyby
+    private final Season   synodic;     // B7h/H6: season required to enter or leave this node; null = no gate
     private final SiteData siteData;    // non-null only for SITE nodes
     private final String   label;       // optional display name for any node type (e.g. "LEO", "GEO")
 
@@ -52,6 +53,7 @@ public final class MapNode {
         this.flybyBoost  = b.flybyBoost;
         this.solarMod    = b.solarMod;
         this.solarOberth = b.solarOberth;
+        this.synodic     = b.synodic;
         this.siteData    = b.siteData;
         this.label       = b.label;
     }
@@ -78,6 +80,14 @@ public final class MapNode {
      * one extra Bonus Burn when the ship afterburns at the same node.
      */
     public boolean  solarOberth() { return solarOberth; }
+    /**
+     * HF4A B7h: synodic-comet season requirement. Non-null on the comet
+     * SITE itself (data field {@code "synodic": "Red"|"Yellow"|"Blue"})
+     * and propagated by the loader to the closest non-decorative
+     * neighbour (the "adjacent coloured space" per H6). The pathfinder
+     * gates entry and exit by matching {@code seasonAtTurn(turn)}.
+     */
+    public Season   synodic()     { return synodic; }
     /**
      * Non-null only when type == SITE.
      * Use {@code isSite()} before calling to avoid null checks everywhere.
@@ -147,6 +157,7 @@ public final class MapNode {
         private int      flybyBoost  = 0;
         private int      solarMod    = 0;
         private boolean  solarOberth = false;
+        private Season   synodic     = null;
         private SiteData siteData    = null;
         private String   label       = null;
 
@@ -163,6 +174,7 @@ public final class MapNode {
         public Builder flybyBoost(int boost)         { this.flybyBoost = boost; return this; }
         public Builder solarMod(int solarMod)        { this.solarMod = solarMod; return this; }
         public Builder solarOberth(boolean solarOberth) { this.solarOberth = solarOberth; return this; }
+        public Builder synodic(Season synodic)       { this.synodic = synodic; return this; }
         public Builder siteData(SiteData siteData)   { this.siteData = siteData; return this; }
         public Builder label(String label)           { this.label = label;       return this; }
 

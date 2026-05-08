@@ -190,6 +190,14 @@ public final class MapLoader {
             b.solarOberth(p.get("solarOberth").getAsBoolean());
         }
 
+        // synodic — B7h/H6 season requirement on the comet site itself.
+        // The "adjacent coloured space" propagation runs as a graph pass
+        // after all nodes are loaded (see propagateSynodicToAdjacent).
+        if (p.has("synodic") && !p.get("synodic").isJsonNull()) {
+            Season s = Season.parse(p.get("synodic").getAsString());
+            if (s != null) b.synodic(s);
+        }
+
         // siteName — may appear on any node type as a display label
         String siteName = getString(p, "siteName", null);
 

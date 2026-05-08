@@ -1,11 +1,15 @@
 // Shareable URL hash for the active tab's user-input state.
 //
-// The URL fragment carries everything a recipient needs to reproduce the
-// plan locally — form (mass / fuel / engines), settings (no-Venus flyby,
-// jettison, debug), site filter, search query, selected start node,
-// pinned endpoint, and chosen route index. The search tree itself is
-// recomputed from those inputs on the recipient's side, not pasted, so
-// big traverseResult payloads stay out of the URL.
+// The URL fragment carries what a recipient needs to reproduce the plan
+// locally — form (mass / fuel / engines), settings (jettison), site
+// filter, selected start node, pinned endpoint, and chosen route index.
+// The search tree itself is recomputed from those inputs on the
+// recipient's side, not pasted, so big traverseResult payloads stay out
+// of the URL.
+//
+// Deliberately NOT shared: the debug toggle (per-user UI preference)
+// and the site-filter search query (typed-but-not-yet-applied input
+// that's noisy to round-trip).
 //
 // Encoding is human-readable: each shareable field becomes its own
 // `key=value` pair under the URL fragment. Engines (the only nested
@@ -28,8 +32,8 @@ export const SHARE_VERSION = 2;
 export const SHARE_FIELDS = [
     'dryMass', 'fuelText',
     'engines',
-    'disableVenusFlyby', 'allowFuelJettison', 'debug',
-    'siteFilter', 'searchQuery',
+    'allowFuelJettison',
+    'siteFilter',
     'selectedNode', 'pinnedEndpoint', 'selectedRouteIndex',
 ];
 
@@ -121,10 +125,7 @@ export function readShareFromUrl() {
     if (params.has('start'))   out.selectedNode = params.get('start');
     if (params.has('pin'))     out.pinnedEndpoint = params.get('pin');
     if (params.has('route'))   out.selectedRouteIndex = parseInt(params.get('route')) || 0;
-    if (params.has('q'))       out.searchQuery = params.get('q');
-    if (params.has('noVenus')) out.disableVenusFlyby = params.get('noVenus') !== '0';
     if (params.has('jettison')) out.allowFuelJettison = params.get('jettison') !== '0';
-    if (params.has('debug'))   out.debug = params.get('debug') !== '0';
     if (params.has('types') || params.has('hyd')) {
         out.siteFilter = {
             types: params.has('types')
@@ -148,10 +149,7 @@ function buildHash(tabState) {
     if (tabState.selectedNode)                push('start', tabState.selectedNode);
     if (tabState.pinnedEndpoint)              push('pin', tabState.pinnedEndpoint);
     if (tabState.selectedRouteIndex)          push('route', tabState.selectedRouteIndex);
-    if (tabState.searchQuery)                 push('q', tabState.searchQuery);
-    if (tabState.disableVenusFlyby)           push('noVenus', '1');
     if (tabState.allowFuelJettison)           push('jettison', '1');
-    if (tabState.debug)                       push('debug', '1');
     if (tabState.siteFilter) {
         const t = tabState.siteFilter.types;
         if (t && t.length)                    push('types', t.join(','));

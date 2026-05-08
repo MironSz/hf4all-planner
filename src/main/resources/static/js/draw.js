@@ -15,6 +15,14 @@ import { drawFlight } from './flightAnimation.js';
 import { getActiveEndpoint, getActiveRouteIndex, getTreeNodeIds, getPathToRoot } from './routeTree.js';
 import { readSiteFilter } from './siteFilter.js';
 import { rotateAboutCentre } from './rotation.js';
+import { seasonForYear } from './solarCycle.js';
+
+// Season → CSS hex for the per-segment side strip. Mirrors the cycle
+// widget's own colour palette so the user can match a label to the
+// matching spot on the strip at a glance.
+const SEASON_COLOR = { red: '#e94560', yellow: '#f1c40f', blue: '#3498db' };
+
+function wrapYear(y) { return ((y - 1) % 12 + 12) % 12 + 1; }
 
 // rAF-driven animation tick. Single-flight via animRafId; draw() arms it
 // at the end of each render when a route is active, animTick re-arms via
@@ -207,18 +215,51 @@ function drawInner() {
                 solarPowered: b.querySelector('.e-solar').checked,
             }));
 
-            // Pre-pass: locate segment-start indices (engine swap or turn
-            // boundary) so we know each segment's end when computing how
-            // many burns it contains.
-            const segStarts = [];
+            // Pre-pass: walk the path edges and split them into "blocks":
+            //   - 'wait'   = consecutive wait edges at the same node
+            //               (pn[i-1].nodeId === pn[i].nodeId && pn[i].turns > pn[i-1].turns).
+            //               Rendered as a single "wait N turn(s)" label
+            //               spanning the full turn range, regardless of how
+            //               many turns the search broke them into.
+            //   - 'move'   = consecutive move edges sharing engine+turn,
+            //               which is the original "engine segment" notion.
+            //               Rendered with engine / burn / fuel info.
+            // Wait blocks are ALWAYS broken out separately so a player who
+            // declines to move just sees "wait", not a misleading
+            // "Engine 1 - Burns 0 - Fuel Steps 0" box.
+            const blocks = [];
             {
-                let lastEng = -2, lastT = -1;
-                for (let i = 1; i < pathNodes.length; i++) {
-                    const ei = pathNodes[i].engineIndex;
-                    const tn = pathNodes[i].turns;
-                    if (ei >= 0 && (ei !== lastEng || tn !== lastT)) segStarts.push(i);
-                    lastEng = ei;
-                    lastT   = tn;
+                let i = 1;
+                while (i < pathNodes.length) {
+                    const prev = pathNodes[i - 1];
+                    const cur = pathNodes[i];
+                    const isWait = prev.nodeId === cur.nodeId && cur.turns > prev.turns;
+
+                    if (isWait) {
+                        let end = i + 1;
+                        while (end < pathNodes.length) {
+                            const p2 = pathNodes[end - 1];
+                            const c2 = pathNodes[end];
+                            if (p2.nodeId !== c2.nodeId || c2.turns <= p2.turns) break;
+                            end++;
+                        }
+                        blocks.push({ kind: 'wait', anchorIdx: i - 1, startIdx: i, endIdx: end });
+                        i = end;
+                    } else {
+                        const ei = cur.engineIndex;
+                        const tn = cur.turns;
+                        let end = i + 1;
+                        while (end < pathNodes.length) {
+                            const p2 = pathNodes[end - 1];
+                            const c2 = pathNodes[end];
+                            // Boundary: another wait, or engine/turn change.
+                            if (p2.nodeId === c2.nodeId && c2.turns > p2.turns) break;
+                            if (c2.engineIndex !== ei || c2.turns !== tn) break;
+                            end++;
+                        }
+                        blocks.push({ kind: 'move', anchorIdx: i - 1, startIdx: i, endIdx: end });
+                        i = end;
+                    }
                 }
             }
 
@@ -228,22 +269,16 @@ function drawInner() {
             ctx.textAlign = 'left';
             ctx.textBaseline = 'bottom';
 
-            // PASS 1: build a label record per segment. We don't draw
+            // PASS 1: build a label record per block. We don't draw
             // anything yet — we need to know every box's preferred bounds
             // before we can resolve overlaps.
             const labels = [];
-            const drawnAt = new Set(); // dedupe labels on the same map node
-            for (let s = 0; s < segStarts.length; s++) {
-                const i = segStarts[s];
-                const ei = pathNodes[i].engineIndex;
-                const turn = pathNodes[i].turns;
-                const segEnd = (s + 1 < segStarts.length) ? segStarts[s + 1] : pathNodes.length;
-                const anchor = pathNodes[i - 1];
+            const drawnAt = new Set(); // dedupe labels with identical content+anchor
+            const startYear = (state.activeTab && state.activeTab.state.solarYear) || 1;
+            for (const block of blocks) {
+                const anchor = pathNodes[block.anchorIdx];
                 const p = points[anchor.nodeId];
                 if (!p) continue;
-                const key = anchor.nodeId + '|' + ei + '|' + turn;
-                if (drawnAt.has(key)) continue;
-                drawnAt.add(key);
                 const ax = p.x * imgW;
                 const ay = p.y * imgH;
                 // Viewport-rotated anchor: where the anchor visually lands
@@ -252,65 +287,96 @@ function drawInner() {
                 // segment labels appear axis-aligned regardless of rotation.
                 const aRot = rotateAboutCentre(ax, ay, +1);
                 const rax = aRot.x, ray = aRot.y;
-                // Use the post-jettison wet mass when this segment starts a
-                // turn that jettisoned fuel — otherwise the segment-start
-                // mass is just the anchor's mass (mid-turn engine swap or
-                // turn-boundary with no jettison).
-                const jettisoned   = pathNodes[i].jettisonedHere || 0;
-                const wmForSegment = jettisoned > 0 ? pathNodes[i].wetMass : anchor.wetMass;
-                const segStartFuelSpent = jettisoned > 0
-                        ? pathNodes[i].fuelSpent
-                        : anchor.fuelSpent;
-                const afterburns = pathNodes[i].afterburnedHere || 0;
-                const eng = engineCfgs[ei];
-                let thrustStr = '?';
-                if (eng) {
-                    const solarMod = eng.solarPowered ? (p.solarMod || 0) : 0;
-                    thrustStr = String(eng.baseThrust + weightClassMod(wmForSegment) + solarMod + afterburns);
-                }
-                const line1 = turn + '. Engine ' + (ei + 1) + ' - ' + weightClassName(wmForSegment) + ' - Thrust ' + thrustStr;
+                const lineH = fontPx + 4;
 
-                // Burns within this segment.
-                //   • Standard burn: move into a burn-type node from a
-                //     different node — counts as 1 (free or paid).
-                //   • Forced turn at a Hohmann intersection: same-node,
-                //     same-turn move that consumed fuel — counts as 2.
-                //   • Free pivots / cruise / waitTurn — count as 0.
-                // Skip the jettison-creation edge (pn[i-1] → pn[i]) when this
-                // segment starts with a jettison node — that edge changes
-                // fuelSpent but is NOT a burn.
-                const burnLoopStart = jettisoned > 0 ? i + 1 : i;
-                let burns = 0;
-                for (let k = burnLoopStart; k < segEnd; k++) {
-                    const prev = pathNodes[k - 1];
-                    const cur  = pathNodes[k];
-                    const dst  = points[cur.nodeId];
-                    if (!dst) continue;
-                    const sameNode = (prev.nodeId === cur.nodeId);
-                    const sameTurn = (prev.turns  === cur.turns);
-                    if (!sameNode && dst.type === 'burn') {
-                        burns++;
-                    } else if (sameNode && sameTurn && cur.fuelSpent > prev.fuelSpent) {
-                        burns += 2;
+                let line1, line2 = null, line3 = null, labelTurn, key;
+                if (block.kind === 'wait') {
+                    // Wait block: skip engine info entirely. Each wait edge
+                    // represents one full mission turn spent doing nothing
+                    // (turn N → turn N+1 = "spent turn N waiting"), so the
+                    // displayed range is anchor.turns ..= lastChild.turns - 1.
+                    // The post-wait state's turn (lastChild.turns) is the
+                    // NEXT active turn — that one is labelled by whichever
+                    // segment starts there.
+                    const fromTurn = anchor.turns;
+                    const toTurn   = pathNodes[block.endIdx - 1].turns - 1;
+                    const count    = block.endIdx - block.startIdx;
+                    const range = (count === 1) ? String(fromTurn) : (fromTurn + '-' + toTurn);
+                    line1 = range + '. wait ' + count + (count === 1 ? ' turn' : ' turns');
+                    labelTurn = fromTurn;  // season strip uses the first wait turn
+                    key = anchor.nodeId + '|wait|' + fromTurn + '-' + toTurn;
+                } else {
+                    // Move block (existing engine-label logic).
+                    const i      = block.startIdx;
+                    const segEnd = block.endIdx;
+                    const ei     = pathNodes[i].engineIndex;
+                    labelTurn    = pathNodes[i].turns;
+                    key          = anchor.nodeId + '|' + ei + '|' + labelTurn;
+                    // Use the post-jettison wet mass when this segment starts a
+                    // turn that jettisoned fuel — otherwise the segment-start
+                    // mass is just the anchor's mass.
+                    const jettisoned   = pathNodes[i].jettisonedHere || 0;
+                    const wmForSegment = jettisoned > 0 ? pathNodes[i].wetMass : anchor.wetMass;
+                    const segStartFuelSpent = jettisoned > 0
+                            ? pathNodes[i].fuelSpent
+                            : anchor.fuelSpent;
+                    const afterburns = pathNodes[i].afterburnedHere || 0;
+                    const eng = engineCfgs[ei];
+                    let thrustStr = '?';
+                    if (eng) {
+                        const solarMod = eng.solarPowered ? (p.solarMod || 0) : 0;
+                        thrustStr = String(eng.baseThrust + weightClassMod(wmForSegment) + solarMod + afterburns);
                     }
-                }
-                const fuelSteps = pathNodes[segEnd - 1].fuelSpent - segStartFuelSpent;
-                let line2 = 'Burns ' + burns + ' - Fuel Steps ' + fuelSteps;
-                if (afterburns > 0) line2 += ' - Afterburn +' + afterburns;
-                const line3 = jettisoned > 0 ? 'Jettison ' + jettisoned + ' fuel steps' : null;
+                    line1 = labelTurn + '. Engine ' + (ei + 1) + ' - ' + weightClassName(wmForSegment) + ' - Thrust ' + thrustStr;
 
+                    // Burns within this segment.
+                    //   • Standard burn: move into a burn-type node from a
+                    //     different node — counts as 1 (free or paid).
+                    //   • Forced turn at a Hohmann intersection: same-node,
+                    //     same-turn move that consumed fuel — counts as 2.
+                    //   • Free pivots / cruise — count as 0.
+                    // Skip the jettison-creation edge (pn[i-1] → pn[i]) when this
+                    // segment starts with a jettison node — that edge changes
+                    // fuelSpent but is NOT a burn.
+                    const burnLoopStart = jettisoned > 0 ? i + 1 : i;
+                    let burns = 0;
+                    for (let k = burnLoopStart; k < segEnd; k++) {
+                        const prev = pathNodes[k - 1];
+                        const cur  = pathNodes[k];
+                        const dst  = points[cur.nodeId];
+                        if (!dst) continue;
+                        const sameNode = (prev.nodeId === cur.nodeId);
+                        const sameTurn = (prev.turns  === cur.turns);
+                        if (!sameNode && dst.type === 'burn') {
+                            burns++;
+                        } else if (sameNode && sameTurn && cur.fuelSpent > prev.fuelSpent) {
+                            burns += 2;
+                        }
+                    }
+                    const fuelSteps = pathNodes[segEnd - 1].fuelSpent - segStartFuelSpent;
+                    line2 = 'Burns ' + burns + ' - Fuel Steps ' + fuelSteps;
+                    if (afterburns > 0) line2 += ' - Afterburn +' + afterburns;
+                    line3 = jettisoned > 0 ? 'Jettison ' + jettisoned + ' fuel steps' : null;
+                }
+                if (drawnAt.has(key)) continue;
+                drawnAt.add(key);
                 const w1 = ctx.measureText(line1).width;
-                const w2 = ctx.measureText(line2).width;
+                const w2 = line2 ? ctx.measureText(line2).width : 0;
                 const w3 = line3 ? ctx.measureText(line3).width : 0;
                 const w  = Math.max(w1, w2, w3);
-                const lineH = fontPx + 4;
-                const numLines = line3 ? 3 : 2;
-                const boxW = w + 6;
+                const numLines = (line3 ? 3 : (line2 ? 2 : 1));
+                // +12 = 2 px left border + 4 px left indent + 4 px right indent + 2 px right border.
+                // 1.5× the tight-fit width so the season-coloured frame
+                // reads at a glance even with a short label.
+                const boxW = Math.round((w + 12) * 1.5);
                 const boxH = 18 + (numLines - 1) * lineH;
                 // Preferred placement is in VIEWPORT-rotated space (above-
                 // right of where the anchor will visually land).
                 const boxX = rax + 7;
                 const preferredBoxY = ray - 10 - boxH + 2;
+                // Season at this label's turn. Same arithmetic as
+                // solarCycle.js: turn 1 is the user-set startingYear.
+                const segSeason = seasonForYear(wrapYear(startYear + labelTurn - 1));
                 labels.push({
                     ax, ay, rax, ray,
                     boxX, boxY: preferredBoxY,
@@ -318,6 +384,7 @@ function drawInner() {
                     boxW, boxH,
                     line1, line2, line3,
                     numLines, lineH,
+                    season: segSeason,
                 });
             }
 
@@ -452,13 +519,25 @@ function drawInner() {
                 ctx.rotate(-state.mapRotation);
                 ctx.fillStyle = 'rgba(0,0,0,0.75)';
                 ctx.fillRect(0, 0, L.boxW, L.boxH);
+                // Per-turn season indicator: the entire box frame is
+                // stroked in the season colour. More visible than a thin
+                // left-edge strip, and unambiguous about which season the
+                // segment belongs to. Colour mirrors the Solar Cycle widget
+                // palette.
+                const borderW = 2;
+                ctx.lineWidth   = borderW;
+                ctx.strokeStyle = SEASON_COLOR[L.season] || '#888';
+                ctx.strokeRect(borderW / 2, borderW / 2,
+                               L.boxW - borderW, L.boxH - borderW);
                 // Inside the rotated frame the box top-left is (0,0).
-                const textX = 3;
+                const textX = borderW + 4;
                 const bottomY = L.boxH - 2; // textBaseline='bottom'
                 ctx.fillStyle = '#ffe066';
                 ctx.fillText(L.line1, textX, bottomY - (L.numLines - 1) * L.lineH);
-                ctx.fillStyle = '#eee';
-                ctx.fillText(L.line2, textX, bottomY - (L.line3 ? L.lineH : 0));
+                if (L.line2) {
+                    ctx.fillStyle = '#eee';
+                    ctx.fillText(L.line2, textX, bottomY - (L.line3 ? L.lineH : 0));
+                }
                 if (L.line3) {
                     ctx.fillStyle = '#ff6b6b';
                     ctx.fillText(L.line3, textX, bottomY);

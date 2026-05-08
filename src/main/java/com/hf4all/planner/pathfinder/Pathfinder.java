@@ -4,6 +4,8 @@ import com.hf4all.planner.config.Config;
 import com.hf4all.planner.model.Fraction;
 import com.hf4all.planner.model.FuelStrip;
 import com.hf4all.planner.model.MapNode;
+import com.hf4all.planner.model.NodeType;
+import com.hf4all.planner.model.Season;
 import com.hf4all.planner.model.SolarMap;
 import com.hf4all.planner.api.*;
 
@@ -32,8 +34,11 @@ public final class Pathfinder {
     private final List<EngineSpec> engines;
     private final int dryMass;
     private final int initialFuelSteps;
-    private final boolean disableVenusFlyby;
     private final boolean allowFuelJettison;
+    /** Year on the Sol Sunspot Cycle when turn 1 begins (1..12). Drives
+     *  the season-aware gates: Belt Roll +2 in red (H10b), Venus flyby
+     *  bonus blue-only (H8c), synodic-comet site/adjacent-space match. */
+    private final int startingYear;
 
     // Search-scoped mutable state — initialised in run(), shared with the
     // lazy-jettison helpers so they can enqueue alternatives without
@@ -50,12 +55,34 @@ public final class Pathfinder {
     private PriorityQueue<SearchState> queue;
 
     /** Frontier-bucket key: groups states that are directly comparable by
-     *  the {@link SearchState#notDominatedBy} context gates. */
+     *  the {@link SearchState#notDominatedBy} context gates.
+     *
+     *  <p>{@code turnMod12} ({@code (turn-1) % 12}) discriminates states by
+     *  position in the 12-year Sunspot Cycle (K1). Two states in the same
+     *  mod-12 class are at the same calendar year, so every future event
+     *  (Belt-Roll +2 in red H10b, synodic-comet gating B7h, Venus blue-only
+     *  H8c) lands on the same season for both — they are fully comparable
+     *  on the turn dim and lower-turn dominates. Two states in different
+     *  mod-12 classes have different calendar years going forward; their
+     *  future season-conditioned costs may diverge in either direction, so
+     *  they must remain incomparable on turn even when otherwise tied.
+     *
+     *  <p>This is the "identical-except-turn ⇒ incomparable, with cycle
+     *  closure at 12 turns" rule — the user's "up to 11 more turns
+     *  tolerance" specified literally. A coarser season-bucket (3 buckets
+     *  instead of 12) was tried as a performance hedge but is incorrect:
+     *  it allowed a turn-5-yellow state to dominate a turn-8-yellow state
+     *  even though their downstream radhaz crossings may fall in different
+     *  seasons (turn 13 red vs turn 16 yellow → +2 penalty asymmetry).
+     */
     private record FrontierKey(String nodeId, int engineIndex,
-                               String entryLabel, String previousNodeId) {}
+                               String entryLabel, String previousNodeId,
+                               int turnMod12) {}
 
-    private static FrontierKey keyOf(SearchState s) {
-        return new FrontierKey(s.node.id(), s.engineIndex, s.entryLabel, s.previousNodeId);
+    private FrontierKey keyOf(SearchState s) {
+        int turnMod = ((s.turn - 1) % 12 + 12) % 12;
+        return new FrontierKey(s.node.id(), s.engineIndex, s.entryLabel,
+                s.previousNodeId, turnMod);
     }
 
     private static final int MAX_TURNS = Config.searchMaxTurns();
@@ -70,13 +97,21 @@ public final class Pathfinder {
 
     private Pathfinder(SolarMap map, List<EngineSpec> engines,
                        int dryMass, int initialFuelSteps,
-                       boolean disableVenusFlyby, boolean allowFuelJettison) {
+                       boolean allowFuelJettison,
+                       int startingYear) {
         this.map = map;
         this.engines = engines;
         this.dryMass = dryMass;
         this.initialFuelSteps = initialFuelSteps;
-        this.disableVenusFlyby = disableVenusFlyby;
         this.allowFuelJettison = allowFuelJettison;
+        this.startingYear = startingYear;
+    }
+
+    /** Season at the start of a given mission turn (turn 1 = startingYear).
+     *  Pure function — no Pareto-frontier interaction beyond what {@code turn}
+     *  already provides as a search dimension. */
+    private Season seasonAtTurn(int turn) {
+        return Season.atYear(startingYear + turn - 1);
     }
 
     // -------------------------------------------------------------------------
@@ -96,9 +131,15 @@ public final class Pathfinder {
         } catch (IllegalArgumentException e) {
             return error(request.startNodeId(), e.getMessage());
         }
+        int year = request.startingYear();
+        if (year < 1 || year > 12) {
+            return error(request.startNodeId(),
+                    "startingYear must be in 1..12 (got " + year + ")");
+        }
         return new Pathfinder(map, request.engines(),
                 request.dryMass(), request.fuelSteps(),
-                request.disableVenusFlyby(), request.allowFuelJettison()).run(start);
+                request.allowFuelJettison(),
+                year).run(start);
     }
 
     private static TraverseResponse error(String startId, String message) {
@@ -164,8 +205,18 @@ public final class Pathfinder {
                 }
             }
 
-            // Wait-turn option (available when mid-turn)
-            if (isMidTurn(current)) {
+            // Wait-turn option. HF4A lets a player decline to move and just
+            // advance the Sunspot Cube — so waitTurn is available not only
+            // mid-turn (settling partial fuel after a move) but also at
+            // turn-start (a no-move turn that costs nothing). Without the
+            // turn-start branch the search has to move out and back to
+            // waste a turn at the start node, which spends a paid burn just
+            // to wait — exactly what's needed when timing a season-gated
+            // departure (e.g. waiting for blue to enter Venus).
+            // canEndTurnHere already excludes landing burns (H5e) and
+            // decoratives, so this is the same gate isAllowed enforces
+            // for the same-node-different-turn transition.
+            if (canEndTurnHere(current)) {
                 for (SearchState wait : waitTurn(current)) {
                     if (!isAllowed(current, wait)) continue;
                     if (wait.turn > MAX_TURNS) continue;
@@ -450,9 +501,13 @@ public final class Pathfinder {
         MapNode dest = neighbor.node;
         boolean sameNode = current.node.equals(dest);
 
-        // User-controlled: forbid entering Venus flyby nodes.
-        if (disableVenusFlyby && !sameNode
-                && dest.type() == com.hf4all.planner.model.NodeType.VENUS) {
+        // H8c — Venus flyby is fully gated by season: passage AND boost are
+        // both restricted to BLUE. Outside blue, the spacecraft cannot enter
+        // a Venus node at all (handled here so every flavour of expand* sees
+        // the same gate; the bonus-burn check inside expandCruise is now
+        // structurally unreachable outside blue).
+        if (!sameNode && dest.type() == NodeType.VENUS
+                && seasonAtTurn(current.turn) != Season.BLUE) {
             return List.of();
         }
 
@@ -478,13 +533,19 @@ public final class Pathfinder {
     }
 
     /**
-     * Radiation is applied on node entry. The rolled severity is the node's
-     * raw radiation minus the ship's current thrust (floor 0, per the original
-     * HF4A JS rule {@code Math.max(RADIATION - thrust, 0)}). The new
+     * Radiation is applied on node entry. Severity is the node's raw
+     * radiation minus the ship's current thrust (floor 0; original HF4A
+     * rule {@code Math.max(RADIATION - thrust, 0)}). The new
      * {@code worstRadRoll} is the running max over the path.
+     *
+     * <p>HF4A H10b: in season RED, every Belt Roll suffers a +2 penalty.
+     * Applied here before the floor so a radhaz with rad=2 + season-red
+     * still produces a positive severity even when thrust would normally
+     * cancel it.
      */
-    private static int updatedRadRoll(int currentWorst, MapNode dest, int thrust) {
-        int mitigated = Math.max(dest.radiation() - thrust, 0);
+    private int updatedRadRoll(int currentWorst, MapNode dest, int thrust, int turn) {
+        int penalty = (seasonAtTurn(turn) == Season.RED) ? 2 : 0;
+        int mitigated = Math.max(dest.radiation() - thrust + penalty, 0);
         return Math.max(currentWorst, mitigated);
     }
 
@@ -509,7 +570,7 @@ public final class Pathfinder {
         boolean isHazard  = dest.hazard();
         boolean isLanding = !dest.landing().isZero();
         int newHazards   = current.hazards + (isHazard ? 1 : 0);
-        int newRadRoll   = updatedRadRoll(current.worstRadRoll, dest, destThrust);
+        int newRadRoll   = updatedRadRoll(current.worstRadRoll, dest, destThrust, current.turn);
         // H5e: half-burn lander spaces (landing = 1/2) cost half the fuel
         // steps of a full burn. landing == 1 (full burn) leaves cost unchanged.
         Fraction burnCost = engine.fuelConsumption();
@@ -656,12 +717,16 @@ public final class Pathfinder {
         int newHazards   = current.hazards + (isHazard ? 1 : 0);
         int newRadRoll   = sameNode
                 ? current.worstRadRoll
-                : updatedRadRoll(current.worstRadRoll, dest, newThrust);
+                : updatedRadRoll(current.worstRadRoll, dest, newThrust, current.turn);
         int visitedInc   = (!sameNode && !dest.isDecorative()) ? 1 : 0;
 
         int newFreeBurns = current.freeBurns;
         List<String> newBonusSites = new ArrayList<>(current.bonusSites);
         if (!sameNode && dest.isFlyby()) {
+            // H8c Venus passage is fully season-gated upstream in
+            // expandToNeighbor — by the time we get here, a Venus dest is
+            // guaranteed to be in BLUE, so the +flybyBoost is unconditional
+            // for all flyby types.
             newFreeBurns += dest.flybyBoost();
             newBonusSites.add(dest.id());
         }
@@ -828,11 +893,6 @@ public final class Pathfinder {
         return engine.baseThrust() + weightMod + solar;
     }
 
-    /** True while the state is a mid-turn position (reached by burn/turn/cruise, not waitTurn). */
-    private static boolean isMidTurn(SearchState s) {
-        return s.parent != null && s.turn == s.parent.turn;
-    }
-
     // -------------------------------------------------------------------------
     // Lazy jettison (HF4A F3d / G1f)
     //
@@ -926,11 +986,35 @@ public final class Pathfinder {
             if (!passesLandingBurnThrustGate(to))   return false;
             if (!passesSiteLandingRule(from, to))   return false;
             if (!passesSiteLiftoffRule(from, to))   return false;
+            if (!passesSynodicSeasonGate(from, to)) return false;
             if (isReversingLastMove(from, to))      return false;
         } else if (from.turn != to.turn) {
             // Same-node different-turn = waitTurn.
             if (!canEndTurnHere(from))              return false;
         }
+        return true;
+    }
+
+    /**
+     * HF4A B7h/H6: synodic comet sites and their adjacent coloured spaces
+     * are gated by season — a Spacecraft can only enter or leave them when
+     * the Sunspot Cube is in the matching season. The "adjacent coloured
+     * space" is auto-derived as the closest non-decorative neighbour of
+     * each tagged site (see {@link SolarMap#synodicGate(MapNode)}).
+     *
+     * <p>Both endpoints of the transition are checked: if either side is
+     * a gated node and the current season doesn't match, the transition
+     * is rejected. This naturally enforces both entry AND exit semantics.
+     */
+    private boolean passesSynodicSeasonGate(SearchState from, SearchState to) {
+        Season toGate = map.synodicGate(to.node);
+        if (toGate != null && seasonAtTurn(to.turn) != toGate) return false;
+        Season fromGate = map.synodicGate(from.node);
+        // Liftoff: 'from' was reached at from.turn; the move into 'to'
+        // happens during to.turn (which equals from.turn unless this
+        // transition crosses a turn boundary, but that's only true for
+        // waitTurn — handled separately by sameNode branch above).
+        if (fromGate != null && seasonAtTurn(to.turn) != fromGate) return false;
         return true;
     }
 
@@ -997,7 +1081,7 @@ public final class Pathfinder {
      * so {@link SearchState#notDominatedBy}'s context early-returns are
      * structurally dead here — every call exercises only the cost dims.
      */
-    private static boolean addIfBest(SearchState state, Map<FrontierKey, List<SearchState>> bestFound) {
+    private boolean addIfBest(SearchState state, Map<FrontierKey, List<SearchState>> bestFound) {
         FrontierKey key = keyOf(state);
         List<SearchState> existing = bestFound.computeIfAbsent(key, k -> new ArrayList<>());
 
@@ -1021,7 +1105,7 @@ public final class Pathfinder {
      * Returns true if the state is still present in its comparability-context
      * bucket (it may have been evicted by a state enqueued after it).
      */
-    private static boolean isStillBest(SearchState state, Map<FrontierKey, List<SearchState>> bestFound) {
+    private boolean isStillBest(SearchState state, Map<FrontierKey, List<SearchState>> bestFound) {
         List<SearchState> best = bestFound.get(keyOf(state));
         if (best == null) return false;
         for (SearchState s : best) {

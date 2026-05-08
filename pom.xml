@@ -81,10 +81,17 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
                 <configuration>
-                    <!-- Whole-fork timeout. Guards against runaway tests while
-                         leaving room for legitimately slow ones (solar-zone
-                         tests are ~15-30s each). -->
-                    <forkedProcessTimeoutInSeconds>300</forkedProcessTimeoutInSeconds>
+                    <!-- Whole-fork timeout. Bumped from 300 to 900 because the
+                         JUnit-Jupiter parallel test config (in
+                         src/test/resources/junit-platform.properties) packs
+                         many integration tests into a single fork. -->
+                    <forkedProcessTimeoutInSeconds>900</forkedProcessTimeoutInSeconds>
+                    <!-- Single fork; concurrency comes from JUnit Jupiter's
+                         own parallel-execution config. Re-using the fork keeps
+                         the @BeforeAll-loaded SolarMap singleton hot across
+                         classes. -->
+                    <forkCount>1</forkCount>
+                    <reuseForks>true</reuseForks>
                 </configuration>
             </plugin>
 

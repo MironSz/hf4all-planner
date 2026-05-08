@@ -58,13 +58,17 @@ export function fireTraverse() {
     const parsed = parseFuelText(fuelText, dryMass);
     const fuelSteps = parsed.ok ? parsed.fuelSteps : 0;
 
+    // Sunspot Cycle starting year (HF4A K1) — drives Belt-Roll +2 in red,
+    // Venus flyby in blue, synodic-comet site/adjacent gating.
+    const startingYear = (state.activeTab && state.activeTab.state.solarYear) || 1;
+
     const request = {
         startNodeId: state.selectedNode,
         engines: engines,
         dryMass: dryMass,
         fuelSteps: fuelSteps,
-        disableVenusFlyby: document.getElementById('no-venus-cb').checked,
-        allowFuelJettison: document.getElementById('allow-jettison-cb').checked
+        allowFuelJettison: document.getElementById('allow-jettison-cb').checked,
+        startingYear: startingYear
     };
 
     document.getElementById('status').textContent = 'Planning routes...';

@@ -8,6 +8,10 @@ import { updateEndpointFuelStrip } from './endpointFuelStripOverlay.js';
 import { draw } from './draw.js';
 import { persistTabs } from './tabs.js';
 import { startFlightAnimation } from './flightAnimation.js';
+import { seasonForYear } from './solarCycle.js';
+
+// Cycle wraps the 1..12 calendar year; matches Season.atYear's modulo.
+function wrapYear(y) { return ((y - 1) % 12 + 12) % 12 + 1; }
 
 export function updateRouteInfo() {
     const panel = document.getElementById('route-info');
@@ -107,11 +111,18 @@ function buildRouteDetailText() {
         return `${nm} [${p.type || '?'}] (id=${id})`;
     };
 
+    // Calendar-year context for the dump. The Sunspot Cycle starting year
+    // (HF4A K1) is a per-tab setting; year-at-turn-N = wrap(start+N-1) and
+    // determines season-conditioned rules (Belt-Roll +2 in red, Venus blue,
+    // synodic gates).
+    const startingYear = (state.activeTab && state.activeTab.state.solarYear) || 1;
+
     const header = [
         `Route ${idx + 1}/${treeNodeIds.length}`,
         `Start:  ${labelOf(state.selectedNode)}`,
         `End:    ${labelOf(active)}`,
         `Mass:   dry=${dryMass}, fuel=${fuelText}`,
+        `Year:   starting=${startingYear} (${seasonForYear(startingYear)})`,
         `Engines (${engines.length}):`,
         ...engines.map((e, i) =>
             `  e${i + 1}: thrust=${e.baseThrust}, fuel/burn=${e.fuel}, pivots=${e.pivots}` +
@@ -127,7 +138,10 @@ function buildRouteDetailText() {
                 ? ` e${n.engineIndex + 1}` : '';
         const jet = (n.jettisonedHere > 0) ? ` JETT${n.jettisonedHere}` : '';
         const ab  = (n.afterburnedHere > 0) ? ` AB+${n.afterburnedHere}` : '';
-        return `${i}) ${name} [${type}] t${n.turns} f${n.fuelSpent} h${n.hazards} r${n.worstRadRoll}${eng}${jet}${ab}`;
+        // Calendar year and season at this step's turn.
+        const yr = wrapYear(startingYear + n.turns - 1);
+        const season = seasonForYear(yr).charAt(0).toUpperCase();   // R / Y / B
+        return `${i}) ${name} [${type}] t${n.turns}(y${yr}${season}) f${n.fuelSpent} h${n.hazards} r${n.worstRadRoll}${eng}${jet}${ab}`;
     });
     return header + lines.join('\n');
 }

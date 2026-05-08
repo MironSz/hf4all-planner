@@ -173,23 +173,24 @@ select { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #
 .solar-cycle-spot.solar-yellow { background: #f1c40f; }
 .solar-cycle-spot.solar-blue   { background: #3498db; color: #fff; }
 .solar-cycle-spot:hover { transform: scale(1.15); border-color: #fff; }
+/* "Selected" = the *currently displayed* year — derives from the active
+   path node (turn 1 = startingYear; later turns advance the highlight
+   clockwise). White outline + glow + scale make it stand out. */
 .solar-cycle-spot.selected {
     border: 2px solid #fff;
     box-shadow: 0 0 6px rgba(255, 255, 255, 0.7);
-    transform: scale(1.2);
+    transform: scale(1.25);
+    z-index: 2;
 }
-/* Subtle dot indicator for the "starting year" spot when it's not
-   itself the currently-displayed (selected) one. Lets the user see
-   both: where their mission begins, and what year they're at on the
-   currently-hovered/pinned endpoint. */
-.solar-cycle-spot.starting-year::after {
-    content: '';
-    position: absolute;
-    width: 4px; height: 4px;
-    background: #fff;
-    border-radius: 50%;
-    margin-top: -16px;
-    box-shadow: 0 0 3px rgba(255, 255, 255, 0.7);
+/* "Starting year" = the year of turn 1 (set by clicking). Distinguishable
+   from the selected spot: cyan ring instead of white, no scale-up.
+   When the starting spot IS the displayed one (no path active or pinned
+   endpoint at turn 1), the .selected class wins via CSS source order so
+   the user sees the bigger white-ringed highlight rather than two
+   competing rings. */
+.solar-cycle-spot.starting-year:not(.selected) {
+    border: 2px dashed #2ecc71;
+    box-shadow: 0 0 4px rgba(46, 204, 113, 0.6);
 }
 .solar-cycle-spot { position: relative; }
 

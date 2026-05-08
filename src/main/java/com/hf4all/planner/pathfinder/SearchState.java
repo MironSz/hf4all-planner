@@ -135,8 +135,22 @@ final class SearchState {
      * <p>Domination means: other is ≥ on all benefit dimensions and ≤ on
      * all cost dimensions (with at least one strict inequality, checked
      * externally via {@link #equalState}).
+     *
+     * <p><b>Time leeway for Sunspot-cycle alignment.</b> Two states that
+     * are identical on every dimension EXCEPT {@code turn} are treated as
+     * incomparable — neither dominates the other regardless of who has
+     * the smaller turn count. This lets the search keep a slower-arriving
+     * state at a node when its eventual season-conditioned future cost
+     * (Belt-Roll +2 in red H10b, synodic-comet gating B7h, Venus flyby
+     * blue-only H8c) may beat the faster state's. States that differ on
+     * any other dim fall back to standard Pareto (turn included). In
+     * practice this only keeps a handful of extra states: paths through
+     * radhaz / hazard nodes already differentiate on those costs, so
+     * "identical except turn" mostly fires on safe waitTurn / coasting
+     * sequences where holding both options is cheap.
      */
     boolean notDominatedBy(SearchState other) {
+
         // If other is worse on any cost dimension, it cannot dominate this
         if (other.fuelStepsRemaining < this.fuelStepsRemaining) return true;
         if (other.partialStepsThisMove.isGreaterThan(this.partialStepsThisMove)) return true;

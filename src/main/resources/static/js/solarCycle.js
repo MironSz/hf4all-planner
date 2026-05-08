@@ -18,17 +18,19 @@
 import { state } from './state.js';
 import { persistTabs } from './tabs.js';
 import { getTreeNodeIds, getPathToRoot } from './routeTree.js';
+import { fireTraverse } from './traverse.js';
 
-// HF4A Sol Sunspot Cycle (Core Game): seasons cycle through red →
-// yellow → blue, four years each. Year 1 is the cycle start.
+// HF4A Sunspot Cycle (K1) seasons. The 12 years partition into three
+// 4-year colour bands in the order BLUE → YELLOW → RED, with year 1 at
+// the cycle start.
 const SEASON_FOR_YEAR = {
-    1:'red',    2:'red',    3:'red',    4:'red',
+    1:'blue',   2:'blue',   3:'blue',   4:'blue',
     5:'yellow', 6:'yellow', 7:'yellow', 8:'yellow',
-    9:'blue',  10:'blue',  11:'blue',  12:'blue',
+    9:'red',   10:'red',   11:'red',   12:'red',
 };
 
 export function seasonForYear(year) {
-    return SEASON_FOR_YEAR[year] || 'red';
+    return SEASON_FOR_YEAR[year] || 'blue';
 }
 
 /**
@@ -115,6 +117,9 @@ export function setStartingYear(y) {
     if (state.activeTab) state.activeTab.state.solarYear = y;
     updateSolarCycleDisplay();
     persistTabs();
+    // Season changes alter Belt-Roll +2, Venus-flyby blue gate, and
+    // synodic-comet accessibility — so a fresh traverse is required.
+    if (state.selectedNode) fireTraverse();
 }
 
 /**

@@ -4,7 +4,9 @@ import com.hf4all.planner.map.MapLoader;
 import com.hf4all.planner.model.SolarMap;
 import com.hf4all.planner.api.EngineSpec;
 import com.hf4all.planner.api.PathNode;
+import com.hf4all.planner.api.TraverseRequest;
 import com.hf4all.planner.api.TraverseResponse;
+import com.hf4all.planner.pathfinder.Pathfinder;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -37,14 +39,21 @@ class LandingRulesTest {
     void poweredLandingRequiresThrustStrictlyGreaterThanSize() {
         SolarMap sub = MapSubgraph.extract(fullMap, "969", 2);
 
-        EngineSpec belowThreshold = new EngineSpec(3, 2, false, 0);
-        TraverseResponse low = traverse(sub, "969", belowThreshold, FUEL_DEFAULT);
+        // dryMass=17 → dryStep=41 → fuelStep=41 → weight class -2 (Tug);
+        // fuelSteps=0 means no paid burns are affordable, so the search
+        // cannot fuel-burn its way down to a lighter weight class. Holds
+        // thrust at base+(-2) for the entire search, isolating the H6a
+        // gate test from the fuel-burn class-drop strategy.
+        EngineSpec belowThreshold = new EngineSpec(3, 2, false, 0); // thrust = 1
+        TraverseResponse low = Pathfinder.traverse(sub,
+                new TraverseRequest("969", java.util.List.of(belowThreshold), 17, 0));
         assertEquals("ok", low.status());
         assertFalse(reached(low, "4"),
                 "Eureka (size 1) must not be reachable with thrust=1: rule requires strict >");
 
-        EngineSpec atThreshold = new EngineSpec(4, 2, false, 0);
-        TraverseResponse ok = traverse(sub, "969", atThreshold, FUEL_DEFAULT);
+        EngineSpec atThreshold = new EngineSpec(4, 2, false, 0); // thrust = 2
+        TraverseResponse ok = Pathfinder.traverse(sub,
+                new TraverseRequest("969", java.util.List.of(atThreshold), 17, 0));
         assertEquals("ok", ok.status());
         assertTrue(reached(ok, "4"),
                 "Eureka (size 1) must be reachable with thrust=2");
@@ -82,14 +91,21 @@ class LandingRulesTest {
     void landingBurnGateEnforced() {
         SolarMap sub = MapSubgraph.extract(fullMap, "334", 2);
 
-        EngineSpec belowThreshold = new EngineSpec(12, 2, false, 0);
-        TraverseResponse low = traverse(sub, "334", belowThreshold, FUEL_DEFAULT);
+        // dryMass=17 → fuelStep=41 (Tug zone). fuelSteps=2 means at most
+        // ONE paid burn (the entry into 339 itself); even after that burn,
+        // the step is still 41 → weight class stays Tug. Locks thrust at
+        // base-2 for the whole search and isolates the landing-burn gate
+        // (H5e thrustRequired) from fuel-burn class-drop side-effects.
+        EngineSpec belowThreshold = new EngineSpec(12, 2, false, 0); // thrust = 10
+        TraverseResponse low = Pathfinder.traverse(sub,
+                new TraverseRequest("334", java.util.List.of(belowThreshold), 17, 2));
         assertEquals("ok", low.status());
         assertFalse(reached(low, "339"),
                 "landing burn 339 (thrustRequired=11) must not be enterable with thrust=10");
 
-        EngineSpec atThreshold = new EngineSpec(13, 2, false, 0);
-        TraverseResponse ok = traverse(sub, "334", atThreshold, 28);
+        EngineSpec atThreshold = new EngineSpec(13, 2, false, 0); // thrust = 11
+        TraverseResponse ok = Pathfinder.traverse(sub,
+                new TraverseRequest("334", java.util.List.of(atThreshold), 17, 2));
         assertEquals("ok", ok.status());
         assertTrue(reached(ok, "339"),
                 "landing burn 339 must be enterable with thrust=11");

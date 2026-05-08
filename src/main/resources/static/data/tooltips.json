@@ -1,6 +1,5 @@
 {
   "show-fuel-strip": "Show the rulebook fuel strip with Dry / Wet chits at the hovered or pinned endpoint's final state. Toggle off to hide the panel entirely.",
-  "no-venus": "Exclude Venus gravity-assist flybys from planned routes.",
   "allow-jettison": "Allow planner to drop fuel mid-route to improve thrust. May cause finding routes to take longer.",
 
   "dry-mass": "Ship mass without fuel, on the HF4A Wet-Mass strip (1–23). Higher total mass causes smaller thrust. You can also drag the red Dry chit on the fuel strip in the upper-left to set this visually.",

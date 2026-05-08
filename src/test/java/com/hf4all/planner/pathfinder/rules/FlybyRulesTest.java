@@ -101,21 +101,6 @@ class FlybyRulesTest {
     }
 
     /**
-     * H8c — when {@code disableVenusFlyby=true}, the pathfinder must refuse
-     * to enter any VENUS node. Scenario: decorative "40" sits between VENUS
-     * "33" and decorative "943"; the edge 40↔33 is bidirectional. Starting
-     * at "40", the adjacent Venus is reachable only when the flag is off.
-     *
-     * <p>(Lagrange "43" — another neighbour of 33 — is not used because the
-     * edge 43→33 carries a one-way "0" label that blocks cross-node entry
-     * into 33 from that side.)
-     *
-     * <ul>
-     *   <li>{@code disableVenusFlyby=false} → 33 must appear in endpoints.
-     *   <li>{@code disableVenusFlyby=true}  → 33 must NOT appear in endpoints.
-     * </ul>
-     */
-    /**
      * H5e — bonus burns from a flyby cannot be used on a lander burn. The
      * HF4A default map has NO flyby adjacent to (or within 2 hops of) a
      * landing burn — verified by MapScenarioScanner#printFlybysNearLanderBurns
@@ -156,21 +141,68 @@ class FlybyRulesTest {
         // Placeholder — see note above.
     }
 
+    /**
+     * H8c — the Venus flyby is fully season-gated: passage AND bonus
+     * burns are both restricted to the Sunspot Cube being in BLUE.
+     * Outside blue, Venus cannot be entered.
+     *
+     * <p>Note: with a 24-turn search horizon and a 12-year cycle, a
+     * blue window (years 1..4) will eventually arrive even when starting
+     * in red. So "reachable at all" is too weak an assertion — instead we
+     * check the season at every Venus arrival in the search tree:
+     * <b>every path that arrives at Venus must do so on a blue-calendar
+     * turn</b>. This catches both "passage in red" and "passage in yellow"
+     * regressions while still letting the search legitimately wait for
+     * blue.
+     */
     @Test
-    void disableVenusFlybyBlocksVenus() {
-        SolarMap sub = MapSubgraph.extract(fullMap, "40", 2);
+    void venusFlybyOnlyAccessibleInBlue() {
         EngineSpec engine = new EngineSpec(5, 2, false, 0);
 
-        TraverseResponse enabled = Pathfinder.traverse(sub,
-                new TraverseRequest("40", List.of(engine), DRY_DEFAULT, FUEL_DEFAULT, false, false));
-        assertEquals("ok", enabled.status());
-        assertTrue(reached(enabled, "33"),
-                "Venus (33) must be reachable from 40 when disableVenusFlyby=false");
+        // 1=blue, 5=yellow, 9=red — one starting year per season band.
+        for (int startingYear : new int[]{1, 5, 9}) {
+            TraverseResponse r = Pathfinder.traverse(fullMap,
+                    new TraverseRequest("40", List.of(engine), DRY_DEFAULT, FUEL_DEFAULT, false, startingYear));
+            assertEquals("ok", r.status(), "startingYear=" + startingYear);
+            // Walk the entire search tree and assert every Venus arrival is in blue.
+            int violations = countVenusArrivalsOutsideBlue(r.tree(), startingYear);
+            assertEquals(0, violations,
+                    "startingYear=" + startingYear + ": every Venus arrival must be in a blue calendar year. "
+                  + "violations=" + violations);
+        }
 
-        TraverseResponse disabled = Pathfinder.traverse(sub,
-                new TraverseRequest("40", List.of(engine), DRY_DEFAULT, FUEL_DEFAULT, true, false));
-        assertEquals("ok", disabled.status());
-        assertFalse(reached(disabled, "33"),
-                "Venus (33) must be unreachable from 40 when disableVenusFlyby=true");
+        // Also verify the boost differential remains observable: when turn 1
+        // IS blue, Venus is immediately accessible and downstream
+        // reachability is a strict superset of the red startingYear case
+        // (which only reaches Venus after a long wait).
+        TraverseResponse blue = Pathfinder.traverse(fullMap,
+                new TraverseRequest("40", List.of(engine), DRY_DEFAULT, FUEL_DEFAULT, false, 1));
+        TraverseResponse red = Pathfinder.traverse(fullMap,
+                new TraverseRequest("40", List.of(engine), DRY_DEFAULT, FUEL_DEFAULT, false, 9));
+        Set<String> blueOnly = new java.util.LinkedHashSet<>(blue.endpoints().keySet());
+        blueOnly.removeAll(red.endpoints().keySet());
+        assertFalse(blueOnly.isEmpty(),
+                "blue startingYear should reach ≥1 node red cannot — Venus's +2 boost from turn 1 unlocks downstream reach");
+    }
+
+    /**
+     * Counts PathNodes anywhere in the search tree at Venus (id "33") whose
+     * arrival turn falls outside a blue calendar year. With H8c fully
+     * gating Venus passage by season, this should always be zero.
+     */
+    private static int countVenusArrivalsOutsideBlue(PathNode root, int startingYear) {
+        int count = 0;
+        Deque<PathNode> q = new ArrayDeque<>();
+        if (root != null) q.add(root);
+        while (!q.isEmpty()) {
+            PathNode n = q.poll();
+            if ("33".equals(n.nodeId())) {
+                int year = ((startingYear + n.turns() - 1 - 1) % 12 + 12) % 12 + 1;
+                // Blue per K1 = years 1..4 (BLUE → YELLOW → RED ordering).
+                if (year < 1 || year > 4) count++;
+            }
+            q.addAll(n.children());
+        }
+        return count;
     }
 }

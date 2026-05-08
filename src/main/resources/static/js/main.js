@@ -61,13 +61,6 @@ document.getElementById('show-fuel-strip-cb').addEventListener('change', () => {
     draw();   // hides/shows the on-route green hover dot
 });
 
-// Toggling Venus-flyby-disable re-plans the current start, so the new
-// routing constraint takes effect without the user having to click again.
-document.getElementById('no-venus-cb').addEventListener('change', () => {
-    if (state.selectedNode) fireTraverse();
-    persistTabs();
-});
-
 document.getElementById('allow-jettison-cb').addEventListener('change', () => {
     if (state.selectedNode) fireTraverse();
     persistTabs();

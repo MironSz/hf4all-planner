@@ -64,7 +64,6 @@ public final class BenchmarkRun {
     private static final EngineSpec ENGINE_SOLAR =
             new EngineSpec(/* baseThrust */ 5, /* fuel */ 1, /* solar */ true, /* pivots */ 0);
 
-    private static final boolean DISABLE_VENUS_FLYBY = false;
     private static final boolean ALLOW_FUEL_JETTISON = true;
 
     // ---- Output file ----------------------------------------------------
@@ -93,7 +92,6 @@ public final class BenchmarkRun {
                 List.of(ENGINE_CHEMICAL, ENGINE_SOLAR),
                 DRY_MASS,
                 FUEL_STEPS,
-                DISABLE_VENUS_FLYBY,
                 ALLOW_FUEL_JETTISON);
 
         // Warmup — let the JIT compile the hot methods before we measure.

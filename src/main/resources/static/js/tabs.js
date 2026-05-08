@@ -36,7 +36,6 @@ function makeDefaultTabState() {
             solarPowered:     false,
             bonusPivots:      cfgI('ui.engine.pivots.default', 0),
         }],
-        disableVenusFlyby: false,
         allowFuelJettison: true,
         debug:             false,
         solarYear:         1,
@@ -79,7 +78,6 @@ function snapshotActiveTabFromDom() {
             decommissionsOnAerobrake:b.querySelector('.e-aerobrake-decom').checked,
         });
     });
-    s.disableVenusFlyby = document.getElementById('no-venus-cb').checked;
     s.allowFuelJettison = document.getElementById('allow-jettison-cb').checked;
     s.debug             = document.getElementById('debug-cb').checked;
     // solarYear is mutated only via the cycle widget click handler (setSolarYear)
@@ -118,7 +116,6 @@ function renderActiveTabToDom() {
             (s.fuelText != null) ? s.fuelText
           : (s.fuel    != null) ? String(s.fuel)
           : String(cfgI('ui.fuel.default', 15));
-    document.getElementById('no-venus-cb').checked       = !!s.disableVenusFlyby;
     document.getElementById('allow-jettison-cb').checked = (s.allowFuelJettison !== false);
     document.getElementById('debug-cb').checked    = !!s.debug;
     state.debugMode = !!s.debug;

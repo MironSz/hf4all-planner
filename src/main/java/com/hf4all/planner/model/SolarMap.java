@@ -22,6 +22,16 @@ public final class SolarMap {
     private final Map<MapNode, Set<MapNode>>              adjacencySet;
     private final Map<MapNode, Map<MapNode, String>>      edgeLabels;
 
+    /**
+     * HF4A B7h/H6 synodic-comet season gates. Populated at build time:
+     * every node tagged {@code "synodic": "Red|Yellow|Blue"} in the data
+     * maps to the corresponding {@link Season}; additionally, the closest
+     * non-decorative neighbour of each synodic site (the "adjacent
+     * coloured space" per H6) inherits the same season here. Pathfinder
+     * uses this map to gate entry/exit; missing key = no gate.
+     */
+    private final Map<MapNode, Season>                    synodicGates;
+
     private SolarMap(Builder b) {
         this.nodesById = Collections.unmodifiableMap(new HashMap<>(b.nodesById));
 
@@ -42,6 +52,53 @@ public final class SolarMap {
         b.edgeLabels.forEach((from, targets) ->
             el.put(from, Collections.unmodifiableMap(new HashMap<>(targets))));
         this.edgeLabels = Collections.unmodifiableMap(el);
+
+        // Compute synodic gates: each tagged site contributes itself and
+        // its closest non-decorative neighbour (BFS over decoratives).
+        this.synodicGates = Collections.unmodifiableMap(buildSynodicGates());
+    }
+
+    private Map<MapNode, Season> buildSynodicGates() {
+        Map<MapNode, Season> gates = new HashMap<>();
+        for (MapNode site : nodesById.values()) {
+            Season s = site.synodic();
+            if (s == null) continue;
+            gates.put(site, s);
+            // BFS from the site, walking through decorative nodes only,
+            // until we hit the first non-decorative neighbour. That node
+            // also gets the same season gate (H6 "adjacent coloured space").
+            Set<MapNode> seen = new HashSet<>();
+            seen.add(site);
+            Deque<MapNode> queue = new ArrayDeque<>();
+            for (MapNode neighbor : adjacency.getOrDefault(site, List.of())) {
+                if (seen.add(neighbor)) queue.add(neighbor);
+            }
+            while (!queue.isEmpty()) {
+                MapNode n = queue.poll();
+                if (!n.isDecorative()) {
+                    // First non-decorative reachable through dec-chain — this is
+                    // the "adjacent coloured space". Stop the BFS for this site.
+                    gates.merge(n, s, (existing, candidate) ->
+                            existing == candidate ? existing : existing); // keep first if conflict
+                    break;
+                }
+                for (MapNode hop : adjacency.getOrDefault(n, List.of())) {
+                    if (seen.add(hop)) queue.add(hop);
+                }
+            }
+        }
+        return gates;
+    }
+
+    /**
+     * Returns the {@link Season} this node may be entered/exited in (B7h/H6),
+     * or {@code null} for unrestricted nodes (the vast majority).
+     * Populated for every {@link MapNode#synodic() synodic-tagged} site
+     * AND its closest non-decorative neighbour (the "adjacent coloured
+     * space" per H6).
+     */
+    public Season synodicGate(MapNode node) {
+        return synodicGates.get(node);
     }
 
     // -------------------------------------------------------------------------
