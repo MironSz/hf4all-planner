@@ -6,13 +6,14 @@ import com.hf4all.planner.config.Config;
 import com.hf4all.planner.model.SolarMap;
 import com.hf4all.planner.pathfinder.Pathfinder;
 import com.hf4all.planner.api.TraverseRequest;
-import com.hf4all.planner.api.TraverseResponse;
+import com.hf4all.planner.api.TraverseStreamChunk;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 
 public final class TraverseHandler implements HttpHandler {
@@ -53,8 +54,7 @@ public final class TraverseHandler implements HttpHandler {
                 return;
             }
 
-            TraverseResponse response = Pathfinder.traverse(map, request);
-            sendJson(exchange, 200, gson.toJson(response));
+            streamTraverse(exchange, request);
 
         } catch (JsonSyntaxException e) {
             sendJson(exchange, 400, gson.toJson(Map.of("status", "invalid JSON: " + e.getMessage())));
@@ -100,6 +100,65 @@ public final class TraverseHandler implements HttpHandler {
                     + " exceeds the " + totalSteps + "-step strip cap (HF4A F3a)";
         }
         return null;
+    }
+
+    /**
+     * Streams the search as NDJSON — one {@link TraverseStreamChunk} JSON
+     * object per line, flushed as each mission year is planned, then a final
+     * {@code done} chunk. Uses chunked transfer encoding ({@code
+     * sendResponseHeaders(200, 0)}) so the browser can render routes
+     * incrementally. Owns all of its own errors: once the 200 is committed the
+     * status can't change, so a mid-stream failure is surfaced as a final
+     * error chunk rather than a 500.
+     */
+    private void streamTraverse(HttpExchange exchange, TraverseRequest request) {
+        try {
+            exchange.getResponseHeaders().set("Content-Type", "application/x-ndjson; charset=UTF-8");
+            // Defeat proxy/server response buffering so chunks aren't held back.
+            exchange.getResponseHeaders().set("X-Accel-Buffering", "no");
+            exchange.sendResponseHeaders(200, 0); // 0 => chunked transfer encoding
+        } catch (IOException e) {
+            return; // couldn't start the response; connection already broken
+        }
+
+        try (var os = exchange.getResponseBody()) {
+            Pathfinder.PartialSink sink = chunk -> {
+                try {
+                    os.write((gson.toJson(chunk) + "\n").getBytes(StandardCharsets.UTF_8));
+                    os.flush();
+                } catch (IOException e) {
+                    // Client navigated away / aborted the fetch. Unwind the
+                    // search promptly instead of running it to completion for
+                    // a reader that's gone.
+                    throw new ClientDisconnected(e);
+                }
+            };
+            try {
+                Pathfinder.traverseStreaming(map, request, sink);
+            } catch (ClientDisconnected disconnect) {
+                // expected when the browser cancels an in-flight stream
+            } catch (Exception e) {
+                // Failure after the 200 was committed: best-effort final error
+                // chunk so the frontend stops waiting, then close.
+                try {
+                    TraverseStreamChunk errChunk = new TraverseStreamChunk(
+                            0, 0, true, request.startNodeId(),
+                            List.of(), Map.of(), "internal error: " + e.getMessage());
+                    os.write((gson.toJson(errChunk) + "\n").getBytes(StandardCharsets.UTF_8));
+                    os.flush();
+                } catch (IOException ignored) {
+                    // client likely gone too; nothing more to do
+                }
+            }
+        } catch (IOException e) {
+            // opening/closing the response body failed — nothing actionable
+        }
+    }
+
+    /** Thrown from the streaming sink to unwind the search when the client
+     *  closes the connection mid-stream. */
+    private static final class ClientDisconnected extends RuntimeException {
+        ClientDisconnected(IOException cause) { super(cause); }
     }
 
     private void sendJson(HttpExchange exchange, int status, String json) throws IOException {

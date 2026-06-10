@@ -54,6 +54,31 @@ public final class Pathfinder {
     private Map<FrontierKey, List<SearchState>> bestFound;
     private PriorityQueue<SearchState> queue;
 
+    // Streaming support. {@code sink} is non-null only for a streaming run;
+    // the plain traverse() path leaves it null and therefore skips every
+    // year-boundary bookkeeping branch below, staying perf-identical.
+    private PartialSink sink;
+    private String startNodeId;
+    // queuedByTurn[t] = number of states with turn == t currently in the
+    // priority queue. Once it (and every lower bucket) hits zero, mission
+    // year t can gain no further route — turn is monotonic non-decreasing
+    // across expansion — so its partial is final and we publish it. Allocated
+    // only when streaming. minQueuedTurn / emittedYear are the advancing
+    // cursor over fully-drained years.
+    private int[] queuedByTurn;
+    private int minQueuedTurn;
+    private int emittedYear;
+    // Delta emission: a stable tree-node id per on-path SearchState (assigned
+    // once, reused across every chunk), the running id counter (0 = synthetic
+    // root), whether the root has been emitted, and which (endpoint nodeId →
+    // tree id) pairs have already been sent. Together these let each chunk
+    // transmit only the newly-finalised subtree, so the whole tree crosses the
+    // wire exactly once.
+    private IdentityHashMap<SearchState, Integer> streamNodeId;
+    private int streamNextId;
+    private boolean rootEmitted;
+    private Map<String, Set<Integer>> sentEndpointIds;
+
     /** Frontier-bucket key: groups states that are directly comparable by
      *  the {@link SearchState#notDominatedBy} context gates.
      *
@@ -118,28 +143,72 @@ public final class Pathfinder {
     // Public entry point
     // -------------------------------------------------------------------------
 
+    /**
+     * Callback for {@link #traverseStreaming}: receives each cumulative
+     * partial result as a mission year is fully planned, then a final
+     * {@code done} chunk. Implementations typically serialise the chunk to
+     * the HTTP response; throwing from {@code accept} (e.g. on client
+     * disconnect) unwinds the search and stops it promptly.
+     */
+    @FunctionalInterface
+    public interface PartialSink {
+        void accept(TraverseStreamChunk chunk);
+    }
+
+    /** Non-streaming entry point — runs the search to completion and returns
+     *  the full result. Behaviour is unchanged from before streaming existed;
+     *  every test and the benchmark use this form. */
     public static TraverseResponse traverse(SolarMap map, TraverseRequest request) {
+        return traverseInternal(map, request, null);
+    }
+
+    /** Streaming entry point — same search, but pushes a cumulative partial
+     *  result to {@code sink} each time a mission year is fully planned, plus
+     *  a final {@code done} chunk carrying the complete result. On a
+     *  validation failure the lone {@code done} chunk carries the error. */
+    public static void traverseStreaming(SolarMap map, TraverseRequest request, PartialSink sink) {
+        traverseInternal(map, request, sink);
+    }
+
+    private static TraverseResponse traverseInternal(SolarMap map, TraverseRequest request,
+                                                     PartialSink sink) {
         MapNode start = map.nodeById(request.startNodeId());
-        if (start == null) {
-            return error(request.startNodeId(), "unknown node: " + request.startNodeId());
-        }
-        if (request.engines() == null || request.engines().isEmpty()) {
-            return error(request.startNodeId(), "at least one engine required");
-        }
-        try {
-            FuelStrip.validateFuelSteps(request.dryMass(), request.fuelSteps());
-        } catch (IllegalArgumentException e) {
-            return error(request.startNodeId(), e.getMessage());
-        }
-        int year = request.startingYear();
-        if (year < 1 || year > 12) {
-            return error(request.startNodeId(),
-                    "startingYear must be in 1..12 (got " + year + ")");
+        String validationMsg = validationError(map, request, start);
+        if (validationMsg != null) {
+            TraverseResponse err = error(request.startNodeId(), validationMsg);
+            // Deliver validation failures through the same channel so the
+            // frontend's streaming reader sees a uniform shape: one done chunk,
+            // year 0, nothing planned, with the message carried in `status`.
+            if (sink != null) {
+                sink.accept(new TraverseStreamChunk(0, MAX_TURNS, true,
+                        request.startNodeId(), List.of(), Map.of(), validationMsg));
+            }
+            return err;
         }
         return new Pathfinder(map, request.engines(),
                 request.dryMass(), request.fuelSteps(),
                 request.allowFuelJettison(),
-                year).run(start);
+                request.startingYear()).run(start, sink);
+    }
+
+    /** Shared request validation for both entry points. Returns the error
+     *  message, or {@code null} when the request is runnable. Check order
+     *  matches the original traverse() so the error text is unchanged. */
+    private static String validationError(SolarMap map, TraverseRequest request, MapNode start) {
+        if (start == null) return "unknown node: " + request.startNodeId();
+        if (request.engines() == null || request.engines().isEmpty()) {
+            return "at least one engine required";
+        }
+        try {
+            FuelStrip.validateFuelSteps(request.dryMass(), request.fuelSteps());
+        } catch (IllegalArgumentException e) {
+            return e.getMessage();
+        }
+        int year = request.startingYear();
+        if (year < 1 || year > 12) {
+            return "startingYear must be in 1..12 (got " + year + ")";
+        }
+        return null;
     }
 
     private static TraverseResponse error(String startId, String message) {
@@ -150,11 +219,26 @@ public final class Pathfinder {
     // Algorithm phases
     // -------------------------------------------------------------------------
 
-    private TraverseResponse run(MapNode start) {
+    private TraverseResponse run(MapNode start, PartialSink sink) {
+        this.sink = sink;
+        this.startNodeId = start.id();
         bestFound = new HashMap<>();
         queue = new PriorityQueue<>(BY_COST);
+        if (sink != null) {
+            streamNodeId = new IdentityHashMap<>();
+            streamNextId = 1;            // 0 is reserved for the synthetic root
+            rootEmitted = false;
+            sentEndpointIds = new HashMap<>();
+        }
         Map<FrontierKey, List<SearchState>> result = search(start);
-        Map<String, List<SearchState>> endpoints = finalPrune(result);
+        if (sink != null) {
+            // Final message: flush any subtree deeper than the last partial year
+            // and mark done. Every node has now been sent exactly once across the
+            // deltas — there is no full resend.
+            emitDelta(Integer.MAX_VALUE, MAX_TURNS, true);
+            return null; // streaming callers ignore the return value
+        }
+        Map<String, List<SearchState>> endpoints = finalPrune(result, Integer.MAX_VALUE);
         return buildResponse(start.id(), endpoints);
     }
 
@@ -176,8 +260,13 @@ public final class Pathfinder {
                 null, false, 0L);
         addTurnStartStates(seeds, pseudoCurrent, initialFuelSteps, /*jettisoned=*/ 0,
                 /*turn=*/ 1, /*parent=*/ null);
+        if (sink != null) {
+            queuedByTurn = new int[MAX_TURNS + 2];
+            minQueuedTurn = 1;
+            emittedYear = 0;
+        }
         for (SearchState s : seeds) {
-            if (addIfBest(s, bestFound)) queue.add(s);
+            if (addIfBest(s, bestFound)) enqueue(s);
         }
 
         int iterations = 0;
@@ -185,6 +274,10 @@ public final class Pathfinder {
             if (++iterations > MAX_ITERATIONS) break;
 
             SearchState current = queue.poll();
+            // Decrement before the stale-skip so dominated (dropped) states
+            // still free their turn bucket. turn is monotonic, so a bucket
+            // reaching zero genuinely means that year has no more active work.
+            if (sink != null) queuedByTurn[Math.min(current.turn, MAX_TURNS + 1)]--;
             if (!isStillBest(current, bestFound)) continue;
 
             // Expand to graph neighbors
@@ -201,7 +294,7 @@ public final class Pathfinder {
                         continue;
                     }
                     if (next.turn > MAX_TURNS) continue;
-                    if (addIfBest(next, bestFound)) queue.add(next);
+                    if (addIfBest(next, bestFound)) enqueue(next);
                 }
             }
 
@@ -220,11 +313,144 @@ public final class Pathfinder {
                 for (SearchState wait : waitTurn(current)) {
                     if (!isAllowed(current, wait)) continue;
                     if (wait.turn > MAX_TURNS) continue;
-                    if (addIfBest(wait, bestFound)) queue.add(wait);
+                    if (addIfBest(wait, bestFound)) enqueue(wait);
+                }
+            }
+
+            // Streaming: now that this state's same-turn children are enqueued
+            // and counted, publish any mission year that just drained to zero.
+            // Because turn is monotonic non-decreasing across expansion, a year
+            // with no queued state at or below it can never gain another route,
+            // so its partial is final. Emit one snapshot per newly-drained year;
+            // the queue-not-empty guard leaves the tail to the final done send
+            // instead of re-emitting identical snapshots as the search winds down.
+            if (sink != null && !queue.isEmpty()) {
+                while (minQueuedTurn <= MAX_TURNS && queuedByTurn[minQueuedTurn] == 0) {
+                    minQueuedTurn++;
+                }
+                while (emittedYear + 1 < minQueuedTurn) {
+                    emittedYear++;
+                    emitDelta(emittedYear, emittedYear, false);
                 }
             }
         }
         return bestFound;
+    }
+
+    /** Enqueue a frontier state, tracking its turn for the streaming
+     *  year-cursor. The per-turn count lets {@link #search} detect when a
+     *  mission year has no remaining active states (and is therefore final).
+     *  The count is skipped entirely when not streaming. */
+    private void enqueue(SearchState s) {
+        queue.add(s);
+        if (sink != null) queuedByTurn[Math.min(s.turn, MAX_TURNS + 1)]++;
+    }
+
+    /**
+     * Emit a streaming delta: everything reachable within {@code pruneYear}
+     * mission years that hasn't been sent yet. {@code reportYear} is stamped on
+     * the chunk (= pruneYear for a partial; MAX_TURNS for the final flush).
+     *
+     * <p>Correctness rests on the superset property: a Pareto-optimal route
+     * completing in ≤ pruneYear years is never dominated later (a later state
+     * has a strictly greater turn and so cannot dominate on the turn dimension),
+     * so each year's Pareto subtree contains the previous year's. The delta is
+     * therefore purely additive — every on-path state is assigned a stable id
+     * once and each node / endpoint entry is transmitted exactly once.
+     */
+    private void emitDelta(int pruneYear, int reportYear, boolean done) {
+        Map<String, List<SearchState>> endpoints = finalPrune(bestFound, pruneYear);
+
+        List<StreamNode> addedNodes = new ArrayList<>();
+        if (!rootEmitted) {
+            addedNodes.add(rootStreamNode());
+            rootEmitted = true;
+        }
+
+        // Assign ids to any on-path states not yet seen, parents before
+        // children, emitting each as a flat delta node exactly once.
+        for (List<SearchState> states : endpoints.values()) {
+            for (SearchState ep : states) {
+                List<SearchState> chain = null;
+                for (SearchState s = ep; s != null && !hasId(s); s = s.parent) {
+                    if (chain == null) chain = new ArrayList<>();
+                    chain.add(s);
+                }
+                if (chain == null) continue;
+                // Ancestor-first so each node's parent already has an id.
+                for (int i = chain.size() - 1; i >= 0; i--) {
+                    SearchState s = chain.get(i);
+                    int id = streamNextId++;
+                    streamNodeId.put(s, id);
+                    int parentId = (s.parent == null) ? 0 : idOf(s.parent);
+                    addedNodes.add(toStreamNode(s, id, parentId));
+                }
+            }
+        }
+
+        // Endpoint delta: map node id → newly Pareto-optimal tree node ids.
+        Map<String, List<Integer>> addedEndpoints = new LinkedHashMap<>();
+        for (var entry : endpoints.entrySet()) {
+            String nodeId = entry.getKey();
+            Set<Integer> sent = sentEndpointIds.computeIfAbsent(nodeId, k -> new HashSet<>());
+            for (SearchState ep : entry.getValue()) {
+                int id = idOf(ep);
+                if (sent.add(id)) {
+                    addedEndpoints.computeIfAbsent(nodeId, k -> new ArrayList<>()).add(id);
+                }
+            }
+        }
+
+        sink.accept(new TraverseStreamChunk(reportYear, MAX_TURNS, done,
+                startNodeId, addedNodes, addedEndpoints, "ok"));
+    }
+
+    /** A plain turn-1 seed (no afterburn, no jettison) is folded into the
+     *  synthetic root rather than getting its own node — matching
+     *  {@link #buildResponse}. Such states resolve to root id 0. */
+    private static boolean isPlainSeed(SearchState s) {
+        return s.parent == null && !s.afterburnedThisMove && s.jettisonedAtTurnStart == 0;
+    }
+
+    /** True once a state already has a stable id (or is folded into the root). */
+    private boolean hasId(SearchState s) {
+        return isPlainSeed(s) || streamNodeId.containsKey(s);
+    }
+
+    /** Stable id of an already-seen state (root id 0 for a plain seed). */
+    private int idOf(SearchState s) {
+        return isPlainSeed(s) ? 0 : streamNodeId.get(s);
+    }
+
+    /** The synthetic root: the start position before any move (id 0).
+     *  Mirrors the root node built by {@link #buildResponse}. */
+    private StreamNode rootStreamNode() {
+        int rootWetMass = FuelStrip.wetMassAt(dryMass, initialFuelSteps);
+        return new StreamNode(0, -1, startNodeId,
+                initialFuelSteps, 0, initialFuelSteps, 1, 0, 1,
+                rootWetMass, 0, 0, 1, 0, 0, -1);
+    }
+
+    /** Flatten a search state to a delta tree node, mirroring the per-node
+     *  field computation in {@link #buildResponse}. */
+    private StreamNode toStreamNode(SearchState s, int id, int parentId) {
+        int eff   = s.effectiveFuelStepsRemaining();
+        int wm    = FuelStrip.wetMassAt(dryMass, eff);
+        int spent = initialFuelSteps - eff;
+        Fraction remainFrac = Fraction.of(s.fuelStepsRemaining).subtract(s.partialStepsThisMove);
+        Fraction spentFrac  = Fraction.of(initialFuelSteps).subtract(remainFrac);
+        // jettison / afterburn badges are reported only on the turn-start node
+        // where they happened (same rule as buildResponse).
+        boolean isTurnStart = (s.turnStart == null);
+        int jettisonedHere  = isTurnStart ? s.jettisonedAtTurnStart : 0;
+        int afterburnedHere = (isTurnStart && s.afterburnedThisMove)
+                ? engines.get(s.engineIndex).afterburnThrustGain() : 0;
+        return new StreamNode(id, parentId, s.node.id(),
+                eff, spent,
+                remainFrac.numerator(), remainFrac.denominator(),
+                spentFrac.numerator(),  spentFrac.denominator(),
+                wm, jettisonedHere, afterburnedHere,
+                s.turn, s.hazards, s.worstRadRoll, s.engineIndex);
     }
 
     /**
@@ -236,14 +462,21 @@ public final class Pathfinder {
      * comparability context), all buckets for the same nodeId must be
      * flattened together before the per-node output Pareto step.
      */
-    private Map<String, List<SearchState>> finalPrune(Map<FrontierKey, List<SearchState>> bestFound) {
-        // Collapse context-keyed buckets to a per-nodeId list.
+    private Map<String, List<SearchState>> finalPrune(Map<FrontierKey, List<SearchState>> bestFound,
+                                                      int maxTurn) {
+        // Collapse context-keyed buckets to a per-nodeId list, dropping states
+        // deeper than maxTurn. A partial snapshot keeps only routes ≤ year; the
+        // final result passes Integer.MAX_VALUE to keep everything.
         Map<String, List<SearchState>> byNode = new LinkedHashMap<>();
         for (var entry : bestFound.entrySet()) {
             String nodeId = entry.getKey().nodeId();
             MapNode node = map.nodeById(nodeId);
             if (node == null || node.isDecorative()) continue;
-            byNode.computeIfAbsent(nodeId, k -> new ArrayList<>()).addAll(entry.getValue());
+            for (SearchState s : entry.getValue()) {
+                if (s.turn <= maxTurn) {
+                    byNode.computeIfAbsent(nodeId, k -> new ArrayList<>()).add(s);
+                }
+            }
         }
 
         Map<String, List<SearchState>> endpoints = new LinkedHashMap<>();
@@ -930,7 +1163,7 @@ public final class Pathfinder {
                 List<SearchState> spawned = new ArrayList<>(engines.size());
                 addTurnStartStates(spawned, ts, newFuelSteps, alt, ts.turn, ts.parent);
                 for (SearchState s : spawned) {
-                    if (addIfBest(s, bestFound)) queue.add(s);
+                    if (addIfBest(s, bestFound)) enqueue(s);
                 }
                 return;
             }

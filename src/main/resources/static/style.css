@@ -4,6 +4,7 @@ body { display: flex; height: 100vh; background: #1a1a2e; color: #eee; font-fami
 #main { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
 #main img { display: block; transition: filter 180ms ease-out; }
 #main canvas { position: absolute; top: 0; left: 0; }
+#main #flight-canvas { pointer-events: none; }
 #main #hex-mask-overlay { position: absolute; top: 0; left: 0; pointer-events: none; }
 #main #hex-mask-overlay .hide-mask polygon { stroke: none; }
 
@@ -71,6 +72,20 @@ button { padding: 8px 16px; background: #e94560; color: white; border: none; cur
 button:hover { background: #c73650; }
 button:disabled { background: #555; cursor: not-allowed; }
 #status { font-size: 11px; color: #888; min-height: 40px; }
+/* Planning progress bar: determinate "Planned X / Y years" during the search,
+   then the reachable-site count. Driven by setProgress() in traverse.js. */
+/* flex-shrink:0 — the bar's children are absolutely positioned (content
+   height 0), so without this the #sidebar flex column shrinks it to nothing. */
+.planner-progress { position: relative; flex-shrink: 0; height: 20px; margin: 4px 0;
+                    background: #0f3460; border: 1px solid #2a4a7a; border-radius: 4px;
+                    overflow: hidden; }
+.planner-progress[hidden] { display: none; }
+#planner-progress-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0;
+                         background: #2e6da4; transition: width .15s ease-out; }
+#planner-progress-label { position: absolute; inset: 0; display: flex; align-items: center;
+                          justify-content: center; font-size: 11px; color: #e6f2fb;
+                          text-shadow: 0 1px 2px rgba(0,0,0,.6); pointer-events: none;
+                          white-space: nowrap; }
 #node-info { font-size: 12px; color: #ccc; min-height: 30px; background: #0f3460; padding: 8px; border-radius: 4px; }
 #debug-toggle { position: fixed; bottom: 12px; left: 12px; z-index: 100; display: flex; align-items: center; gap: 8px;
                 font-size: 12px; color: #e6e6e6;
@@ -133,15 +148,17 @@ button:disabled { background: #555; cursor: not-allowed; }
 .flag-cb-row input { margin: 0; }
 select { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #555; color: #eee; font-family: monospace; font-size: 12px; }
 
-/* ---- "How to use" instructions panel ---- */
-.instructions-panel { background: #0f3460; border-radius: 4px; font-size: 12px; color: #ccc; }
-.instructions-panel summary { padding: 8px; cursor: pointer; user-select: none; color: #7ec8e3; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; list-style: none; }
-.instructions-panel summary::-webkit-details-marker { display: none; }
-.instructions-panel summary::before { content: '▶'; display: inline-block; margin-right: 6px; transition: transform 0.15s; }
-.instructions-panel[open] summary::before { transform: rotate(90deg); }
-.instructions-panel summary:hover { background: #143359; border-radius: 4px; }
-.instructions-panel[open] summary { border-bottom: 1px solid #1a3758; border-radius: 4px 4px 0 0; }
-.instructions-body { padding: 8px 10px 10px; }
+/* ---- "How to use" button + window ---- */
+.howto-btn { width: 100%; box-sizing: border-box; background: #0f3460; color: #7ec8e3; border: 1px solid #2a4a72; border-radius: 4px; padding: 8px; margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; text-align: left; cursor: pointer; }
+.howto-btn:hover { background: #143359; color: #fff; }
+.howto-overlay { position: fixed; inset: 0; z-index: 300; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; padding: 20px; box-sizing: border-box; }
+.howto-window { position: relative; width: 100%; max-width: 520px; max-height: 85vh; overflow-y: auto; background: #0f3460; border: 1px solid #2a4a72; border-radius: 6px; box-shadow: 0 4px 24px rgba(0,0,0,0.6); padding: 16px 18px 18px; color: #ccc; font-size: 13px; text-align: center; }
+.howto-welcome { margin: 0 0 4px 0; padding: 0 32px; color: #fff; font-size: 16px; line-height: 1.3; }
+.howto-tagline { margin: 0 0 12px 0; color: #9fb3c8; font-size: 12px; font-style: italic; }
+.howto-title { margin: 0 0 12px 0; color: #7ec8e3; font-size: 13px; }
+.howto-close { position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; padding: 0; margin: 0; background: #143359; color: #7ec8e3; border: 1px solid #2a4a72; border-radius: 4px; font-size: 16px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.howto-close:hover { background: #1e4a7a; color: #fff; }
+.instructions-body { padding: 0; }
 .instructions-body p { margin: 0 0 6px 0; line-height: 1.45; }
 .instructions-body p:last-child { margin-bottom: 0; }
 .instructions-body b { color: #eee; }

@@ -16,6 +16,15 @@ export function initCanvas() {
     state.canvas.width = state.imgW;
     state.canvas.height = state.imgH;
 
+    // Overlay canvas for the flight sprite (same size; CSS transform inherited
+    // from #main). Drawn each animation frame instead of the whole base canvas.
+    state.flightCanvas = document.getElementById('flight-canvas');
+    if (state.flightCanvas) {
+        state.flightCanvas.width = state.imgW;
+        state.flightCanvas.height = state.imgH;
+        state.flightCtx = state.flightCanvas.getContext('2d');
+    }
+
     const z = d3.zoom()
         .scaleExtent([cfgF('ui.zoom.min', 0.1), cfgF('ui.zoom.max', 1.5)])
         .translateExtent([[0, 0], [state.imgW, state.imgH]])

@@ -36,6 +36,12 @@
              the existing canvas click/hover handlers see the events. -->
         <svg id="hex-mask-overlay" xmlns="http://www.w3.org/2000/svg"></svg>
         <canvas id="canvas"></canvas>
+        <!-- Junker flight-sprite layer. A separate canvas so the per-frame
+             flight animation repaints only this overlay, not the whole map +
+             route + hex-mask layers. Same size and CSS transform as #canvas
+             (via the "#main canvas" rule); pointer-events:none so the base
+             canvas keeps the click/hover handlers. -->
+        <canvas id="flight-canvas"></canvas>
     </div>
     <!-- Final-fuel-state visualisation. Anchored to the pinned endpoint's
          current screen position (sits OUTSIDE #main so the d3-zoom transform
@@ -76,6 +82,11 @@
             <input type="checkbox" id="hide-filtered-sites" checked>
             <label for="hide-filtered-sites" style="margin:0;cursor:pointer;" title="Paint over sites that don't match the active site filter.">Hide filtered sites</label>
         </span>
+    </div>
+
+    <div id="planner-progress" class="planner-progress" hidden>
+        <div id="planner-progress-fill"></div>
+        <div id="planner-progress-label"></div>
     </div>
 
     <div id="route-info" style="display:none;background:#0a1a30;border-radius:4px;font-family:monospace;font-size:13px;color:#fff;margin-bottom:8px;align-items:stretch;">
@@ -158,8 +169,25 @@
         </div>
     </div>
 
-    <details id="instructions" class="instructions-panel">
-        <summary>How to use</summary>
+    <button id="howto-btn" type="button" class="howto-btn">How to use</button>
+
+    <div id="solar-cycle" class="solar-cycle">
+        <div class="solar-cycle-label">Solar cycle year <span class="tip" data-tip-key="solar.cycle">?</span></div>
+        <div id="solar-cycle-track" class="solar-cycle-track"></div>
+    </div>
+
+    <div id="status">Loading map data...</div>
+    <div id="debug-route" style="display:none;font-size:11px;color:#aaa;background:#0a1a30;padding:8px;border-radius:4px;max-height:40vh;overflow-y:auto;white-space:pre;font-family:monospace"></div>
+</div>
+
+<!-- First-run "How to use" window. Auto-shown on first visit (see howto.js);
+     thereafter opened via the sidebar "How to use" button. Closed by the
+     "x" in the bottom-right corner. -->
+<div id="howto-overlay" class="howto-overlay" style="display:none">
+    <div class="howto-window" role="dialog" aria-modal="true" aria-label="How to use">
+        <h2 class="howto-welcome">Welcome to High Frontier 4 All Mission Planner!</h2>
+        <p class="howto-tagline">A <s>cheating</s> planning tool to optimise the fun out of the game.</p>
+        <h3 class="howto-title">How to use:</h3>
         <div class="instructions-body">
             <p><b>Select start</b> — Click any node on the map.</p>
             <p><b>Select endpoint</b> — Hover to preview, click to pin.</p>
@@ -171,17 +199,9 @@
             <p><b>Hide / show panel</b> — Use the <b>»</b> / <b>«</b> button (top-right).</p>
             <p><b>Rotate map</b> — Press <kbd>Q</kbd> / <kbd>E</kbd>, use the <b>⟲</b> / <b>⟳</b> buttons (top-left), or twist with two fingers on a touchscreen.</p>
         </div>
-    </details>
-
-    <div id="solar-cycle" class="solar-cycle">
-        <div class="solar-cycle-label">Solar cycle year <span class="tip" data-tip-key="solar.cycle">?</span></div>
-        <div id="solar-cycle-track" class="solar-cycle-track"></div>
+        <button id="howto-close" type="button" class="howto-close" title="Close">✕</button>
     </div>
-
-    <div id="status">Loading map data...</div>
-    <div id="debug-route" style="display:none;font-size:11px;color:#aaa;background:#0a1a30;padding:8px;border-radius:4px;max-height:40vh;overflow-y:auto;white-space:pre;font-family:monospace"></div>
 </div>
-
 <script type="module" src="/js/main.js"></script>
 </body>
 </html>

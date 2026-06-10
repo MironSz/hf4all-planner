@@ -11,7 +11,6 @@
 import { state } from './state.js';
 import { cfgI, cfgF } from './config.js';
 import { weightClassMod, weightClassName } from './fuelStrip.js';
-import { drawFlight } from './flightAnimation.js';
 import { getActiveEndpoint, getActiveRouteIndex, getTreeNodeIds, getPathToRoot } from './routeTree.js';
 import { readSiteFilter } from './siteFilter.js';
 import { rotateAboutCentre } from './rotation.js';
@@ -35,16 +34,20 @@ function ensureRouteAnimation() {
 function routeAnimTick() {
     animRafId = null;
     if (!getActiveEndpoint()) return; // route gone — let the chain end
-    draw();                           // re-renders with new dash offset
+    draw(true);                       // dash-only redraw — skip the hex-mask hook
 }
 
-export function draw() {
+export function draw(skipHooks = false) {
     drawInner();
-    // Fire post-draw hooks (currently the hex-mask overlay refresh).
-    // Mirrors the original monkey-patch which wrapped draw() and called
-    // updateHexMasks unconditionally — including when the inner draw
-    // bailed out via an early return.
-    for (const hook of state.drawHooks) hook();
+    // Fire post-draw hooks (the hex-mask overlay refresh) — unless this is a
+    // lightweight animation redraw (the marching dash re-running at frame
+    // rate). The masks can't change between dash frames, and the per-site SVG
+    // attribute churn is the dominant per-frame cost, so skipping it keeps the
+    // animation smooth. Every real state change (hover, pin, filter,
+    // reachability, toggles) still calls draw() with hooks enabled.
+    if (!skipHooks) {
+        for (const hook of state.drawHooks) hook();
+    }
     // Keep the marching-dash animation running while a route is shown.
     if (getActiveEndpoint()) ensureRouteAnimation();
 }
@@ -585,10 +588,9 @@ function drawInner() {
         }
     }
 
-    // Junker flying sprite — drawn over the route line and start
-    // marker, under the hover indicator dot. No-op when no flight is
-    // active (state.flightAnim == null).
-    drawFlight(ctx);
+    // Junker flying sprite is rendered on the separate #flight-canvas overlay
+    // (flightAnimation.drawFlightLayer) so per-frame flight motion doesn't
+    // repaint the whole map + route + hex masks. Nothing to draw here.
 
     // Hover indicator dot: marks the route node whose fuel state the
     // panel is currently reading. Driven by fuelStripHoverIndicatorId,

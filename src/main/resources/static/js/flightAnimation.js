@@ -21,12 +21,12 @@
 //     done:          bool
 //   }
 //
-// Re-render cadence: a private rAF loop calls draw() each frame while
-// active, ensuring drawFlight() (called at the tail of draw()) sees the
-// latest state. Bowing out cleanly on flight end / pin cancel.
+// Re-render cadence: a private rAF loop repaints the #flight-canvas overlay
+// each frame while active (drawFlightLayer → drawFlight), leaving the base
+// map / route / hex-mask layers untouched. Bows out cleanly on flight end /
+// pin cancel.
 
 import { state } from './state.js';
-import { draw } from './draw.js';
 import { getTreeNodeIds, getPathToRoot } from './routeTree.js';
 import { massToStripStep } from './fuelStrip.js';
 import { updateEndpointFuelStrip } from './endpointFuelStripOverlay.js';
@@ -142,6 +142,27 @@ export function cancelFlightAnimation() {
         rafHandle = null;
     }
     state.flightAnim = null;
+    clearFlightLayer();   // wipe any lingering sprite from the overlay
+}
+
+/** Repaint just the flight-sprite overlay: clear it, then redraw the junker +
+ *  particles. Leaves the base map / route / hex-mask layers untouched, so a
+ *  flight frame costs a small overlay clear+draw instead of a whole-map redraw.
+ *  When state.flightAnim is null the drawFlight() call no-ops and this simply
+ *  clears the layer. */
+function drawFlightLayer() {
+    const ctx = state.flightCtx;
+    const canvas = state.flightCanvas;
+    if (!ctx || !canvas) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawFlight(ctx);
+}
+
+/** Clear the overlay layer (on cancel / pin change). */
+function clearFlightLayer() {
+    const ctx = state.flightCtx;
+    const canvas = state.flightCanvas;
+    if (ctx && canvas) ctx.clearRect(0, 0, canvas.width, canvas.height);
 }
 
 function scheduleFrame() {
@@ -187,16 +208,16 @@ function tick(now) {
     if (elapsed >= anim.totalMs && anim.particles.length === 0) {
         anim.done = true;
         state.flightAnim = null;
-        // One last paint to clear the sprite, then refresh the fuel
-        // strip from the now-static endpoint state.
-        draw();
+        // Clear the sprite from the overlay (drawFlight no-ops now), then
+        // refresh the fuel strip from the now-static endpoint state.
+        drawFlightLayer();
         updateEndpointFuelStrip();
         return;
     }
 
-    // Drive the redraw — flight rendering is wired in draw.js via
-    // drawFlight(); the panel re-syncs wet chit position too.
-    draw();
+    // Drive the per-frame redraw — only the sprite overlay repaints; the base
+    // map + route keep their own (now hex-mask-free) dash-animation cadence.
+    drawFlightLayer();
     updateEndpointFuelStrip();
     scheduleFrame();
 }

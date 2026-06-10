@@ -6,12 +6,29 @@
 // tab is silently dropped — neither the new tab gets overwritten nor
 // the originating tab gets a delayed cache.
 import { state } from './state.js';
-import { buildTreeIndex } from './routeTree.js';
 import { draw } from './draw.js';
 import { persistTabs } from './tabs.js';
 import { parseFuelText } from './fuelStrip.js';
 import { updateRouteInfo, updateDebugRoute } from './routeInfo.js';
 import { startFlightAnimation } from './flightAnimation.js';
+
+// --- Progress bar (the #planner-progress element lives in index.html) ---
+// Drives the determinate "Planned X / Y years" bar during the search, then the
+// "N reachable sites" summary on completion. `fraction` is clamped to [0,1].
+function setProgress(fraction, label) {
+    const wrap = document.getElementById('planner-progress');
+    if (!wrap) return;
+    wrap.hidden = false;
+    const fill = document.getElementById('planner-progress-fill');
+    const lab  = document.getElementById('planner-progress-label');
+    if (fill) fill.style.width = (Math.max(0, Math.min(1, fraction)) * 100) + '%';
+    if (lab) lab.textContent = label;
+}
+
+function hideProgress() {
+    const wrap = document.getElementById('planner-progress');
+    if (wrap) wrap.hidden = true;
+}
 
 export function fireTraverse() {
     if (!state.selectedNode) return;
@@ -71,68 +88,172 @@ export function fireTraverse() {
         startingYear: startingYear
     };
 
-    document.getElementById('status').textContent = 'Planning routes...';
+    // Abort any previous in-flight stream so a refire doesn't leave the server
+    // computing routes for a reader we've already discarded.
+    if (state.traverseAbort) state.traverseAbort.abort();
+    const abort = new AbortController();
+    state.traverseAbort = abort;
+
+    // The progress bar (index.html #planner-progress) supersedes the old
+    // "Planning routes..." text; #status is now reserved for hints + errors.
+    setProgress(0, 'Planning…');
+    document.getElementById('status').textContent = '';
 
     // Capture the tab + token at fire time. If the user switches tabs before
-    // the response arrives, we discard it so the new tab isn't overwritten
-    // and stale results don't get cached into the originating tab either.
+    // the stream finishes, we discard the remaining chunks so the new tab
+    // isn't overwritten and stale results don't get cached into the old tab.
     const tabAtFire = state.activeTab;
     const tokenAtFire = ++state.pendingFetchToken;
-    // Client-measured round-trip time (network + server); we don't block
-    // on the server producing its own measurement.
+    // Client-measured round-trip time (network + server).
     const startedAt = performance.now();
 
-    fetch('/api/traverse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(request)
-    })
-    .then(r => r.json())
-    .then(data => {
-        if (tokenAtFire !== state.pendingFetchToken || state.activeTab !== tabAtFire) {
-            console.log('Traverse response discarded (tab switched)');
-            return;
-        }
-        console.log('Traverse response:', data.status,
-            'tree nodes:', data.tree ? 'yes' : 'no',
-            'endpoints:', data.endpoints ? Object.keys(data.endpoints).length : 0);
-        state.traverseResult = data;
-        state.treeIndex = data.tree ? buildTreeIndex(data.tree) : null;
-        console.log('Tree index built, entries:', state.treeIndex ? Object.keys(state.treeIndex).length : 0);
-        const routeCount = data.endpoints ? Object.keys(data.endpoints).length : 0;
-        const elapsedMs = performance.now() - startedAt;
-        const elapsedStr = elapsedMs < 1000
-                ? Math.round(elapsedMs) + ' ms'
-                : (elapsedMs / 1000).toFixed(1) + ' s';
-        document.getElementById('status').textContent =
-                routeCount + ' reachable sites found in ' + elapsedStr
-                + '. Hover to see routes. [' + data.status + ']';
+    const stillCurrent = () =>
+        tokenAtFire === state.pendingFetchToken && state.activeTab === tabAtFire;
 
-        // Restore the prior pin + route index when the same endpoint is
-        // still reachable. Route index is clamped against the new pareto
-        // count — a refire with different settings can grow or shrink
-        // the per-endpoint route list.
-        if (intendedPin && data.endpoints && Array.isArray(data.endpoints[intendedPin])) {
+    // Streamed deltas accumulate into a growing tree. Each chunk carries only
+    // the nodes/endpoints new since the previous one (the server sends each
+    // exactly once); we merge and redraw. We maintain BOTH a flat treeIndex /
+    // reachableNodes for live use AND nested `children`, so the resulting
+    // traverseResult.tree stays a self-contained tree the tab system can
+    // re-index on activation (tabs.js → buildTreeIndex).
+    const nodesById = {};   // tree id → node (with .children)
+    const treeIndex = {};   // tree id → { node, parent }
+    const reachable = {};   // map node id → [tree id, ...] (every tree node)
+    const endpoints = {};   // map node id → [tree id, ...] (Pareto endpoints)
+    let rootNode = null;
+    let pinRestored = false;
+
+    const applyChunk = (chunk) => {
+        // Merge new tree nodes — already ordered parents-before-children, so a
+        // node's parent is always present by the time we attach it.
+        for (const n of (chunk.addedNodes || [])) {
+            n.children = [];
+            nodesById[n.id] = n;
+            const parent = n.parentId >= 0 ? nodesById[n.parentId] : null;
+            if (parent) parent.children.push(n); else rootNode = n;
+            treeIndex[n.id] = { node: n, parent: parent };
+            (reachable[n.nodeId] || (reachable[n.nodeId] = [])).push(n.id);
+        }
+        // Merge new endpoint route ids (append-only — superset each year).
+        if (chunk.addedEndpoints) {
+            for (const mapId of Object.keys(chunk.addedEndpoints)) {
+                (endpoints[mapId] || (endpoints[mapId] = [])).push(...chunk.addedEndpoints[mapId]);
+            }
+        }
+
+        // Publish the accumulated view. traverseResult keeps a nested tree so
+        // tab snapshot/restore (buildTreeIndex) keeps working unchanged.
+        state.treeIndex = treeIndex;
+        state.reachableNodes = reachable;
+        state.traverseResult = {
+            startNodeId: chunk.startNodeId,
+            endpoints: endpoints,
+            tree: rootNode,
+            status: chunk.status
+        };
+
+        // Restore the user's prior pin as soon as that endpoint becomes
+        // reachable (once), so a refire / pasted share-link re-selects it
+        // without waiting for the whole search to finish.
+        if (!pinRestored && intendedPin && Array.isArray(endpoints[intendedPin])) {
             state.pinnedEndpoint = intendedPin;
-            const cap = Math.max(1, data.endpoints[intendedPin].length);
+            const cap = Math.max(1, endpoints[intendedPin].length);
             state.selectedRouteIndex = Math.max(0, Math.min(intendedRouteIndex || 0, cap - 1));
+            pinRestored = true;
+        }
+
+        const routeCount = Object.keys(endpoints).length;
+
+        if (!chunk.done) {
+            setProgress(chunk.year / chunk.maxYear,
+                    'Planned ' + chunk.year + ' / ' + chunk.maxYear + ' years');
+        } else if (chunk.status === 'ok') {
+            setProgress(1, routeCount + ' reachable sites');
+            const elapsedMs = performance.now() - startedAt;
+            const elapsedStr = elapsedMs < 1000
+                    ? Math.round(elapsedMs) + ' ms'
+                    : (elapsedMs / 1000).toFixed(1) + ' s';
+            document.getElementById('status').textContent =
+                    'Found in ' + elapsedStr + '. Hover to see routes.';
+        } else {
+            // Validation / internal error delivered as a lone done chunk.
+            hideProgress();
+            document.getElementById('status').textContent = chunk.status || 'No routes found.';
         }
 
         draw();
-        // After a successful pin restore, the sidebar route-info panel
-        // and the on-canvas junker need to refresh against the new tree.
-        // (When no pin is restored, the user can hover/click to engage
-        // the panel as normal — those listeners already trigger refresh.)
-        if (state.pinnedEndpoint) {
+        // Refresh the route-info card on every chunk so new routes to a
+        // pinned / hovered endpoint surface live: the "[i / N]" count climbs and
+        // the extra routes become cycle-able as they stream in. These are cheap
+        // DOM re-renders. The flight animation is heavier and would visibly
+        // restart each chunk, so it stays done-only.
+        if (state.pinnedEndpoint || state.hoveredNode) {
             updateRouteInfo();
             updateDebugRoute();
+        }
+        if (chunk.done && state.pinnedEndpoint) {
             startFlightAnimation();
         }
-        persistTabs();
-    })
-    .catch(err => {
-        if (tokenAtFire !== state.pendingFetchToken || state.activeTab !== tabAtFire) return;
-        console.error('Traverse error:', err);
-        document.getElementById('status').textContent = 'Error: ' + err;
-    });
+        if (chunk.done) persistTabs();
+    };
+
+    // Read the chunked NDJSON response: one JSON object per line, applied as it
+    // arrives. We buffer partial lines across reads and parse on each newline.
+    (async () => {
+        let res;
+        try {
+            res = await fetch('/api/traverse', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(request),
+                signal: abort.signal
+            });
+        } catch (err) {
+            if (err && err.name === 'AbortError') return;   // superseded by a refire
+            if (!stillCurrent()) return;
+            console.error('Traverse error:', err);
+            hideProgress();
+            document.getElementById('status').textContent = 'Error: ' + err;
+            return;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        const handleLine = (line) => {
+            if (!line.trim()) return;
+            let chunk;
+            try { chunk = JSON.parse(line); }
+            catch (e) { console.warn('Discarding malformed NDJSON line:', e); return; }
+            applyChunk(chunk);
+        };
+
+        try {
+            for (;;) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                let nl;
+                while ((nl = buffer.indexOf('\n')) >= 0) {
+                    const line = buffer.slice(0, nl);
+                    buffer = buffer.slice(nl + 1);
+                    // Bail if the user switched tabs / refired mid-stream.
+                    if (!stillCurrent()) { await reader.cancel(); return; }
+                    handleLine(line);
+                }
+            }
+            // Flush any trailing line that had no terminating newline.
+            buffer += decoder.decode();
+            if (stillCurrent() && buffer.trim()) handleLine(buffer);
+        } catch (err) {
+            if (err && err.name === 'AbortError') return;
+            if (!stillCurrent()) return;
+            console.error('Traverse stream error:', err);
+            hideProgress();
+            document.getElementById('status').textContent = 'Error: ' + err;
+        } finally {
+            if (state.traverseAbort === abort) state.traverseAbort = null;
+        }
+    })();
 }

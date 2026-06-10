@@ -35,6 +35,7 @@ export const state = {
     activeTab: null,
     tabSeq: 1,             // monotonic id source
     pendingFetchToken: 0,  // bumped on tab switch to discard stale fetches
+    traverseAbort: null,   // AbortController for the in-flight /api/traverse stream
     suppressFire: false,   // skip fireTraverse during DOM rebuilds
     tabsReady: false,      // gate snapshots until first activate
 
@@ -53,6 +54,8 @@ export const state = {
     bgImg: null,
     canvas: null,
     ctx: null,
+    flightCanvas: null,    // overlay canvas for the junker flight sprite
+    flightCtx: null,
     mainEl: null,
     container: null,
 

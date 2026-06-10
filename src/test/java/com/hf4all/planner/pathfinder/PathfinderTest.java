@@ -130,6 +130,79 @@ class PathfinderTest {
     }
 
     /**
+     * Streaming traverse emits additive deltas — one per fully-planned mission
+     * year, with strictly increasing {@code year} — then a single final
+     * {@code done} chunk. Each tree node is transmitted exactly once (parents
+     * before children), every partial's accumulated routes arrive within its
+     * year, and the accumulated reachable set equals the non-streaming result.
+     */
+    @Test
+    void streamingDeltasBuildTheFullTreeExactlyOnce() {
+        String startId = "334";
+        SolarMap sub = MapSubgraph.extract(map, startId, 12);
+        TraverseRequest req = defaultRequest(startId);
+
+        List<TraverseStreamChunk> chunks = new ArrayList<>();
+        Pathfinder.traverseStreaming(sub, req, chunks::add);
+
+        assertTrue(chunks.size() >= 2,
+                "expected at least one partial before the final done chunk");
+
+        // Exactly one done chunk, and it is the last one.
+        assertTrue(chunks.get(chunks.size() - 1).done(), "final chunk must be done");
+        for (int i = 0; i < chunks.size() - 1; i++) {
+            assertFalse(chunks.get(i).done(), "only the final chunk may be done");
+        }
+
+        // Accumulate the deltas exactly as the client does, checking invariants.
+        Map<Integer, StreamNode> nodesById = new HashMap<>();
+        Map<String, List<Integer>> endpoints = new LinkedHashMap<>();
+        int prevYear = 0;
+        for (TraverseStreamChunk c : chunks) {
+            assertEquals("ok", c.status());
+            if (!c.done()) {
+                assertTrue(c.year() > prevYear,
+                        "partial years must strictly increase (got " + c.year()
+                        + " after " + prevYear + ")");
+                prevYear = c.year();
+            }
+            // Each node sent exactly once; its parent is already known.
+            for (StreamNode n : c.addedNodes()) {
+                assertNull(nodesById.put(n.id(), n), "node id " + n.id() + " sent twice");
+                assertTrue(n.parentId() < 0 || nodesById.containsKey(n.parentId()),
+                        "node " + n.id() + " references unseen parent " + n.parentId());
+            }
+            for (var e : c.addedEndpoints().entrySet()) {
+                endpoints.computeIfAbsent(e.getKey(), k -> new ArrayList<>()).addAll(e.getValue());
+            }
+            // On a partial, every route accumulated so far arrives within `year`.
+            if (!c.done()) {
+                for (var e : endpoints.entrySet()) {
+                    for (int id : e.getValue()) {
+                        assertTrue(nodesById.get(id).turns() <= c.year(),
+                                "route to " + e.getKey() + " arrives in turn "
+                                + nodesById.get(id).turns() + " > partial year " + c.year());
+                    }
+                }
+            }
+        }
+
+        // Accumulated reachable set equals the non-streaming traverse.
+        TraverseResponse oneShot = Pathfinder.traverse(sub, req);
+        assertEquals(oneShot.endpoints().keySet(), endpoints.keySet(),
+                "streamed reachable set must match the non-streaming traverse");
+
+        // ...and the per-endpoint route COUNTS match. The delta accumulation
+        // must neither inflate nor drop any endpoint's route list vs the
+        // one-shot build — inflation would bloat the tree the client renders
+        // (and the per-frame work that scales with it).
+        for (var e : oneShot.endpoints().entrySet()) {
+            assertEquals(e.getValue().size(), endpoints.get(e.getKey()).size(),
+                    "route count for " + e.getKey() + " must match the non-streaming traverse");
+        }
+    }
+
+    /**
      * High-thrust path: with baseThrust=13 the engine has net thrust 11 at
      * Tug class — meets the landing burn thrustRequired=11 and exceeds site
      * size=10.

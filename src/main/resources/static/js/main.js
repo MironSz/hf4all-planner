@@ -22,6 +22,7 @@ import { setRotation, nudgeRotation } from './rotation.js';
 import { getActiveEndpoint, getTreeNodeIds } from './routeTree.js';
 import { startFlightAnimation } from './flightAnimation.js';
 import { initSolarCycle } from './solarCycle.js';
+import { initHowTo } from './howto.js';
 
 // Capture DOM refs that other modules read off `state`. The IIFE in the
 // original file did this at script-parse time; with `<script type=module>`
@@ -45,6 +46,7 @@ initRouteInfo();
 initEngineForm();
 initHexMask();
 initSolarCycle();
+initHowTo();
 
 // Top-bar checkbox listeners.
 document.getElementById('debug-cb').addEventListener('change', (e) => {
