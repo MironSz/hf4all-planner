@@ -10,6 +10,7 @@ import com.hf4all.planner.server.handler.TraverseHandler;
 import com.hf4all.planner.server.handler.editor.CelestialBodyEditorHandler;
 import com.hf4all.planner.server.handler.editor.ChitEditorHandler;
 import com.hf4all.planner.server.handler.editor.HexEditorHandler;
+import com.sun.net.httpserver.Filter;
 import com.sun.net.httpserver.HttpServer;
 
 import java.io.IOException;
@@ -41,12 +42,16 @@ public final class PlannerServer {
             throw new RuntimeException("Failed to bind to port " + port, e);
         }
 
-        server.createContext(Config.endpointMap(), new MapHandler());
-        server.createContext(Config.endpointTraverse(), new TraverseHandler(map));
-        server.createContext(Config.endpointConfig(), new ConfigHandler());
-        server.createContext("/hex-editor", new HexEditorHandler(allowDebugEndpoints));
-        server.createContext("/celestial-body-editor", new CelestialBodyEditorHandler(allowDebugEndpoints));
-        server.createContext("/chit-editor", new ChitEditorHandler(allowDebugEndpoints));
+        // One filter instance, shared across every context, logs a line per
+        // request into the same JUL log as the rest of the server.
+        Filter requestLog = new RequestLogFilter();
+
+        server.createContext(Config.endpointMap(), new MapHandler()).getFilters().add(requestLog);
+        server.createContext(Config.endpointTraverse(), new TraverseHandler(map)).getFilters().add(requestLog);
+        server.createContext(Config.endpointConfig(), new ConfigHandler()).getFilters().add(requestLog);
+        server.createContext("/hex-editor", new HexEditorHandler(allowDebugEndpoints)).getFilters().add(requestLog);
+        server.createContext("/celestial-body-editor", new CelestialBodyEditorHandler(allowDebugEndpoints)).getFilters().add(requestLog);
+        server.createContext("/chit-editor", new ChitEditorHandler(allowDebugEndpoints)).getFilters().add(requestLog);
         if (allowDebugEndpoints) {
             server.createContext(Config.endpointStop(), exchange -> {
                 // Only the local machine can shut the server down. With the
@@ -66,11 +71,11 @@ public final class PlannerServer {
                 try (var os = exchange.getResponseBody()) { os.write(body); }
                 LOG.info("Stop requested. Shutting down...");
                 server.stop(Config.serverStopDelaySeconds());
-            });
+            }).getFilters().add(requestLog);
         } else {
             LOG.info("Debug endpoints disabled: stop endpoint not registered, editor saves will return 403.");
         }
-        server.createContext("/", new IndexHandler());
+        server.createContext("/", new IndexHandler()).getFilters().add(requestLog);
 
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         server.start();

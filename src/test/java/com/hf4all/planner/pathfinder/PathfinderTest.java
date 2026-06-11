@@ -202,6 +202,7 @@ class PathfinderTest {
         }
     }
 
+
     /**
      * High-thrust path: with baseThrust=13 the engine has net thrust 11 at
      * Tug class — meets the landing burn thrustRequired=11 and exceeds site

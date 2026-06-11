@@ -71,13 +71,20 @@ public final class Pathfinder {
     // Delta emission: a stable tree-node id per on-path SearchState (assigned
     // once, reused across every chunk), the running id counter (0 = synthetic
     // root), whether the root has been emitted, and which (endpoint nodeId →
-    // tree id) pairs have already been sent. Together these let each chunk
-    // transmit only the newly-finalised subtree, so the whole tree crosses the
-    // wire exactly once.
+    // output-cost vector) pairs have already been sent. Together these let each
+    // chunk transmit only the newly-finalised subtree, so the whole tree crosses
+    // the wire exactly once.
+    //
+    // The sent-set is keyed by COST VECTOR, not tree id: a per-year finalPrune
+    // may pick a different state object as the representative for the same
+    // output-cost vector across emits (its tie-break depends on bestFound's
+    // growing iteration order), and ids are per-object. Deduping by cost vector
+    // makes the stream emit exactly one route per (node, cost vector), matching
+    // the one-shot finalPrune instead of double-counting the re-picked route.
     private IdentityHashMap<SearchState, Integer> streamNodeId;
     private int streamNextId;
     private boolean rootEmitted;
-    private Map<String, Set<Integer>> sentEndpointIds;
+    private Map<String, Set<String>> sentEndpointCostVectors;
 
     /** Frontier-bucket key: groups states that are directly comparable by
      *  the {@link SearchState#notDominatedBy} context gates.
@@ -113,12 +120,12 @@ public final class Pathfinder {
     private static final int MAX_TURNS = Config.searchMaxTurns();
     private static final int MAX_ITERATIONS = Config.searchMaxIterations();
 
-    /** Canonical ordering for the priority queue: more remaining fuel first
-     *  (cheaper plans), then fewer hazards, then earlier turns. */
+    /** Canonical ordering for the priority queue: earliest turn first, then
+     *  more remaining fuel (cheaper plans), then fewer hazards. */
     private static final Comparator<SearchState> BY_COST =
-            Comparator.comparingInt((SearchState s) -> -s.fuelStepsRemaining)
-                      .thenComparingInt(s -> s.hazards)
-                      .thenComparingInt(s -> s.turn);
+            Comparator.comparingInt((SearchState s) -> s.turn)
+                      .thenComparingInt(s -> -s.fuelStepsRemaining)
+                      .thenComparingInt(s -> s.hazards);
 
     private Pathfinder(SolarMap map, List<EngineSpec> engines,
                        int dryMass, int initialFuelSteps,
@@ -228,7 +235,7 @@ public final class Pathfinder {
             streamNodeId = new IdentityHashMap<>();
             streamNextId = 1;            // 0 is reserved for the synthetic root
             rootEmitted = false;
-            sentEndpointIds = new HashMap<>();
+            sentEndpointCostVectors = new HashMap<>();
         }
         Map<FrontierKey, List<SearchState>> result = search(start);
         if (sink != null) {
@@ -361,6 +368,22 @@ public final class Pathfinder {
     private void emitDelta(int pruneYear, int reportYear, boolean done) {
         Map<String, List<SearchState>> endpoints = finalPrune(bestFound, pruneYear);
 
+        // Drop any endpoint whose output-cost vector this node already emitted
+        // in an earlier delta, BEFORE assigning ids — so a re-picked
+        // representative for an already-sent route neither gets a fresh id nor
+        // leaves an orphan subtree on the wire. What remains is exactly the set
+        // of routes new to this chunk.
+        Map<String, List<SearchState>> fresh = new LinkedHashMap<>();
+        for (var entry : endpoints.entrySet()) {
+            String nodeId = entry.getKey();
+            Set<String> sent = sentEndpointCostVectors.computeIfAbsent(nodeId, k -> new HashSet<>());
+            for (SearchState ep : entry.getValue()) {
+                if (sent.add(costVectorKey(ep))) {
+                    fresh.computeIfAbsent(nodeId, k -> new ArrayList<>()).add(ep);
+                }
+            }
+        }
+
         List<StreamNode> addedNodes = new ArrayList<>();
         if (!rootEmitted) {
             addedNodes.add(rootStreamNode());
@@ -369,7 +392,7 @@ public final class Pathfinder {
 
         // Assign ids to any on-path states not yet seen, parents before
         // children, emitting each as a flat delta node exactly once.
-        for (List<SearchState> states : endpoints.values()) {
+        for (List<SearchState> states : fresh.values()) {
             for (SearchState ep : states) {
                 List<SearchState> chain = null;
                 for (SearchState s = ep; s != null && !hasId(s); s = s.parent) {
@@ -388,17 +411,15 @@ public final class Pathfinder {
             }
         }
 
-        // Endpoint delta: map node id → newly Pareto-optimal tree node ids.
+        // Endpoint delta: map node id → tree node ids of the routes new to this
+        // chunk (one per not-yet-seen cost vector, per the dedup above).
         Map<String, List<Integer>> addedEndpoints = new LinkedHashMap<>();
-        for (var entry : endpoints.entrySet()) {
-            String nodeId = entry.getKey();
-            Set<Integer> sent = sentEndpointIds.computeIfAbsent(nodeId, k -> new HashSet<>());
+        for (var entry : fresh.entrySet()) {
+            List<Integer> ids = new ArrayList<>();
             for (SearchState ep : entry.getValue()) {
-                int id = idOf(ep);
-                if (sent.add(id)) {
-                    addedEndpoints.computeIfAbsent(nodeId, k -> new ArrayList<>()).add(id);
-                }
+                ids.add(idOf(ep));
             }
+            if (!ids.isEmpty()) addedEndpoints.put(entry.getKey(), ids);
         }
 
         sink.accept(new TraverseStreamChunk(reportYear, MAX_TURNS, done,
@@ -521,14 +542,22 @@ public final class Pathfinder {
     private static List<SearchState> keepShortestPerCostVector(List<SearchState> states) {
         Map<String, SearchState> bestPerCost = new LinkedHashMap<>();
         for (SearchState s : states) {
-            String key = s.effectiveFuelStepsRemaining() + ":" + s.turn
-                       + ":" + s.hazards + ":" + s.worstRadRoll;
+            String key = costVectorKey(s);
             SearchState existing = bestPerCost.get(key);
             if (existing == null || s.visitedNodes < existing.visitedNodes) {
                 bestPerCost.put(key, s);
             }
         }
         return new ArrayList<>(bestPerCost.values());
+    }
+
+    /** Stable string key for the 4 output-cost dimensions. Two states with the
+     *  same key represent the same route cost — collapsed to one in
+     *  {@link #keepShortestPerCostVector} and deduped per node by the streaming
+     *  delta emitter. */
+    private static String costVectorKey(SearchState s) {
+        return s.effectiveFuelStepsRemaining() + ":" + s.turn
+             + ":" + s.hazards + ":" + s.worstRadRoll;
     }
 
     /** Phase 3 — Build the PathNode tree and endpoint index from parent pointers. */

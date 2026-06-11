@@ -46,7 +46,9 @@ mvn -q compile
 echo "=== Starting server (log: $LOG) ==="
 # Dev wrapper: enable /stop-hf4-planner and editor save endpoints. Production
 # deploys leave the flag at its default (false in server.properties).
-nohup bash -c "$(declare -f mvn); mvn exec:java@run -Dserver.debug.endpoints.allow=true" > "$LOG" 2>&1 &
+# Append (>>) so restarts don't wipe the prior log; a dated banner delimits runs.
+echo "=== $(date '+%Y-%m-%d %H:%M:%S') :: starting server on :$PORT ===" >> "$LOG"
+nohup bash -c "$(declare -f mvn); mvn exec:java@run -Dserver.debug.endpoints.allow=true" >> "$LOG" 2>&1 &
 echo $! > "$PIDFILE"
 
 # Wait for readiness
