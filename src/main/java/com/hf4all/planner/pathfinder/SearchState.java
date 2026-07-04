@@ -149,26 +149,81 @@ final class SearchState {
      * "identical except turn" mostly fires on safe waitTurn / coasting
      * sequences where holding both options is cheap.
      */
-    boolean notDominatedBy(SearchState other) {
+    boolean notDominatedBy(SearchState other, int thrustCap, boolean sitesSound) {
 
-        // If other is worse on any cost dimension, it cannot dominate this
+        // {@code other} can dominate this only if it is no worse on EVERY real
+        // cost/benefit dimension. The moment it is worse on any, it cannot
+        // dominate. We also track whether it is strictly BETTER on some real
+        // dimension, because {@code visitedNodes} is a pure tiebreaker — it is
+        // consulted ONLY when every real dimension ties. (Treating it as a
+        // co-equal Pareto axis would wrongly keep a higher-fuel/longer-path
+        // state incomparable to a lower-fuel/shorter one, bloating the frontier.)
+        boolean otherStrictlyBetter = false;
+
         if (other.fuelStepsRemaining < this.fuelStepsRemaining) return true;
+        if (other.fuelStepsRemaining > this.fuelStepsRemaining) otherStrictlyBetter = true;
+
         if (other.partialStepsThisMove.isGreaterThan(this.partialStepsThisMove)) return true;
+        if (this.partialStepsThisMove.isGreaterThan(other.partialStepsThisMove)) otherStrictlyBetter = true;
+
         if (other.hazards > this.hazards) return true;
+        if (other.hazards < this.hazards) otherStrictlyBetter = true;
+
         if (other.worstRadRoll > this.worstRadRoll) return true;
+        if (other.worstRadRoll < this.worstRadRoll) otherStrictlyBetter = true;
+
         if (other.turn > this.turn) return true;
+        if (other.turn < this.turn) otherStrictlyBetter = true;
+
         if (other.pivotsRemaining < this.pivotsRemaining) return true;
+        if (other.pivotsRemaining > this.pivotsRemaining) otherStrictlyBetter = true;
+
         if (other.burnsRemaining < this.burnsRemaining) return true;
+        if (other.burnsRemaining > this.burnsRemaining) otherStrictlyBetter = true;
+
         if (other.freeBurns < this.freeBurns) return true;
+        if (other.freeBurns > this.freeBurns) otherStrictlyBetter = true;
 
-        // Tiebreaker: fewer visited nodes is better (only matters when all above are equal)
-        if (other.visitedNodes > this.visitedNodes) return true;
+        // Option A — scoped, clamped thrust ({@code thrustCap} > 0 only at nodes
+        // from which a clearable thrust gate is reachable; passed in by the
+        // caller, which knows the bucket's node). Thrust is clamped to the
+        // gate's requirement, so states that already clear the hardest reachable
+        // gate collapse (no bloat) while a below-threshold state stays
+        // incomparable to an above-threshold one (preserving the gate route).
+        if (thrustCap > 0) {
+            int oThrust = Math.min(other.thrust, thrustCap);
+            int tThrust = Math.min(this.thrust, thrustCap);
+            if (oThrust < tThrust) return true;
+            if (oThrust > tThrust) otherStrictlyBetter = true;
+        }
 
-        return false; // other ≤ this on all dims → other dominates this
+        // Once-per-move sites (flyby / Oberth / mag-sail belts) consumed this
+        // movement. {@code other} can dominate only if it has consumed a
+        // SUBSET of this state's sites: then every future option of this
+        // (re-entry blocks, pending boosts) is also open to other. The boosts
+        // other already harvested are reflected in freeBurns above.
+        //
+        // Guarded by {@code sitesSound} (pathfinder.dom.bonusSitesSound,
+        // default OFF): fully sound but measured ~9× slower — incomparable
+        // consumed-site sets force both states to be kept, and mid-move
+        // states dominate the search. Without it a handful of exotic
+        // long-flyby-movement vectors (~0.03% in probes) can be missed.
+        if (sitesSound) {
+            if (!this.bonusSites.containsAll(other.bonusSites)) return true;
+            if (!other.bonusSites.containsAll(this.bonusSites)) otherStrictlyBetter = true;
+        }
+
+        // other is no worse than this on every real dimension. If it is strictly
+        // better on at least one, it dominates regardless of visitedNodes.
+        // Otherwise the real dimensions all tie and visitedNodes breaks the tie:
+        // the shorter path wins, so other dominates this only when it is no
+        // longer (other.visitedNodes <= this.visitedNodes).
+        if (otherStrictlyBetter) return false;
+        return other.visitedNodes > this.visitedNodes;
     }
 
     /** Structural equality on all dimensions used for dominance + identity. */
-    boolean equalState(SearchState other) {
+    boolean equalState(SearchState other, int thrustCap, boolean sitesSound) {
         return this.fuelStepsRemaining == other.fuelStepsRemaining
             && this.partialStepsThisMove.equals(other.partialStepsThisMove)
             && this.turn == other.turn
@@ -181,6 +236,11 @@ final class SearchState {
             && this.engineIndex == other.engineIndex
             && this.visitedNodes == other.visitedNodes
             && Objects.equals(this.previousNodeId, other.previousNodeId)
+            && (thrustCap == 0
+                || Math.min(this.thrust, thrustCap) == Math.min(other.thrust, thrustCap))
+            && (!sitesSound
+                || (this.bonusSites.containsAll(other.bonusSites)
+                    && other.bonusSites.containsAll(this.bonusSites)))
             && this.node.id().equals(other.node.id());
     }
 }

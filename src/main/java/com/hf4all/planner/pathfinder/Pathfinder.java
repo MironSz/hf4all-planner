@@ -54,6 +54,29 @@ public final class Pathfinder {
     private Map<FrontierKey, List<SearchState>> bestFound;
     private PriorityQueue<SearchState> queue;
 
+    /** Option A — scoped thrust dominance. Per-query (NOT static: searches run
+     *  concurrently) map from node to the highest clearable gate "thrust needed"
+     *  reachable within the hop horizon. {@code null} disables the feature. */
+    private Map<MapNode, Integer> thrustGateCap;
+
+    /** Proposal 1 — thrust-in-key dominance. When &gt; 0, every state's frozen
+     *  net thrust (clamped to this cap) plus its afterburn bit becomes part of
+     *  the {@link FrontierKey}, so states with behaviourally distinct thrust
+     *  are never compared (sound), while states above the cap collapse (no
+     *  clearable gate distinguishes them and every belt roll floors the same).
+     *  0 disables the feature (falls back to Option A / off). Per-query. */
+    private int keyThrustCap;
+
+    /** Sound once-per-move-site dominance (pathfinder.dom.bonusSitesSound,
+     *  default OFF — measured ~9× slower; see SearchState.notDominatedBy). */
+    private boolean bonusSitesSound;
+
+    /** Total states enqueued this run — reported when {@code pathfinder.stats}
+     *  is set. Iterations + enqueues are deterministic per (query, flags), so
+     *  they benchmark search-space size independent of clock speed / power
+     *  state, unlike wallclock. */
+    private long statEnqueued;
+
     // Streaming support. {@code sink} is non-null only for a streaming run;
     // the plain traverse() path leaves it null and therefore skips every
     // year-boundary bookkeeping branch below, staying perf-identical.
@@ -106,15 +129,33 @@ public final class Pathfinder {
      *  it allowed a turn-5-yellow state to dominate a turn-8-yellow state
      *  even though their downstream radhaz crossings may fall in different
      *  seasons (turn 13 red vs turn 16 yellow → +2 penalty asymmetry).
+     *
+     *  <p>{@code thrustKey} / {@code afterburned} (Proposal 1): the frozen
+     *  net thrust clamped to the global sound cap, and the once-per-move
+     *  afterburn bit. Frozen thrust changes future costs in ways no other
+     *  dimension captures — gate clearance (landing/liftoff/landing-burn)
+     *  and belt-roll mitigation ({@code rad − thrust}) — for the remainder
+     *  of the current movement, and movement reach is unbounded (free
+     *  coasting), so no hop horizon is sound. Clamping at the global cap is
+     *  sound because above it every clearable gate clears and every belt
+     *  roll floors identically. The afterburn bit matters via the Solar
+     *  Oberth +1 (H8e). {@code decommissioned} separates states whose set of
+     *  permanently dead engines differs — a state that lost its sail must
+     *  never displace one that kept it. All three are sentinel (0/false/0)
+     *  when the feature is off.
      */
     private record FrontierKey(String nodeId, int engineIndex,
                                String entryLabel, String previousNodeId,
-                               int turnMod12) {}
+                               int turnMod12, int thrustKey, boolean afterburned,
+                               long decommissioned) {}
 
     private FrontierKey keyOf(SearchState s) {
         int turnMod = ((s.turn - 1) % 12 + 12) % 12;
+        int thrustKey = keyThrustCap > 0 ? Math.min(s.thrust, keyThrustCap) : 0;
+        boolean ab = keyThrustCap > 0 && s.afterburnedThisMove;
+        long decom = keyThrustCap > 0 ? s.decommissionedEngines : 0L;
         return new FrontierKey(s.node.id(), s.engineIndex, s.entryLabel,
-                s.previousNodeId, turnMod);
+                s.previousNodeId, turnMod, thrustKey, ab, decom);
     }
 
     private static final int MAX_TURNS = Config.searchMaxTurns();
@@ -144,6 +185,118 @@ public final class Pathfinder {
      *  already provides as a search dimension. */
     private Season seasonAtTurn(int turn) {
         return Season.atYear(startingYear + turn - 1);
+    }
+
+    // -------------------------------------------------------------------------
+    // Option A — scoped thrust dominance precompute
+    // -------------------------------------------------------------------------
+
+    /** Hop horizon for thrust sensitivity: how far ahead of a thrust gate a
+     *  state can still be when the gate matters (a movement's reach). */
+    private int thrustScopeHops() {
+        return Integer.getInteger("pathfinder.dom.thrustScopeHops", 5);
+    }
+
+    /**
+     * Per node, the maximum gate "thrust needed to clear" reachable within the
+     * hop horizon — the clamp cap used by {@link SearchState#notDominatedBy}.
+     * Nodes absent from the map have no reachable gate (pure-fuel dominance).
+     *
+     * <p>Only gates a ship in this query could actually clear are counted
+     * ({@code need ≤ maxAchievableThrust}): a gate no weight class can clear is
+     * never contested, so it would only bloat the frontier with no route to
+     * preserve. Built with a bounded BFS from each gate over the undirected
+     * graph (an over-approximation of in-movement reachability — safe: it only
+     * widens the sensitive zone, never narrows it).
+     */
+    private Map<MapNode, Integer> computeThrustGateCaps() {
+        int hops = thrustScopeHops();
+        int maxAch = maxAchievableThrust();
+
+        Map<MapNode, Integer> need = new IdentityHashMap<>();
+        for (MapNode n : map.allNodes()) {
+            int g = gateNeed(n);
+            if (g > 0 && g <= maxAch) need.put(n, g);
+        }
+
+        Map<MapNode, Integer> caps = new IdentityHashMap<>();
+        for (var entry : need.entrySet()) {
+            int gn = entry.getValue();
+            // Bounded BFS from this gate; every node within `hops` takes the max.
+            Map<MapNode, Integer> dist = new IdentityHashMap<>();
+            Deque<MapNode> q = new ArrayDeque<>();
+            dist.put(entry.getKey(), 0);
+            q.add(entry.getKey());
+            while (!q.isEmpty()) {
+                MapNode u = q.poll();
+                int du = dist.get(u);
+                caps.merge(u, gn, Math::max);
+                if (du == hops) continue;
+                for (MapNode v : map.neighboursOf(u)) {
+                    if (!dist.containsKey(v)) {
+                        dist.put(v, du + 1);
+                        q.add(v);
+                    }
+                }
+            }
+        }
+        return caps;
+    }
+
+    /** Scoped-thrust clamp cap for a node (0 = no reachable gate / feature off). */
+    private int thrustCapFor(MapNode node) {
+        if (thrustGateCap == null) return 0;
+        Integer c = thrustGateCap.get(node);
+        return c == null ? 0 : c;
+    }
+
+    /**
+     * Proposal 1 — the global sound thrust clamp. Two frozen-thrust values at
+     * or above this cap are behaviourally identical anywhere on the map:
+     * <ul>
+     *   <li>every clearable gate clears ({@code maxClearableGateNeed});</li>
+     *   <li>every belt roll floors to 0 even with the season-RED +2
+     *       ({@code maxRadiation + 2}, H10b).</li>
+     * </ul>
+     * Values below the cap can differ in future cost, so they stay distinct
+     * in the {@link FrontierKey}. Unlike the per-node hop-horizon cap this
+     * needs no reachability assumption — movement reach is unbounded via
+     * free coasting, so only a map-global bound is sound.
+     */
+    private int computeGlobalThrustCap() {
+        int maxAch = maxAchievableThrust();
+        int cap = 0;
+        for (MapNode n : map.allNodes()) {
+            int g = gateNeed(n);
+            if (g <= maxAch) cap = Math.max(cap, g);
+            if (n.radiation() > 0) cap = Math.max(cap, n.radiation() + 2);
+        }
+        return cap;
+    }
+
+    /** Thrust required to clear a node's gate, or 0 if it has none. Sites gate
+     *  landing AND liftoff at {@code thrust > siteSize} (need = size+1);
+     *  landing-burn nodes gate at {@code thrust ≥ thrustRequired}. */
+    private static int gateNeed(MapNode n) {
+        if (n.isSite() && n.thrustRequired() > 0) return n.thrustRequired() + 1;
+        if (!n.landing().isZero() && n.thrustRequired() > 0) return n.thrustRequired();
+        return 0;
+    }
+
+    /** Upper bound on net thrust any engine in this query can reach: base +
+     *  the lightest weight class (+2 Wisp) + best-case solar zone (solar only)
+     *  + afterburn gain (if able). Gates above this are never clearable. */
+    private int maxAchievableThrust() {
+        int bestSolar = 0;
+        for (MapNode n : map.allNodes()) bestSolar = Math.max(bestSolar, n.solarMod());
+        int best = 0;
+        for (EngineSpec e : engines) {
+            int t = e.baseThrust() + 2
+                    + (e.solarPowered() ? Math.max(bestSolar, 0) : 0)
+                    + (e.canAfterburn() ? e.afterburnThrustGain() : 0);
+            best = Math.max(best, t);
+        }
+        return best;
     }
 
     // -------------------------------------------------------------------------
@@ -229,6 +382,25 @@ public final class Pathfinder {
     private TraverseResponse run(MapNode start, PartialSink sink) {
         this.sink = sink;
         this.startNodeId = start.id();
+        // Thrust-dominance soundness, in preference order (flags read fresh each
+        // run so a single JVM can A/B all modes):
+        //   1. Proposal 1 (default): clamped frozen thrust + afterburn bit in the
+        //      FrontierKey. Fully sound for thrust (gates AND radiation, no
+        //      horizon); Option A's per-node caps are not computed.
+        //   2. Option A (thrustKeyed=false, thrustScoped=true): per-node clamped
+        //      thrust as an in-bucket dominance axis, hop-horizon scoped.
+        //      Kept for A/B probes — known unsound (horizon + radiation).
+        //   3. Off (both false): thrust ignored entirely (pre-fix behaviour).
+        boolean thrustKeyed =
+                Boolean.parseBoolean(System.getProperty("pathfinder.dom.thrustKeyed", "true"));
+        this.keyThrustCap = thrustKeyed ? computeGlobalThrustCap() : 0;
+        this.bonusSitesSound =
+                Boolean.parseBoolean(System.getProperty("pathfinder.dom.bonusSitesSound", "false"));
+        this.thrustGateCap =
+                (!thrustKeyed && Boolean.parseBoolean(
+                        System.getProperty("pathfinder.dom.thrustScoped", "true")))
+                        ? computeThrustGateCaps()
+                        : null;
         bestFound = new HashMap<>();
         queue = new PriorityQueue<>(BY_COST);
         if (sink != null) {
@@ -341,6 +513,15 @@ public final class Pathfinder {
                 }
             }
         }
+        if (Boolean.getBoolean("pathfinder.stats")) {
+            long frontierStates = 0;
+            for (List<SearchState> l : bestFound.values()) frontierStates += l.size();
+            boolean truncated = iterations > MAX_ITERATIONS;
+            System.out.printf(
+                    "[pathfinder.stats] iterations=%d enqueued=%d buckets=%d frontierStates=%d truncated=%b%n",
+                    Math.min(iterations, MAX_ITERATIONS), statEnqueued,
+                    bestFound.size(), frontierStates, truncated);
+        }
         return bestFound;
     }
 
@@ -350,6 +531,7 @@ public final class Pathfinder {
      *  The count is skipped entirely when not streaming. */
     private void enqueue(SearchState s) {
         queue.add(s);
+        statEnqueued++;
         if (sink != null) queuedByTurn[Math.min(s.turn, MAX_TURNS + 1)]++;
     }
 
@@ -1347,15 +1529,24 @@ public final class Pathfinder {
         FrontierKey key = keyOf(state);
         List<SearchState> existing = bestFound.computeIfAbsent(key, k -> new ArrayList<>());
 
+        // Thrust handling inside the bucket:
+        //  - Proposal 1 (thrust in key): every bucket member shares the same
+        //    clamped thrust by construction, so the in-bucket thrust axis is
+        //    structurally dead — pass 0 to skip it.
+        //  - Option A: every bucket member shares this node, so the scoped
+        //    clamp cap is the same for all comparisons here — look it up once.
+        final int cap = keyThrustCap > 0 ? 0 : thrustCapFor(state.node);
+
         // Reject if any existing state dominates or equals the new state.
+        final boolean sites = bonusSitesSound;
         for (SearchState e : existing) {
-            if (!state.notDominatedBy(e) || state.equalState(e)) {
+            if (!state.notDominatedBy(e, cap, sites) || state.equalState(e, cap, sites)) {
                 return false;
             }
         }
 
         // Evict any existing states now dominated by the new state.
-        existing.removeIf(e -> !e.notDominatedBy(state));
+        existing.removeIf(e -> !e.notDominatedBy(state, cap, sites));
 
         existing.add(state);
         // No sort needed — the priority queue governs expansion order; this list

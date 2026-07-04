@@ -47,3 +47,5 @@ resp.json
 test-output.txt
 test_out.txt
 # benchmark-results.csv is intentionally tracked (perf history).
+# Local-only archived experiments (not for VCS)
+archived/

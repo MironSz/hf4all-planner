@@ -12,3 +12,15 @@ datetime,duration_ms,tree_nodes,endpoints,description
 2026-04-21T12:31:55,26836,23164,900,phase-3 pruning-only; static BY_COST
 2026-04-21T12:35:25,26037,23164,900,phase-3 reverted; back to post-cleanup baseline
 2026-04-23T15:13:58,14215,23164,900,correctness verify; expect endpoints=900 tree=23164
+2026-06-12T10:20:45,24407,20596,897,visitedNodes co-axis -> proper tiebreaker fix
+2026-06-12T10:26:47,61556,28736,934,verify-complete-at-20M-cap
+2026-07-03T11:09:47,37758,35930,934,P1 red9 before thrustScoped-hops5
+2026-07-03T11:13:09,81656,52075,935,P1 red9-ab before thrustScoped-hops5
+2026-07-03T11:15:49,79401,58378,990,P1 red9-ab-big before thrustScoped-hops5
+2026-07-03T18:27:29,38308,36068,934,P1 red9 before-semantics battery
+2026-07-03T18:28:27,28017,36795,934,P1 red9 after keyed battery
+2026-07-03T18:31:41,100604,52022,935,P1 red9-ab before-semantics battery
+2026-07-03T18:34:52,93290,52206,935,P1 red9-ab after keyed battery
+2026-07-03T19:05:00,191402,58451,990,P1 red9-ab-big before-semantics battery-parallel iters=18536931 frontier=8481535
+2026-07-03T19:05:00,182583,58936,990,P1 red9-ab-big after keyed battery-parallel iters=29403157 frontier=11013742
+2026-07-03T19:05:00,-1,36733,934,P1 red9 after keyed+sitesSound battery-parallel iters=35683152 frontier=13036650 (timer glitch; duration invalid)
