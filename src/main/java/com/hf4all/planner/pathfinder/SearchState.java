@@ -28,6 +28,8 @@ import java.util.Objects;
 final class SearchState {
 
     final MapNode node;
+    final int nodeIdx;            // node's dense index in the map (== map.indexOf(node));
+                                  // cached at construction so keyOf() pays no map probe
     final String entryLabel;      // direction label at current node (null = no direction)
     final int engineIndex;        // index into the engine list
     final int burnsRemaining;     // burns available this turn (= engine net thrust at turn start)
@@ -46,7 +48,7 @@ final class SearchState {
     final int worstRadRoll;
 
     final int visitedNodes;       // number of distinct nodes in path (tiebreaker: fewer is better)
-    final String previousNodeId;  // node we physically moved from (null at turn start)
+    final int previousNodeIdx;    // index of node we physically moved from (-1 at turn start)
     final SearchState parent;
     final List<String> bonusSites; // flyby nodes visited this turn (for re-entry prevention)
 
@@ -79,14 +81,15 @@ final class SearchState {
      */
     final long decommissionedEngines;
 
-    SearchState(MapNode node, String entryLabel, int engineIndex,
+    SearchState(MapNode node, int nodeIdx, String entryLabel, int engineIndex,
                 int burnsRemaining, int pivotsRemaining, int freeBurns, int thrust,
                 int fuelStepsRemaining, Fraction partialStepsThisMove, int jettisonedAtTurnStart,
                 int turn, int hazards, int worstRadRoll,
-                int visitedNodes, String previousNodeId, SearchState parent, List<String> bonusSites,
+                int visitedNodes, int previousNodeIdx, SearchState parent, List<String> bonusSites,
                 SearchState turnStart, boolean afterburnedThisMove,
                 long decommissionedEngines) {
         this.node = node;
+        this.nodeIdx = nodeIdx;
         this.entryLabel = entryLabel;
         this.engineIndex = engineIndex;
         this.burnsRemaining = burnsRemaining;
@@ -100,7 +103,7 @@ final class SearchState {
         this.hazards = hazards;
         this.worstRadRoll = worstRadRoll;
         this.visitedNodes = visitedNodes;
-        this.previousNodeId = previousNodeId;
+        this.previousNodeIdx = previousNodeIdx;
         this.parent = parent;
         this.bonusSites = bonusSites;
         this.turnStart = turnStart;
@@ -235,7 +238,7 @@ final class SearchState {
             && Objects.equals(this.entryLabel, other.entryLabel)
             && this.engineIndex == other.engineIndex
             && this.visitedNodes == other.visitedNodes
-            && Objects.equals(this.previousNodeId, other.previousNodeId)
+            && this.previousNodeIdx == other.previousNodeIdx
             && (thrustCap == 0
                 || Math.min(this.thrust, thrustCap) == Math.min(other.thrust, thrustCap))
             && (!sitesSound

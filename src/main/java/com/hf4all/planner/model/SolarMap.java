@@ -17,6 +17,16 @@ import java.util.*;
 public final class SolarMap {
 
     private final Map<String, MapNode>                    nodesById;
+    // Per-map dense node index in [0, nodeCount). The pathfinder keys/compares
+    // nodes by this int instead of by their String id (hashed/compared millions
+    // of times per query). Stored per-map (not as a MapNode field) because the
+    // same MapNode instance may belong to several SolarMaps at once — e.g. a
+    // test subgraph reuses the full map's node objects — each with its own
+    // index space. IdentityHashMap keys on reference identity: a cheap
+    // System.identityHashCode + == instead of String.hashCode + String.equals.
+    // nodesByIndex is the reverse lookup, used at the API/output boundary.
+    private final Map<MapNode, Integer>                   indexByNode;
+    private final MapNode[]                               nodesByIndex;
     private final Map<MapNode, List<MapNode>>             adjacency;
     // Redundant with adjacency but gives O(1) edge existence checks
     private final Map<MapNode, Set<MapNode>>              adjacencySet;
@@ -34,6 +44,21 @@ public final class SolarMap {
 
     private SolarMap(Builder b) {
         this.nodesById = Collections.unmodifiableMap(new HashMap<>(b.nodesById));
+
+        // Assign each node a per-map dense index [0, nodeCount) and build the
+        // forward (node → index) and reverse (index → node) lookups. The index
+        // becomes the pathfinder's node key, dodging String hashing/comparison
+        // on the hot path. Order is the (arbitrary but per-map-stable) node-map
+        // iteration order; the index never participates in node equality.
+        Map<MapNode, Integer> idxByNode = new IdentityHashMap<>(nodesById.size());
+        this.nodesByIndex = new MapNode[nodesById.size()];
+        int idx = 0;
+        for (MapNode node : nodesById.values()) {
+            idxByNode.put(node, idx);
+            nodesByIndex[idx] = node;
+            idx++;
+        }
+        this.indexByNode = Collections.unmodifiableMap(idxByNode);
 
         // Freeze adjacency lists (ordered, for deterministic iteration)
         Map<MapNode, List<MapNode>> adj = new HashMap<>();
@@ -118,6 +143,16 @@ public final class SolarMap {
     /** Looks up a node by its raw string id. Returns null if not found. */
     public MapNode nodeById(String id) {
         return nodesById.get(id);
+    }
+
+    /** This map's dense index for a node (the reverse of {@link #nodeByIndex}). */
+    public int indexOf(MapNode node) {
+        return indexByNode.get(node);
+    }
+
+    /** Looks up a node by its dense index (the reverse of {@link #indexOf}). */
+    public MapNode nodeByIndex(int index) {
+        return nodesByIndex[index];
     }
 
     /** All site nodes (named destinations). */

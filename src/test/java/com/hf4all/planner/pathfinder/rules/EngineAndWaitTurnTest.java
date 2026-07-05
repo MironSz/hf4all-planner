@@ -58,7 +58,13 @@ class EngineAndWaitTurnTest {
      */
     @Test
     void engineSwitchOnWaitTurn() {
-        SolarMap sub = MapSubgraph.extract(fullMap, "334", 4);
+        // Radius 5 (not 4): at radius 4 both engines reach every endpoint with
+        // identical output-cost vectors, so only ONE engine's route survives as
+        // the per-cost-vector representative and which one is an iteration-order
+        // artifact. Radius 5 exposes endpoints where the two engines produce
+        // Pareto-distinct routes, so both engine indices appear in the pruned
+        // tree regardless of representative tie-breaking.
+        SolarMap sub = MapSubgraph.extract(fullMap, "334", 5);
 
         EngineSpec engineA = new EngineSpec(5, 2, false, 0);
         EngineSpec engineB = new EngineSpec(8, 3, false, 0);

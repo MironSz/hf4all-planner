@@ -45,14 +45,14 @@ public final class Pathfinder {
     // threading the queue + frontier map through every call.
     //
     // The frontier is keyed by the full comparability context
-    // (nodeId, engineIndex, entryLabel, previousNodeId) so every bucket
+    // (nodeIdx, engineIndex, entryLabel, prevNodeIdx) so every bucket
     // contains only states that are directly comparable via notDominatedBy.
-    // Keying on just nodeId would fold incomparable states together and
+    // Keying on just nodeIdx would fold incomparable states together and
     // force every dominance check to re-test the context discriminators —
     // a large class of wasted work on maps with multi-engine / labelled-
     // edge traffic.
     private Map<FrontierKey, List<SearchState>> bestFound;
-    private PriorityQueue<SearchState> queue;
+    private Frontier queue;
 
     /** Option A — scoped thrust dominance. Per-query (NOT static: searches run
      *  concurrently) map from node to the highest clearable gate "thrust needed"
@@ -70,6 +70,16 @@ public final class Pathfinder {
     /** Sound once-per-move-site dominance (pathfinder.dom.bonusSitesSound,
      *  default OFF — measured ~9× slower; see SearchState.notDominatedBy). */
     private boolean bonusSitesSound;
+
+    /** Lazy afterburn branching (pathfinder.ab.lazy, default ON). When true,
+     *  {@link #addTurnStartStates} emits only the no-afterburn branch per
+     *  engine; the afterburn sibling is spawned on demand by
+     *  {@link #maybeSpawnAfterburnAlt} at the points where the +gain could
+     *  actually change a route (see that method's trigger taxonomy). When
+     *  false, the eager branch B in {@code addTurnStartStates} is restored:
+     *  every AB-capable engine emits its AB variant at every turn-start. Read
+     *  fresh in {@link #run} like the {@code pathfinder.dom.*} flags. */
+    private boolean abLazy;
 
     /** Total states enqueued this run — reported when {@code pathfinder.stats}
      *  is set. Iterations + enqueues are deterministic per (query, flags), so
@@ -144,18 +154,35 @@ public final class Pathfinder {
      *  never displace one that kept it. All three are sentinel (0/false/0)
      *  when the feature is off.
      */
-    private record FrontierKey(String nodeId, int engineIndex,
-                               String entryLabel, String previousNodeId,
+    private record FrontierKey(int nodeIdx, int engineIndex,
+                               String entryLabel, int prevNodeIdx,
                                int turnMod12, int thrustKey, boolean afterburned,
-                               long decommissioned) {}
+                               long decommissioned) {
+        /** The generated record hash of several small dense ints clusters
+         *  badly in a multi-hundred-thousand-key HashMap (the String ids it
+         *  replaced hashed wide). Fibonacci-mix each component so nearby
+         *  indices land in distant buckets. equals() stays generated. */
+        @Override
+        public int hashCode() {
+            int h = nodeIdx;
+            h = h * 0x9E3779B1 + prevNodeIdx;
+            h = h * 0x9E3779B1 + turnMod12;
+            h = h * 0x9E3779B1 + engineIndex;
+            h = h * 0x9E3779B1 + thrustKey;
+            h = h * 0x9E3779B1 + (afterburned ? 1 : 0);
+            h = h * 0x9E3779B1 + (int) (decommissioned ^ (decommissioned >>> 32));
+            h = h * 0x9E3779B1 + (entryLabel == null ? 0 : entryLabel.hashCode());
+            return h ^ (h >>> 16);
+        }
+    }
 
     private FrontierKey keyOf(SearchState s) {
         int turnMod = ((s.turn - 1) % 12 + 12) % 12;
         int thrustKey = keyThrustCap > 0 ? Math.min(s.thrust, keyThrustCap) : 0;
         boolean ab = keyThrustCap > 0 && s.afterburnedThisMove;
         long decom = keyThrustCap > 0 ? s.decommissionedEngines : 0L;
-        return new FrontierKey(s.node.id(), s.engineIndex, s.entryLabel,
-                s.previousNodeId, turnMod, thrustKey, ab, decom);
+        return new FrontierKey(s.nodeIdx, s.engineIndex, s.entryLabel,
+                s.previousNodeIdx, turnMod, thrustKey, ab, decom);
     }
 
     private static final int MAX_TURNS = Config.searchMaxTurns();
@@ -167,6 +194,182 @@ public final class Pathfinder {
             Comparator.comparingInt((SearchState s) -> s.turn)
                       .thenComparingInt(s -> -s.fuelStepsRemaining)
                       .thenComparingInt(s -> s.hazards);
+
+    // -------------------------------------------------------------------------
+    // Frontier — the expansion queue for the Pareto label-correcting BFS.
+    //
+    // At the scale this search runs (5–11M live entries per heavy query), the
+    // dominant cost of a binary-heap PriorityQueue is not the O(log n) shape
+    // work but the sheer VOLUME of BY_COST comparator invocations: each push
+    // and pop sifts through log2(n) ≈ 23 levels, and every level runs the
+    // three-key comparator (turn, −fuel, hazards). That is tens of millions of
+    // comparator calls, and they dominate the profile.
+    //
+    // The insight that unlocks an O(1) structure is that both leading BY_COST
+    // keys have a small, fixed integer range verified in the surrounding code:
+    //   * turn ∈ [1, MAX_TURNS]  — states with turn > MAX_TURNS are filtered
+    //     out before enqueue (see the `next.turn > MAX_TURNS` guards in the
+    //     search loop and waitTurn), so nothing above the bound ever lands here.
+    //   * fuelStepsRemaining ∈ [0, 56] — the fuel-strip geometry bound enforced
+    //     by FuelStrip.validateFuelSteps (wetStep ≤ 56).
+    // A value in a bounded integer range needs no comparator to be ordered — a
+    // radix (bucket) layout indexes it directly. That is Implementation A.
+    // -------------------------------------------------------------------------
+
+    /** Abstraction over the expansion queue so the search can swap a bucketed
+     *  radix frontier for the classic binary-heap frontier at runtime without
+     *  touching the loop. Both implementations honour the same primary/secondary
+     *  ordering; they differ only in whether they pay the comparator cost. */
+    private interface Frontier {
+        void add(SearchState s);
+        SearchState poll();
+        boolean isEmpty();
+    }
+
+    /** Upper bound (inclusive) on {@code fuelStepsRemaining} — the fuel-strip
+     *  geometry caps the Wet chit at step 56 (FuelStrip.validateFuelSteps),
+     *  so the fuel axis of the radix buckets needs indices 0..56. */
+    private static final int MAX_FUEL_STEPS = 56;
+
+    /**
+     * Implementation A — a turn-bucketed radix frontier that reproduces the
+     * primary and secondary keys of {@link #BY_COST} in O(1) per add/poll,
+     * with no comparator calls at all.
+     *
+     * <p><b>Ordering contract.</b> Polls emerge in exactly BY_COST's first two
+     * keys: turn ascending (primary), then fuelStepsRemaining <em>descending</em>
+     * (secondary — more remaining fuel is a cheaper plan), FIFO within a
+     * (turn, fuel) bucket. BY_COST's tertiary key (hazards ascending) is
+     * <em>intentionally dropped</em>: it only ever broke ties between states
+     * already equal on turn and fuel, and the Pareto frontier / output-prune
+     * stages downstream do not depend on that tie-break for correctness — they
+     * re-derive the true Pareto set. Two states equal on (turn, fuel) but
+     * differing on hazards will therefore pop in insertion order rather than
+     * hazards order; this changes only the exploration sequence, never the set
+     * of routes found.
+     *
+     * <p><b>Layout.</b> {@code buckets[turn][fuel]} is a lazily-allocated grid
+     * of FIFO deques. Turn is the major axis (ascending scan) and fuel the minor
+     * axis (descending scan), matching the key precedence above. Rows and cells
+     * are allocated on first use to keep the memory footprint proportional to
+     * the live turn/fuel combinations rather than MAX_TURNS × 57.
+     *
+     * <p><b>Cursors.</b> {@code turnCursor} is the lowest turn known to possibly
+     * hold work; {@code fuelCursor} is the highest fuel index scanned so far
+     * within {@code turnCursor}. Turn is monotonic across expansion (children
+     * are same-turn or turn+1; lazy-jettison alts are same-turn), so the poll
+     * cursor normally only ever advances forward. add() nonetheless moves the
+     * cursor <em>back</em> if an entry ever lands strictly below it — cheap
+     * (a couple of comparisons and assignments) and defensive, so a stray
+     * lower-turn or higher-fuel insert can never be stranded behind the cursor.
+     */
+    private static final class RadixFrontier implements Frontier {
+        private final int maxTurn;
+        // buckets[turn][fuel]; rows and cells allocated lazily.
+        @SuppressWarnings("unchecked")
+        private final ArrayDeque<SearchState>[][] buckets;
+        private int size;
+        // Poll cursor: turnCursor = lowest turn that may hold work; fuelCursor =
+        // current fuel index within that turn (scanned high→low). Both start at
+        // the "nothing scanned yet" origin (turn 1, fuel = MAX_FUEL_STEPS).
+        private int turnCursor;
+        private int fuelCursor;
+
+        @SuppressWarnings("unchecked")
+        RadixFrontier(int maxTurn) {
+            this.maxTurn = maxTurn;
+            // Index by turn directly (1..maxTurn); slot 0 unused so no −1 offset.
+            this.buckets = new ArrayDeque[maxTurn + 1][];
+            this.turnCursor = 1;
+            this.fuelCursor = MAX_FUEL_STEPS;
+        }
+
+        @Override
+        public void add(SearchState s) {
+            // turn is guaranteed in [1, maxTurn] by the enqueue-time filters;
+            // clamp defensively so a stray value can never index out of bounds.
+            int turn = s.turn;
+            if (turn < 1) turn = 1;
+            else if (turn > maxTurn) turn = maxTurn;
+            int fuel = s.fuelStepsRemaining;
+            if (fuel < 0) fuel = 0;
+            else if (fuel > MAX_FUEL_STEPS) fuel = MAX_FUEL_STEPS;
+
+            ArrayDeque<SearchState>[] row = buckets[turn];
+            if (row == null) {
+                row = new ArrayDeque[MAX_FUEL_STEPS + 1];
+                buckets[turn] = row;
+            }
+            ArrayDeque<SearchState> cell = row[fuel];
+            if (cell == null) {
+                cell = new ArrayDeque<>();
+                row[fuel] = cell;
+            }
+            cell.addLast(s);            // FIFO within a (turn, fuel) bucket
+            size++;
+
+            // Keep the cursor at or below any live entry. Turn monotonicity
+            // means this branch is essentially never taken during normal
+            // expansion, but honouring it keeps correctness independent of that
+            // assumption: an entry must never sit behind the scan position.
+            if (turn < turnCursor) {
+                turnCursor = turn;
+                fuelCursor = fuel;
+            } else if (turn == turnCursor && fuel > fuelCursor) {
+                fuelCursor = fuel;
+            }
+        }
+
+        @Override
+        public SearchState poll() {
+            if (size == 0) return null;
+            // Advance (turn asc, fuel desc) to the next non-empty bucket. The
+            // total scan work across a whole search is bounded by
+            // maxTurn × (MAX_FUEL_STEPS + 1) cell visits plus the pops, so this
+            // stays O(1) amortised per element — no comparator ever runs.
+            while (turnCursor <= maxTurn) {
+                ArrayDeque<SearchState>[] row = buckets[turnCursor];
+                if (row != null) {
+                    while (fuelCursor >= 0) {
+                        ArrayDeque<SearchState> cell = row[fuelCursor];
+                        if (cell != null && !cell.isEmpty()) {
+                            SearchState s = cell.pollFirst();
+                            size--;
+                            return s;
+                        }
+                        fuelCursor--;
+                    }
+                }
+                // Row exhausted (or absent): drop to the next turn, rewind the
+                // fuel scan to the top (highest fuel first within the new turn).
+                turnCursor++;
+                fuelCursor = MAX_FUEL_STEPS;
+            }
+            return null; // size said non-empty but nothing found — unreachable
+        }
+
+        @Override
+        public boolean isEmpty() {
+            return size == 0;
+        }
+    }
+
+    /** Implementation B — a thin wrapper around the classic binary-heap
+     *  {@link PriorityQueue} ordered by {@link #BY_COST}. Retained as the
+     *  reference frontier for A/B comparison against {@link RadixFrontier};
+     *  selected when {@code pathfinder.queue.radix=false}. */
+    private static final class HeapFrontier implements Frontier {
+        private final PriorityQueue<SearchState> pq = new PriorityQueue<>(BY_COST);
+
+        @Override
+        public void add(SearchState s) { pq.add(s); }
+
+        @Override
+        public SearchState poll() { return pq.poll(); }
+
+        @Override
+        public boolean isEmpty() { return pq.isEmpty(); }
+    }
 
     private Pathfinder(SolarMap map, List<EngineSpec> engines,
                        int dryMass, int initialFuelSteps,
@@ -396,13 +599,21 @@ public final class Pathfinder {
         this.keyThrustCap = thrustKeyed ? computeGlobalThrustCap() : 0;
         this.bonusSitesSound =
                 Boolean.parseBoolean(System.getProperty("pathfinder.dom.bonusSitesSound", "false"));
+        this.abLazy =
+                Boolean.parseBoolean(System.getProperty("pathfinder.ab.lazy", "true"));
         this.thrustGateCap =
                 (!thrustKeyed && Boolean.parseBoolean(
                         System.getProperty("pathfinder.dom.thrustScoped", "true")))
                         ? computeThrustGateCaps()
                         : null;
+        // Frontier selection — read fresh each run so a single JVM can A/B the
+        // radix and heap frontiers (same pattern as the pathfinder.dom.* flags
+        // above). Default is the O(1) radix frontier; setting it false falls
+        // back to the reference binary-heap frontier.
+        boolean useRadix =
+                Boolean.parseBoolean(System.getProperty("pathfinder.queue.radix", "true"));
         bestFound = new HashMap<>();
-        queue = new PriorityQueue<>(BY_COST);
+        queue = useRadix ? new RadixFrontier(MAX_TURNS) : new HeapFrontier();
         if (sink != null) {
             streamNodeId = new IdentityHashMap<>();
             streamNextId = 1;            // 0 is reserved for the synthetic root
@@ -432,10 +643,10 @@ public final class Pathfinder {
         // baseline so the search treats turn 1 like every other turn-start.
         List<SearchState> seeds = new ArrayList<>(engines.size() * 2);
         SearchState pseudoCurrent = new SearchState(
-                start, null, 0, 0, 0, 0, 0,
+                start, map.indexOf(start), null, 0, 0, 0, 0, 0,
                 initialFuelSteps, Fraction.ZERO, 0,
                 1, 0, 0,                       // turn=1 hazards=0 worstRadRoll=0
-                1, null, null, List.of(),
+                1, -1, null, List.of(),        // previousNodeIdx=-1 (no prior move)
                 null, false, 0L);
         addTurnStartStates(seeds, pseudoCurrent, initialFuelSteps, /*jettisoned=*/ 0,
                 /*turn=*/ 1, /*parent=*/ null);
@@ -463,12 +674,15 @@ public final class Pathfinder {
             for (Neighbor neighbor : getNeighbors(current)) {
                 for (SearchState next : expandToNeighbor(current, neighbor)) {
                     if (!isAllowed(current, next)) {
-                        // Lazy-jettison trigger: if this transition was
-                        // blocked by a thrust gate, see if a jettison alt
-                        // at the current turn-start would have unblocked it.
+                        // Lazy-jettison / lazy-afterburn trigger: if this
+                        // transition was blocked by a thrust gate, see if a
+                        // jettison alt OR the afterburn sibling at the current
+                        // turn-start would have unblocked it (both raise the
+                        // frozen net thrust that the gate compares against).
                         int req = requiredThrustForTransition(current.node, next.node);
                         if (req > current.thrust) {
                             maybeSpawnJettisonAlt(current);
+                            maybeSpawnAfterburnAlt(current);
                         }
                         continue;
                     }
@@ -672,9 +886,10 @@ public final class Pathfinder {
         // final result passes Integer.MAX_VALUE to keep everything.
         Map<String, List<SearchState>> byNode = new LinkedHashMap<>();
         for (var entry : bestFound.entrySet()) {
-            String nodeId = entry.getKey().nodeId();
-            MapNode node = map.nodeById(nodeId);
+            MapNode node = map.nodeByIndex(entry.getKey().nodeIdx());
             if (node == null || node.isDecorative()) continue;
+            // Output map keys must remain the String node ids exactly as before.
+            String nodeId = node.id();
             for (SearchState s : entry.getValue()) {
                 if (s.turn <= maxTurn) {
                     byNode.computeIfAbsent(nodeId, k -> new ArrayList<>()).add(s);
@@ -955,19 +1170,23 @@ public final class Pathfinder {
             return List.of();
         }
 
-        String prevNode = sameNode ? current.previousNodeId : current.node.id();
+        int prevNode = sameNode ? current.previousNodeIdx : current.nodeIdx;
+        // Destination's dense index — resolved ONCE per expansion (same-node
+        // reuses the cached current index) and threaded into the expand*
+        // constructors, so per-state key building never probes the map.
+        int destIdx = sameNode ? current.nodeIdx : map.indexOf(dest);
 
         // Crossing a one-way edge (aerobrake-style) consumes all free burns:
         // the maneuver is passive, not a powered burn.
         boolean oneWay = !sameNode && "0".equals(map.edgeLabel(current.node, dest));
 
         if (!sameNode && dest.isBurn()) {
-            return expandBurn(current, neighbor, prevNode, oneWay);
+            return expandBurn(current, neighbor, destIdx, prevNode, oneWay);
         }
         if (isPivot(current, neighbor, sameNode)) {
             return expandTurn(current, neighbor, prevNode);
         }
-        return expandCruise(current, neighbor, prevNode, oneWay, sameNode);
+        return expandCruise(current, neighbor, destIdx, prevNode, oneWay, sameNode);
     }
 
     private static boolean isPivot(SearchState current, Neighbor neighbor, boolean sameNode) {
@@ -988,14 +1207,26 @@ public final class Pathfinder {
      * cancel it.
      */
     private int updatedRadRoll(int currentWorst, MapNode dest, int thrust, int turn) {
+        return Math.max(currentWorst, radSeverityUnder(dest, thrust, turn));
+    }
+
+    /**
+     * Belt-Roll severity on entering {@code dest} under a given frozen
+     * {@code thrust} at {@code turn}: raw radiation minus thrust, plus the
+     * H10b season-RED +2 penalty, floored at 0. Shared by
+     * {@link #updatedRadRoll} (which maxes it into worstRadRoll) and the
+     * radiation triggers in {@link #expandBurn}/{@link #expandCruise}, which
+     * spawn the afterburn alt when this is still positive (a higher frozen
+     * thrust would mitigate a worse roll better).
+     */
+    private int radSeverityUnder(MapNode dest, int thrust, int turn) {
         int penalty = (seasonAtTurn(turn) == Season.RED) ? 2 : 0;
-        int mitigated = Math.max(dest.radiation() - thrust + penalty, 0);
-        return Math.max(currentWorst, mitigated);
+        return Math.max(dest.radiation() - thrust + penalty, 0);
     }
 
     /** BURN edge: either a free burn (if available) or a paid burn. */
     private List<SearchState> expandBurn(SearchState current, Neighbor neighbor,
-                                         String prevNode, boolean oneWay) {
+                                         int destIdx, int prevNode, boolean oneWay) {
         MapNode dest = neighbor.node;
         // Operational check at destination: solar engines in outer zones may
         // have effective thrust ≤ 0. Note: per H3, the thrust used FOR THE
@@ -1014,7 +1245,21 @@ public final class Pathfinder {
         boolean isHazard  = dest.hazard();
         boolean isLanding = !dest.landing().isZero();
         int newHazards   = current.hazards + (isHazard ? 1 : 0);
-        int newRadRoll   = updatedRadRoll(current.worstRadRoll, dest, destThrust, current.turn);
+        // Belt-roll mitigation uses the H3 FROZEN net thrust, same as cruise
+        // entries — destThrust above is only the operational gate (H2b).
+        // Recomputing mitigation from current fuel inverted fuel dominance
+        // (heavier = worse mitigation) and was the last order-sensitive
+        // soundness gap (user-confirmed rules call, 2026-07-04).
+        int newRadRoll   = updatedRadRoll(current.worstRadRoll, dest, current.thrust, current.turn);
+        // Radiation trigger: entering a belt whose post-mitigation severity is
+        // still positive under the current frozen thrust. Afterburn's +gain
+        // raises that frozen thrust, so its sibling would suffer a lower (or
+        // zero) Belt Roll here — a strictly better radRoll route. (Same-node is
+        // impossible in expandBurn: burns are always cross-node entries.)
+        if (dest.radiation() > 0
+                && radSeverityUnder(dest, current.thrust, current.turn) > 0) {
+            maybeSpawnAfterburnAlt(current);
+        }
         // H5e: half-burn lander spaces (landing = 1/2) cost half the fuel
         // steps of a full burn. landing == 1 (full burn) leaves cost unchanged.
         Fraction burnCost = engine.fuelConsumption();
@@ -1037,6 +1282,12 @@ public final class Pathfinder {
             bonusSitesAfterEntry = new ArrayList<>(current.bonusSites);
             bonusSitesAfterEntry.add(dest.id());
         }
+        // Solar-Oberth trigger: entering an Oberth node without having
+        // afterburned this movement. The AB sibling harvests +1 Oberth bonus
+        // burn (H8e), a strictly better route this movement.
+        if (dest.solarOberth() && !current.afterburnedThisMove) {
+            maybeSpawnAfterburnAlt(current);
+        }
 
         // H6b sail-aerobrake decommission: a sail entering a hazard node
         // is destroyed. Engine becomes permanently non-operational for the
@@ -1054,7 +1305,7 @@ public final class Pathfinder {
         // Option A: free burn (not allowed on a landing approach)
         if (current.freeBurns > 0 && !isLanding) {
             out.add(new SearchState(
-                    dest, neighbor.direction, current.engineIndex,
+                    dest, destIdx, neighbor.direction, current.engineIndex,
                     burnsAfter, current.pivotsRemaining,
                     oneWay ? 0 : current.freeBurns - 1 + oberthBonusBurns, thrustAfter,
                     current.fuelStepsRemaining, current.partialStepsThisMove,
@@ -1071,7 +1322,7 @@ public final class Pathfinder {
             // (so post-decommission state has 0 burns, not −1).
             int paidBurnsAfter = willDecommission ? 0 : (current.burnsRemaining - 1);
             out.add(new SearchState(
-                    dest, neighbor.direction, current.engineIndex,
+                    dest, destIdx, neighbor.direction, current.engineIndex,
                     paidBurnsAfter, current.pivotsRemaining,
                     oneWay ? 0 : current.freeBurns + oberthBonusBurns, thrustAfter,
                     current.fuelStepsRemaining, newPartial,
@@ -1088,18 +1339,30 @@ public final class Pathfinder {
         // unlocks anything the no-jet sibling couldn't reach over more
         // turns. Real thrust-failure triggers (destThrust ≤ 0 here, the
         // landing/liftoff gates in isAllowed) are more selective.
+        //
+        // Afterburn IS different: its entire value is buying more burns per
+        // turn, so a burns-exhausted paid burn is exactly where it pays off —
+        // the AB sibling can spend the extra burn to reach dest this turn
+        // rather than after a wasted waitTurn (arrive earlier). Fired once per
+        // expandBurn attempt (not per neighbor variant), and only when no paid
+        // burn was possible because the budget was empty (burnsRemaining == 0);
+        // when burns remained but the H5d fuel cap blocked the burn, afterburn
+        // can't help — it only reduces fuel.
+        if (current.burnsRemaining == 0) {
+            maybeSpawnAfterburnAlt(current);
+        }
         return out;
     }
 
     /** Same-node direction change at a Hohmann intersection: pivot or 2-burn force-turn. */
-    private List<SearchState> expandTurn(SearchState current, Neighbor neighbor, String prevNode) {
+    private List<SearchState> expandTurn(SearchState current, Neighbor neighbor, int prevNode) {
         List<SearchState> out = new ArrayList<>(2);
         MapNode dest = neighbor.node;
 
         // Option A: use a pivot (free, no fuel)
         if (current.pivotsRemaining > 0) {
             out.add(new SearchState(
-                    dest, neighbor.direction, current.engineIndex,
+                    dest, current.nodeIdx, neighbor.direction, current.engineIndex,
                     current.burnsRemaining, current.pivotsRemaining - 1,
                     current.freeBurns, current.thrust,
                     current.fuelStepsRemaining, current.partialStepsThisMove,
@@ -1117,7 +1380,7 @@ public final class Pathfinder {
             Fraction fuelCap = Fraction.of(current.fuelStepsRemaining);
             if (!newPartial.isGreaterThan(fuelCap)) {
                 out.add(new SearchState(
-                        dest, neighbor.direction, current.engineIndex,
+                        dest, current.nodeIdx, neighbor.direction, current.engineIndex,
                         current.burnsRemaining - 2, current.pivotsRemaining,
                         current.freeBurns, current.thrust,
                         current.fuelStepsRemaining, newPartial,
@@ -1132,16 +1395,26 @@ public final class Pathfinder {
             // Engine non-operational (e.g. solar in deep outer zone). Free
             // pivot may still work (Option A above) but force-turn is dead.
             // Jettison would lift wet mass → improve weight class → revive
-            // the engine. (We don't trigger on burnsRemaining < 2 alone:
+            // the engine; afterburn would raise the frozen net thrust the same
+            // way. (Jettison doesn't trigger on burnsRemaining < 2 alone:
             // that's just running out of budget this turn.)
             maybeSpawnJettisonAlt(current);
+            maybeSpawnAfterburnAlt(current);
+        } else {
+            // Force-turn skipped for burn BUDGET (thrust > 0, burnsRemaining
+            // ≤ 1). Afterburn's extra burn is exactly the missing budget, so
+            // the AB sibling may make this force-turn — without this trigger
+            // lazy mode loses max-burn sprint routes that need a 2-burn turn
+            // late in a movement (verified: eager-only 1:2:0:0 at 728/734).
+            maybeSpawnAfterburnAlt(current);
         }
         return out;
     }
 
     /** Free passage: Lagrange, flyby, radhaz, site, decorative, etc. */
     private List<SearchState> expandCruise(SearchState current, Neighbor neighbor,
-                                           String prevNode, boolean oneWay, boolean sameNode) {
+                                           int destIdx, int prevNode,
+                                           boolean oneWay, boolean sameNode) {
         MapNode dest = neighbor.node;
         // Net thrust is FROZEN for the entire movement per H3 ("calculated
         // once before movement begins"). Base thrust, weight class (post-
@@ -1162,6 +1435,13 @@ public final class Pathfinder {
         int newRadRoll   = sameNode
                 ? current.worstRadRoll
                 : updatedRadRoll(current.worstRadRoll, dest, newThrust, current.turn);
+        // Radiation trigger (cross-node entries only): a belt still severe under
+        // the frozen thrust. The afterburn sibling's higher thrust mitigates a
+        // lower Belt Roll — a strictly better radRoll route (H10b).
+        if (!sameNode && dest.radiation() > 0
+                && radSeverityUnder(dest, newThrust, current.turn) > 0) {
+            maybeSpawnAfterburnAlt(current);
+        }
         int visitedInc   = (!sameNode && !dest.isDecorative()) ? 1 : 0;
 
         int newFreeBurns = current.freeBurns;
@@ -1192,6 +1472,12 @@ public final class Pathfinder {
             newFreeBurns += oberth;
             newBonusSites.add(dest.id());
         }
+        // Solar-Oberth trigger (cross-node entries only): entering an Oberth
+        // node without having afterburned this movement. The AB sibling
+        // harvests +1 Oberth bonus burn (H8e), a strictly better route.
+        if (!sameNode && dest.solarOberth() && !current.afterburnedThisMove) {
+            maybeSpawnAfterburnAlt(current);
+        }
         // One-way edge zeroes out free burns (applies after flyby/magsail boost too).
         if (oneWay) newFreeBurns = 0;
 
@@ -1208,7 +1494,7 @@ public final class Pathfinder {
         int  burnsAfter  = willDecommission ? 0 : current.burnsRemaining;
 
         return List.of(new SearchState(
-                dest, neighbor.direction, current.engineIndex,
+                dest, destIdx, neighbor.direction, current.engineIndex,
                 burnsAfter, current.pivotsRemaining,
                 newFreeBurns, thrustAfter,
                 current.fuelStepsRemaining, current.partialStepsThisMove,
@@ -1250,8 +1536,19 @@ public final class Pathfinder {
      * level. Used by {@link #waitTurn}, {@link #maybeSpawnJettisonAlt}, and
      * the search seed.
      *
-     * <p>For each engine we eagerly emit BOTH an afterburn-off and (when the
-     * engine can afterburn and fuel covers the cost) an afterburn-on branch.
+     * <p>For each engine we always emit the afterburn-off branch (branch A).
+     * The afterburn-on branch (branch B) is governed by {@link #abLazy}:
+     * <ul>
+     *   <li>{@code abLazy == false} (eager): when the engine can afterburn and
+     *       fuel covers the cost we ALSO emit an afterburn-on branch here, so
+     *       every AB-capable engine forks at every turn-start. This is the
+     *       historical behaviour, kept behind the flag for A/B comparison.</li>
+     *   <li>{@code abLazy == true} (default): branch B is suppressed; the AB
+     *       sibling is instead spawned on demand by
+     *       {@link #maybeSpawnAfterburnAlt} only when the search reaches a point
+     *       where the +gain could change a route. Benchmarks showed the eager
+     *       fork costs +60–100% search iterations even where AB never matters.</li>
+     * </ul>
      * Per the project decision: weight class is derived from {@code newFuelSteps}
      * (post-jettison, pre-afterburn). Afterburn gain is layered on top of the
      * resulting net thrust; the cost is deducted from the AB branch's fuel
@@ -1273,12 +1570,16 @@ public final class Pathfinder {
             out.add(buildTurnStart(current, i, engine, noAbThrust,
                     newFuelSteps, jettisoned, turn, parent, /*ab=*/ false));
 
-            // Branch B: afterburn (eager, when supported and affordable).
-            int cost = engine.afterburnFuelCost();
-            if (engine.canAfterburn() && newFuelSteps >= cost) {
-                int abThrust = noAbThrust + engine.afterburnThrustGain();
-                out.add(buildTurnStart(current, i, engine, abThrust,
-                        newFuelSteps - cost, jettisoned, turn, parent, /*ab=*/ true));
+            // Branch B: afterburn. Eager only — under lazy mode this branch is
+            // spawned on demand by maybeSpawnAfterburnAlt from the no-AB sibling
+            // instead of unconditionally here.
+            if (!abLazy) {
+                int cost = engine.afterburnFuelCost();
+                if (engine.canAfterburn() && newFuelSteps >= cost) {
+                    int abThrust = noAbThrust + engine.afterburnThrustGain();
+                    out.add(buildTurnStart(current, i, engine, abThrust,
+                            newFuelSteps - cost, jettisoned, turn, parent, /*ab=*/ true));
+                }
             }
         }
     }
@@ -1291,12 +1592,12 @@ public final class Pathfinder {
                                        SearchState parent, boolean afterburned) {
         int burns = Math.max(thrust, 0);
         return new SearchState(
-                current.node, null, engineIndex,
+                current.node, current.nodeIdx, null, engineIndex,
                 burns, engine.bonusPivots(), 0, thrust,
                 fuelSteps, Fraction.ZERO, jettisoned,
                 turn,
                 current.hazards, current.worstRadRoll,
-                current.visitedNodes, null, parent, List.of(),
+                current.visitedNodes, -1, parent, List.of(),
                 null /* this IS a turn-start */,
                 afterburned, current.decommissionedEngines);
     }
@@ -1379,6 +1680,63 @@ public final class Pathfinder {
                 return;
             }
         }
+    }
+
+    /**
+     * Lazily enqueue the afterburn (AB) sibling of {@code current}'s most
+     * recent turn-start, when that turn-start could afterburn but did not.
+     * The AB sibling is the exact state eager branch B in
+     * {@link #addTurnStartStates} would have emitted: same node / turn /
+     * parent / engine / jettison amount as the no-AB turn-start, thrust raised
+     * by {@code afterburnThrustGain} (frozen for the whole movement), burns
+     * budget = {@code max(thrust, 0)}, fuel reduced by {@code afterburnFuelCost},
+     * and the afterburn bit set. Weight class is NOT recomputed from the reduced
+     * fuel — the AB gain layers on top of the pre-AB net thrust (project rule,
+     * H3a), so the thrust must be {@code ts.thrust + gain}, never re-derived from
+     * {@code ts.fuelStepsRemaining - cost}.
+     *
+     * <p><b>Trigger taxonomy.</b> Afterburn helps a route through exactly three
+     * frozen-for-the-movement effects: it raises net thrust by the gain, it
+     * raises the per-turn burns budget by the gain, and (H8e) it adds +1 to any
+     * Solar-Oberth bonus this movement. The callers therefore fire this on the
+     * situations where one of those effects could unblock or improve a route:
+     * <ul>
+     *   <li><b>thrust-gate</b> — an {@code isAllowed} rejection where the
+     *       transition's required thrust exceeds the frozen net thrust
+     *       (landing / liftoff / landing-burn); the +gain might clear it;</li>
+     *   <li><b>dead force-turn</b> — {@link #expandTurn} hits {@code thrust ≤ 0}
+     *       so no force-turn is possible; the +gain might revive the engine;</li>
+     *   <li><b>burns-exhausted</b> — {@link #expandBurn} wants a paid burn but
+     *       {@code burnsRemaining == 0}; the +gain buys more burns this turn, so
+     *       the destination can be reached earlier (fewer turns);</li>
+     *   <li><b>radiation</b> — entering a radhaz whose post-mitigation Belt-Roll
+     *       severity is still positive under the frozen thrust; the +gain
+     *       mitigates a worse roll better (H10b);</li>
+     *   <li><b>Oberth</b> — entering a Solar-Oberth node without having
+     *       afterburned this movement; the AB variant harvests +1 bonus
+     *       burn (H8e).</li>
+     * </ul>
+     *
+     * <p><b>Over-firing is safe.</b> The AB sibling is deduped by the standard
+     * Pareto frontier check in {@link #addIfBest}, so triggering many times for
+     * the same turn-start enqueues its subtree at most once. Under-firing, by
+     * contrast, silently loses routes, so callers err toward triggering. Because
+     * the trigger keys off {@code current.turnStart()} generically, it fires
+     * correctly for states descending from lazy-jettison alternatives too (whose
+     * turn-start is the jettison alt, itself AB-capable).
+     */
+    private void maybeSpawnAfterburnAlt(SearchState current) {
+        SearchState ts = current.turnStart();
+        if (ts.afterburnedThisMove) return;            // already afterburning
+        EngineSpec engine = engines.get(ts.engineIndex);
+        if (!engine.canAfterburn()) return;
+        int cost = engine.afterburnFuelCost();
+        if (ts.fuelStepsRemaining < cost) return;      // can't afford the burn
+        int abThrust = ts.thrust + engine.afterburnThrustGain();
+        SearchState ab = buildTurnStart(ts, ts.engineIndex, engine, abThrust,
+                ts.fuelStepsRemaining - cost, ts.jettisonedAtTurnStart,
+                ts.turn, ts.parent, /*ab=*/ true);
+        if (addIfBest(ab, bestFound)) enqueue(ab);
     }
 
     /**
@@ -1504,8 +1862,8 @@ public final class Pathfinder {
 
     /** No-U-turn: cannot immediately return to the node we just came from. */
     private static boolean isReversingLastMove(SearchState from, SearchState to) {
-        return from.previousNodeId != null
-            && to.node.id().equals(from.previousNodeId);
+        return from.previousNodeIdx != -1
+            && to.nodeIdx == from.previousNodeIdx;
     }
 
     /** Cannot re-enter a flyby node already used this turn. */
@@ -1521,7 +1879,7 @@ public final class Pathfinder {
      * Attempts to insert {@code state} into the Pareto frontier at its
      * comparability-context bucket. Returns true (and updates the frontier)
      * if the state is non-dominated. Bucket members are guaranteed to share
-     * (nodeId, engineIndex, entryLabel, previousNodeId) by construction,
+     * (nodeIdx, engineIndex, entryLabel, prevNodeIdx) by construction,
      * so {@link SearchState#notDominatedBy}'s context early-returns are
      * structurally dead here — every call exercises only the cost dims.
      */

@@ -24,3 +24,24 @@ datetime,duration_ms,tree_nodes,endpoints,description
 2026-07-03T19:05:00,191402,58451,990,P1 red9-ab-big before-semantics battery-parallel iters=18536931 frontier=8481535
 2026-07-03T19:05:00,182583,58936,990,P1 red9-ab-big after keyed battery-parallel iters=29403157 frontier=11013742
 2026-07-03T19:05:00,-1,36733,934,P1 red9 after keyed+sitesSound battery-parallel iters=35683152 frontier=13036650 (timer glitch; duration invalid)
+2026-07-04T12:20:00,26588,36795,934,P1 red9 F0 baseline AC uncapped iters=12352240
+2026-07-04T12:22:00,67088,52206,935,P1 red9-ab F0 baseline AC uncapped iters=25286128
+2026-07-04T12:25:00,81174,58936,990,P1 red9-ab-big F0 baseline AC uncapped iters=29403157
+2026-07-04T12:22:47,20560,34501,934,P1 red9 F1 radix-queue AC uncapped
+2026-07-04T12:24:34,52590,48630,935,P1 red9-ab F1 radix-queue AC uncapped
+2026-07-04T12:26:43,63500,54816,990,P1 red9-ab-big F1 radix-queue AC uncapped
+2026-07-04T22:54:21,23213,34400,934,P1 red9 F2 int-indices AC uncapped
+2026-07-04T22:56:16,56460,48433,935,P1 red9-ab F2 int-indices AC uncapped
+2026-07-04T22:58:33,66593,54758,990,P1 red9-ab-big F2 int-indices AC uncapped
+2026-07-04T23:52:10,22469,34400,934,P1 red9 F2b int-indices cached AC uncapped
+2026-07-04T23:54:07,57673,48433,935,P1 red9-ab F2b int-indices cached AC uncapped
+2026-07-04T23:56:26,69401,54758,990,P1 red9-ab-big F2b int-indices cached AC uncapped
+2026-07-05T00:15:05,21638,34987,934,P1 red9 F2r radfix AC uncapped (pre-F3 baseline)
+2026-07-05T00:16:56,54561,48996,935,P1 red9-ab F2r radfix AC uncapped (pre-F3 baseline)
+2026-07-05T00:19:10,65725,54665,990,P1 red9-ab-big F2r radfix AC uncapped (pre-F3 baseline)
+2026-07-05T00:47:58,22496,34987,934,P1 red9 F3 lazy-afterburn AC uncapped
+2026-07-05T00:49:42,51252,49455,935,P1 red9-ab F3 lazy-afterburn AC uncapped
+2026-07-05T00:51:52,64338,54750,990,P1 red9-ab-big F3 lazy-afterburn AC uncapped
+2026-07-05T10:15:35,22552,34987,934,P1 red9 F3b lazy-AB forceturn-trigger AC uncapped
+2026-07-05T10:17:21,51770,49476,935,P1 red9-ab F3b lazy-AB forceturn-trigger AC uncapped
+2026-07-05T10:19:29,63481,54771,990,P1 red9-ab-big F3b lazy-AB forceturn-trigger AC uncapped
