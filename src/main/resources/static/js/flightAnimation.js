@@ -82,6 +82,17 @@ export function startFlightAnimation() {
     // increment) gets a small dwell instead of motion.
     const segments = [];
     let cumMs = 0;
+    // Same-node turn-advancing edge = the search's turn-start bookkeeping
+    // node, present at EVERY turn boundary — waiting or not. Within a run of
+    // such edges, only the edges after the first are turns genuinely spent
+    // waiting, unless the run is anchored at the route start (the root, or
+    // the jettison/afterburn seed directly under it), which is itself a
+    // turn-start — there every edge is a wait. Mirrors the wait-label logic
+    // in draw.js.
+    const isBoundaryEdge = (j) => {
+        const u = pathPoints[j].pn, v = pathPoints[j + 1].pn;
+        return u.nodeId === v.nodeId && v.turns > u.turns;
+    };
     for (let i = 0; i < pathPoints.length - 1; i++) {
         const a = pathPoints[i], b = pathPoints[i+1];
         const sameNode = a.pn.nodeId === b.pn.nodeId;
@@ -89,7 +100,11 @@ export function startFlightAnimation() {
         const fuelDelta = b.pn.fuelSpent - a.pn.fuelSpent;
         const isBurn = fuelDelta > 0 && !sameNode;     // crossing a burn-space edge
         const isPivot = sameNode && fuelDelta > 0;     // same-node force-pivot
-        const isWait  = sameNode && turnDelta > 0 && fuelDelta === 0;
+        const anchorIsRouteStart = i === 0
+                || (i === 1 && pathPoints[0].pn.nodeId === a.pn.nodeId
+                            && pathPoints[0].pn.turns === a.pn.turns);
+        const isWait = sameNode && turnDelta > 0 && fuelDelta === 0
+                && (anchorIsRouteStart || isBoundaryEdge(i - 1));
 
         let dur;
         if (isWait) {

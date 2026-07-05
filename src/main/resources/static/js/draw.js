@@ -219,11 +219,13 @@ function drawInner() {
             }));
 
             // Pre-pass: walk the path edges and split them into "blocks":
-            //   - 'wait'   = consecutive wait edges at the same node
+            //   - 'wait'   = consecutive same-node turn-advancing edges
             //               (pn[i-1].nodeId === pn[i].nodeId && pn[i].turns > pn[i-1].turns).
-            //               Rendered as a single "wait N turn(s)" label
-            //               spanning the full turn range, regardless of how
-            //               many turns the search broke them into.
+            //               These are the search's turn-start bookkeeping
+            //               nodes, present at every turn boundary; the label
+            //               pass below decides how many of them are turns
+            //               actually spent waiting (possibly none — a plain
+            //               move→move boundary renders no label).
             //   - 'move'   = consecutive move edges sharing engine+turn,
             //               which is the original "engine segment" notion.
             //               Rendered with engine / burn / fuel info.
@@ -294,18 +296,28 @@ function drawInner() {
 
                 let line1, line2 = null, line3 = null, labelTurn, key;
                 if (block.kind === 'wait') {
-                    // Wait block: skip engine info entirely. Each wait edge
-                    // represents one full mission turn spent doing nothing
-                    // (turn N → turn N+1 = "spent turn N waiting"), so the
-                    // displayed range is anchor.turns ..= lastChild.turns - 1.
-                    // The post-wait state's turn (lastChild.turns) is the
-                    // NEXT active turn — that one is labelled by whichever
-                    // segment starts there.
-                    const fromTurn = anchor.turns;
+                    // Wait block: skip engine info entirely. The search only
+                    // advances the mission turn through its waitTurn step, so
+                    // a same-node turn+1 edge appears at EVERY turn boundary —
+                    // waiting or not. In a run of `count` such edges anchored
+                    // at a mid-route arrival, the first edge merely closes the
+                    // turn the ship arrived in; only the remaining count-1
+                    // edges are turns genuinely spent waiting. A run anchored
+                    // at the route start (the root, or the jettison/afterburn
+                    // seed directly under it at the same node+turn) begins at
+                    // a turn-start, so there all `count` edges are waits.
+                    const count = block.endIdx - block.startIdx;
+                    const anchorIsTurnStart = block.anchorIdx === 0
+                            || (block.anchorIdx === 1
+                                && pathNodes[0].nodeId === anchor.nodeId
+                                && pathNodes[0].turns === anchor.turns);
+                    const waited = anchorIsTurnStart ? count : count - 1;
+                    // Plain turn boundary between two moving turns — no label.
+                    if (waited === 0) continue;
+                    const fromTurn = anchor.turns + (anchorIsTurnStart ? 0 : 1);
                     const toTurn   = pathNodes[block.endIdx - 1].turns - 1;
-                    const count    = block.endIdx - block.startIdx;
-                    const range = (count === 1) ? String(fromTurn) : (fromTurn + '-' + toTurn);
-                    line1 = range + '. wait ' + count + (count === 1 ? ' turn' : ' turns');
+                    const range = (waited === 1) ? String(fromTurn) : (fromTurn + '-' + toTurn);
+                    line1 = range + '. wait ' + waited + (waited === 1 ? ' turn' : ' turns');
                     labelTurn = fromTurn;  // season strip uses the first wait turn
                     key = anchor.nodeId + '|wait|' + fromTurn + '-' + toTurn;
                 } else {
