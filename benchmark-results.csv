@@ -45,3 +45,13 @@ datetime,duration_ms,tree_nodes,endpoints,description
 2026-07-05T10:15:35,22552,34987,934,P1 red9 F3b lazy-AB forceturn-trigger AC uncapped
 2026-07-05T10:17:21,51770,49476,935,P1 red9-ab F3b lazy-AB forceturn-trigger AC uncapped
 2026-07-05T10:19:29,63481,54771,990,P1 red9-ab-big F3b lazy-AB forceturn-trigger AC uncapped
+2026-07-05T18:21:27,15328,20591,897,before case1 cap-floor fix
+2026-07-05T18:21:55,14318,20591,897,before case1 cap-floor fix
+2026-07-05T18:22:23,14444,20591,897,before case1 cap-floor fix
+2026-07-05T18:23:05,12412,20591,897,stats probe (not for csv)
+2026-07-05T18:29:38,11750,20591,897,after case1 cap-floor fix
+2026-07-05T18:30:04,12384,20591,897,after case1 cap-floor fix
+2026-07-05T18:30:28,11605,20591,897,after case1 cap-floor fix
+2026-07-05T18:31:22,11884,20591,897,stats probe after fix (not for csv)
+2026-07-06T12:11:51,22394,27345,934,"before case1 cap-floor fix, uncapped iterations"
+2026-07-06T12:13:53,22131,27345,934,"after case1 cap-floor fix, uncapped iterations"

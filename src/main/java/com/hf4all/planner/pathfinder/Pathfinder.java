@@ -469,12 +469,33 @@ public final class Pathfinder {
     private int computeGlobalThrustCap() {
         int maxAch = maxAchievableThrust();
         int cap = 0;
+        boolean oberth = false;
         for (MapNode n : map.allNodes()) {
             int g = gateNeed(n);
             if (g <= maxAch) cap = Math.max(cap, g);
             if (n.radiation() > 0) cap = Math.max(cap, n.radiation() + 2);
+            oberth |= n.solarOberth();
         }
+        // H8e guard: keyOf keys the afterburn bit (and dead-engine mask) only
+        // when the cap is positive. On a map with no clearable gate and no
+        // belt the cap would be 0, dropping the ab bit even though a pending
+        // Solar-Oberth +1 still distinguishes an afterburned state from its
+        // no-AB sibling for the rest of the movement — the no-AB sibling
+        // would unsoundly dominate it once the extra burns are spent,
+        // pre-harvest. Floor the cap at 1 so the bit stays keyed. The
+        // resulting min(thrust, 1) merges all positive thrusts, which is
+        // sound here: with no gates and no belts, frozen thrust acts only
+        // through the burns budget, which is already a dominance axis.
+        if (cap == 0 && oberth && anyEngineCanAfterburn()) cap = 1;
         return cap;
+    }
+
+    /** True if any engine in this query can afterburn (H3a). */
+    private boolean anyEngineCanAfterburn() {
+        for (EngineSpec e : engines) {
+            if (e.canAfterburn()) return true;
+        }
+        return false;
     }
 
     /** Thrust required to clear a node's gate, or 0 if it has none. Sites gate
