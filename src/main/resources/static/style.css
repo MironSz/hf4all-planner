@@ -166,10 +166,10 @@ select { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #
 
 /* ---- Solar-cycle year tracker (12-spot horizontal strip) ----
    Each spot is a 22 px circle coloured by season per the HF4A Sunspot
-   Cycle placard. Click a spot to set the current year; the selected one
-   gets a white outline + glow. Currently informational — the planner
-   doesn't yet read it (Belt-Roll season penalty / Venus flyby gating /
-   synodic-comet accessibility are all future hooks). */
+   Cycle placard. Click a spot to set the mission's starting year; the
+   planner receives it as `startingYear` (Belt-Roll season penalty, Venus
+   flyby gating, synodic-comet accessibility) and clicking refires the
+   traverse. */
 .solar-cycle { background: #0f3460; padding: 8px; border-radius: 4px; font-size: 12px; color: #ccc; }
 .solar-cycle-label { color: #7ec8e3; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
 .solar-cycle-track { display: flex; gap: 4px; justify-content: space-between; align-items: center; }
@@ -242,7 +242,9 @@ body.fuel-strip-hidden #rotate-reset { left: 50px; }
 body.fuel-strip-hidden #rotate-cw    { left: 88px; }
 #sidebar-clear:hover, #sidebar-prev:hover, #sidebar-next:hover { background: #1b3a70; color: #fff; }
 #sidebar-clear { top: 12px; }
-#sidebar-prev  { top: 48px; right: 144px; }
+/* "Next route ►" renders ~101 px wide (right edge 48 + 101 = 149), so Prev
+   needs right ≥ ~155 to clear it; 160 leaves a visible gap. */
+#sidebar-prev  { top: 48px; right: 160px; }
 #sidebar-next  { top: 48px; }
 body.sidebar-collapsed #sidebar-clear,
 body.sidebar-collapsed #sidebar-prev,

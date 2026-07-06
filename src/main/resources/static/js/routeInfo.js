@@ -28,8 +28,12 @@ export function updateRouteInfo() {
         panel.style.display = 'none';
         return;
     }
-    const idx = getActiveRouteIndex();
-    const pathNodes = getPathToRoot(treeNodeIds[idx % treeNodeIds.length]);
+    // Wrap the index BEFORE it's displayed: selectedRouteIndex can briefly
+    // exceed the deduped route count (e.g. a pin restored mid-stream is
+    // clamped against the raw endpoint list), and the label must agree
+    // with the route actually shown.
+    const idx = getActiveRouteIndex() % treeNodeIds.length;
+    const pathNodes = getPathToRoot(treeNodeIds[idx]);
     const endNode = pathNodes[pathNodes.length - 1];
     const hp = state.mapData.points[active];
     if (!endNode || !hp) { panel.style.display = 'none'; return; }
@@ -89,7 +93,7 @@ function buildRouteDetailText() {
     if (!active) return null;
     const treeNodeIds = getTreeNodeIds(active);
     if (!treeNodeIds || treeNodeIds.length === 0) return null;
-    const idx = getActiveRouteIndex();
+    const idx = getActiveRouteIndex() % treeNodeIds.length;
     const pathNodes = getPathToRoot(treeNodeIds[idx]);
 
     // Ship config — read fresh from DOM so the dump matches the current

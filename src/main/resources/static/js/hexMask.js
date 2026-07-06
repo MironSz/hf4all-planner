@@ -25,6 +25,7 @@
 // median, never paints over a precomputed neighbour hex/body).
 // =====================================================================
 import { state } from './state.js';
+import { cfgF } from './config.js';
 import { readSiteFilter, siteMatchesFilter } from './siteFilter.js';
 import { getActiveEndpoint } from './routeTree.js';
 
@@ -223,10 +224,33 @@ function hmEnsureImagePixels() {
     return true;
 }
 
+// Pull the mask tuning knobs from the shared config module (main.js's
+// /api/config fetch resolves before the map image starts loading, so by
+// hmBuildAll time the values are settled). Any missing/invalid key keeps
+// the JS default declared above.
+function hmApplyConfig() {
+    const s = cfgF('ui.hex.hide.mask.scale', NaN);
+    if (!isNaN(s) && s > 0) hmMaskScale = s;
+    const bl = cfgF('ui.hex.hide.mask.blur', NaN);
+    if (!isNaN(bl) && bl >= 0) hmMaskBlur = bl;
+    // Per-state opacities. Each is read independently so any
+    // missing/invalid key falls back to the JS default above.
+    const setOp = (key, setter) => {
+        const v = cfgF(key, NaN);
+        if (!isNaN(v) && v >= 0 && v <= 1) setter(v);
+    };
+    setOp('ui.hex.mask.opacity.filtered.out',         v => hmOpFilteredOut         = v);
+    setOp('ui.hex.mask.opacity.unreachable',          v => hmOpUnreachable         = v);
+    setOp('ui.hex.mask.opacity.unreachable.match',    v => hmOpUnreachableMatch    = v);
+    setOp('ui.hex.mask.opacity.reachable.mismatch',   v => hmOpReachableMismatch   = v);
+    setOp('ui.hex.mask.opacity.unreachable.mismatch', v => hmOpUnreachableMismatch = v);
+}
+
 function hmBuildAll() {
     if (!hmHexes) return;
     const img = document.getElementById('bg');
     if (!img.naturalWidth) return;
+    hmApplyConfig();
     const W = img.naturalWidth, H = img.naturalHeight;
     HM_OVERLAY.setAttribute('width', W);
     HM_OVERLAY.setAttribute('height', H);
@@ -336,27 +360,9 @@ export function initHexMask() {
             fetch('/hex-editor/hexes',             { cache: 'no-store' }).then(r => r.ok ? r.json() : null),
             fetch('/hex-editor/neighbors',         { cache: 'no-store' }).then(r => r.ok ? r.json() : null),
             fetch('/celestial-body-editor/bodies', { cache: 'no-store' }).then(r => r.ok ? r.json() : null),
-            fetch('/api/config',                   { cache: 'no-store' }).then(r => r.ok ? r.json() : null),
-        ]).then(([hx, nb, bd, cfg]) => {
+        ]).then(([hx, nb, bd]) => {
             if (!hx) { console.warn('hex-mask: no hex data'); return; }
             hmHexes = hx; hmNeighbors = nb || {}; hmBodies = bd || {};
-            if (cfg) {
-                const s = parseFloat(cfg['ui.hex.hide.mask.scale']);
-                if (!isNaN(s) && s > 0) hmMaskScale = s;
-                const bl = parseFloat(cfg['ui.hex.hide.mask.blur']);
-                if (!isNaN(bl) && bl >= 0) hmMaskBlur = bl;
-                // Per-state opacities. Each is read independently so any
-                // missing/invalid key falls back to the JS default above.
-                const setOp = (key, setter) => {
-                    const v = parseFloat(cfg[key]);
-                    if (!isNaN(v) && v >= 0 && v <= 1) setter(v);
-                };
-                setOp('ui.hex.mask.opacity.filtered.out',         v => hmOpFilteredOut         = v);
-                setOp('ui.hex.mask.opacity.unreachable',          v => hmOpUnreachable         = v);
-                setOp('ui.hex.mask.opacity.unreachable.match',    v => hmOpUnreachableMatch    = v);
-                setOp('ui.hex.mask.opacity.reachable.mismatch',   v => hmOpReachableMismatch   = v);
-                setOp('ui.hex.mask.opacity.unreachable.mismatch', v => hmOpUnreachableMismatch = v);
-            }
             const img = document.getElementById('bg');
             if (img.complete && img.naturalWidth) {
                 hmBuildAll(); updateHexMasks();

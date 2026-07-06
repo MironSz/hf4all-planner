@@ -41,7 +41,14 @@ function openHowTo() {
     if (overlay) overlay.style.display = 'flex';
 }
 
-function closeHowTo() {
+/** Whether the window is currently shown — main.js checks this so ESC
+ *  closes the window instead of clearing the plan behind it. */
+export function isHowToOpen() {
+    const overlay = document.getElementById('howto-overlay');
+    return !!overlay && overlay.style.display !== 'none';
+}
+
+export function closeHowTo() {
     const overlay = document.getElementById('howto-overlay');
     if (overlay) overlay.style.display = 'none';
     markSeen();

@@ -32,22 +32,14 @@ function hideProgress() {
 
 export function fireTraverse() {
     if (!state.selectedNode) return;
-    // Capture the existing pin + route index BEFORE clearing them so a
-    // refire (settings tweak, share-URL paste, …) can restore the
-    // user's selection if the same endpoint is still reachable in the
-    // new tree. Without this, every refire forces the user to re-click
-    // their endpoint — and a pasted share link would always land on
-    // "no route selected".
-    const intendedPin        = state.pinnedEndpoint;
-    const intendedRouteIndex = state.selectedRouteIndex;
-    state.pinnedEndpoint = null;
-    state.selectedRouteIndex = 0;
 
     const engines = [];
     document.querySelectorAll('.engine-block').forEach(block => {
         const canAB = block.querySelector('.e-afterburn').checked;
-        const abCost = canAB ? (parseInt(block.querySelector('.e-ab-cost').value) || 0) : 0;
-        const abGain = canAB ? (parseInt(block.querySelector('.e-ab-gain').value) || 0) : 0;
+        // `|| 1` mirrors the form's own defaults (both inputs have min=1),
+        // and matches what snapshotActiveTabFromDom persists.
+        const abCost = canAB ? (parseInt(block.querySelector('.e-ab-cost').value) || 1) : 0;
+        const abGain = canAB ? (parseInt(block.querySelector('.e-ab-gain').value) || 1) : 0;
         engines.push({
             baseThrust: parseInt(block.querySelector('.e-base-thrust').value) || 0,
             fuelConsumptionNum: parseInt(block.querySelector('.e-fuel').value) || 0,
@@ -61,10 +53,24 @@ export function fireTraverse() {
         });
     });
 
+    // Bail BEFORE touching the pin/route state — clearing the pin here and
+    // returning without a redraw used to leave the old route line painted
+    // on the canvas with no pin behind it.
     if (engines.length === 0) {
         document.getElementById('status').textContent = 'Add at least one engine.';
         return;
     }
+
+    // Capture the existing pin + route index BEFORE clearing them so a
+    // refire (settings tweak, share-URL paste, …) can restore the
+    // user's selection if the same endpoint is still reachable in the
+    // new tree. Without this, every refire forces the user to re-click
+    // their endpoint — and a pasted share link would always land on
+    // "no route selected".
+    const intendedPin        = state.pinnedEndpoint;
+    const intendedRouteIndex = state.selectedRouteIndex;
+    state.pinnedEndpoint = null;
+    state.selectedRouteIndex = 0;
 
     // Fuel field is now free-form text supporting "5", "1+5/6", "0+3/4",
     // etc. Parse against the current dryMass; on parse failure we send 0

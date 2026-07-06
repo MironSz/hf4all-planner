@@ -38,6 +38,7 @@ function makeDefaultTabState() {
         }],
         allowFuelJettison: true,
         debug:             false,
+        showFuelStrip:     true,
         solarYear:         1,
 
         siteFilter:        makeDefaultSiteFilter(),
@@ -72,7 +73,7 @@ function snapshotActiveTabFromDom() {
             solarPowered:            b.querySelector('.e-solar').checked,
             bonusPivots:             parseInt(b.querySelector('.e-pivots').value) || 0,
             canAfterburn:            b.querySelector('.e-afterburn').checked,
-            afterburnFuelCost:       parseInt(b.querySelector('.e-ab-cost').value) || 0,
+            afterburnFuelCost:       parseInt(b.querySelector('.e-ab-cost').value) || 1,
             afterburnThrustGain:     parseInt(b.querySelector('.e-ab-gain').value) || 1,
             magSail:                 b.querySelector('.e-mag-sail').checked,
             decommissionsOnAerobrake:b.querySelector('.e-aerobrake-decom').checked,
@@ -80,6 +81,7 @@ function snapshotActiveTabFromDom() {
     });
     s.allowFuelJettison = document.getElementById('allow-jettison-cb').checked;
     s.debug             = document.getElementById('debug-cb').checked;
+    s.showFuelStrip     = document.getElementById('show-fuel-strip-cb').checked;
     // solarYear is mutated only via the cycle widget click handler (setSolarYear)
     // which writes directly into state.activeTab.state.solarYear. Re-read it
     // here defensively in case the widget falls out of sync.
@@ -110,6 +112,10 @@ function renderActiveTabToDom() {
     const s = state.activeTab.state;
 
     document.getElementById('dry-mass').value      = (s.dryMass != null) ? s.dryMass : cfgI('ui.dry.mass.default', 4);
+    // The dry-mass input handler converts Fuel relative to state.lastDryMass;
+    // re-baseline it to THIS tab's dry mass so the first edit after a tab
+    // switch doesn't convert against the previous tab's value.
+    state.lastDryMass = parseInt(document.getElementById('dry-mass').value) || 0;
     // Back-compat: older tab saves stored an integer `fuel`; new ones
     // store `fuelText` (which may be fractional, e.g. "1+5/6").
     document.getElementById('fuel').value =
@@ -119,6 +125,7 @@ function renderActiveTabToDom() {
     document.getElementById('allow-jettison-cb').checked = (s.allowFuelJettison !== false);
     document.getElementById('debug-cb').checked    = !!s.debug;
     state.debugMode = !!s.debug;
+    document.getElementById('show-fuel-strip-cb').checked = (s.showFuelStrip !== false);
     document.getElementById('search-input').value  = s.searchQuery || '';
     s.siteFilter = migrateSiteFilter(s.siteFilter);
     writeSiteFilterToDom(s.siteFilter);

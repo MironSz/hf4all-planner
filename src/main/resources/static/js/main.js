@@ -22,7 +22,7 @@ import { setRotation, nudgeRotation } from './rotation.js';
 import { getActiveEndpoint, getTreeNodeIds } from './routeTree.js';
 import { startFlightAnimation } from './flightAnimation.js';
 import { initSolarCycle } from './solarCycle.js';
-import { initHowTo } from './howto.js';
+import { initHowTo, isHowToOpen, closeHowTo } from './howto.js';
 
 // Capture DOM refs that other modules read off `state`. The IIFE in the
 // original file did this at script-parse time; with `<script type=module>`
@@ -58,9 +58,11 @@ document.getElementById('debug-cb').addEventListener('change', (e) => {
 });
 
 // "Show fuel strip" toggle — purely visual, no replan needed.
+// Persisted per-tab (like the Debug toggle) so it survives reloads.
 document.getElementById('show-fuel-strip-cb').addEventListener('change', () => {
     updateEndpointFuelStrip();
     draw();   // hides/shows the on-route green hover dot
+    persistTabs();
 });
 
 document.getElementById('allow-jettison-cb').addEventListener('change', () => {
@@ -113,11 +115,21 @@ window.addEventListener('hashchange', () => {
 });
 
 // --- Keyboard #1: ESC clears selection, arrows cycle routes. ---
+// Guarded while typing: ESC in a focused input blurs it (second ESC then
+// clears), and arrows are left to move the caret instead of cycling the
+// pinned route. ESC also closes the "How to use" window before it can
+// reach clearRoutes, so dismissing the help doesn't wipe the plan.
 document.addEventListener('keydown', (e) => {
+    const t = e.target;
+    const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA'
+              || t.tagName === 'SELECT' || t.isContentEditable);
     if (e.key === 'Escape') {
+        if (typing) { t.blur(); return; }
+        if (isHowToOpen()) { closeHowTo(); return; }
         clearRoutes();
         return;
     }
+    if (typing || e.ctrlKey || e.altKey || e.metaKey) return;
     const active = getActiveEndpoint();
     if (!active) return;
     const ids = getTreeNodeIds(active);

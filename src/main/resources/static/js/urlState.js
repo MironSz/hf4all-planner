@@ -7,9 +7,9 @@
 // recipient's side, not pasted, so big traverseResult payloads stay out
 // of the URL.
 //
-// Deliberately NOT shared: the debug toggle (per-user UI preference)
-// and the site-filter search query (typed-but-not-yet-applied input
-// that's noisy to round-trip).
+// Deliberately NOT shared: the debug and show-fuel-strip toggles
+// (per-user UI preferences) and the site-filter search query
+// (typed-but-not-yet-applied input that's noisy to round-trip).
 //
 // Encoding is human-readable: each shareable field becomes its own
 // `key=value` pair under the URL fragment. Engines (the only nested
@@ -23,8 +23,6 @@
 // Scope is intentionally the ACTIVE tab only — the rest of the user's
 // tabs are a local concept; pasting a link should slot the plan into
 // the recipient's current tab without disturbing their other tabs.
-
-export const SHARE_VERSION = 2;
 
 // The exact subset of tab state that's shareable. Adding a new knob
 // requires (a) listing it here so callers can introspect, and (b)
@@ -43,38 +41,51 @@ export const SHARE_FIELDS = [
 // compatibility. We build the hash by hand so structural separators stay
 // readable, while still escaping characters that would break URL parsing in
 // user-controlled values (search query, fuel text).
+// NOTE: `+` must stay percent-encoded — URLSearchParams decodes a literal
+// `+` as a space, which would turn a shared fuel value like "1+5/6" into
+// "1 5/6" on the recipient's side.
 function urlEncodeReadable(s) {
     return encodeURIComponent(s)
             .replace(/%2C/g, ',')
             .replace(/%3A/g, ':')
-            .replace(/%2F/g, '/')
-            .replace(/%2B/g, '+');
+            .replace(/%2F/g, '/');
 }
 
 // ---- Engine pack/unpack ----
-// One engine becomes `base:N,fuel:N[/D],solar:1,pivots:N,abCost:N,abGain:N`.
-// Default-valued fields are omitted so a vanilla engine is just `base:5,fuel:2`.
+// One engine becomes `base:N,fuel:N,solar:1,pivots:N,ab:1,abCost:N,abGain:N`.
+// Both sides speak the TAB-STATE engine shape (the one snapshotted from the
+// engine form: fuelConsumption / canAfterburn / ...) so a round-trip is
+// lossless. Zero/false-valued fields are omitted, and afterburn cost/gain
+// only appear when afterburn is actually enabled — an engine whose Afterburn
+// box is unchecked shares nothing about it.
 function serializeEngine(eng) {
     const parts = [];
     if (eng.baseThrust)            parts.push(`base:${eng.baseThrust}`);
-    const num = (eng.fuelConsumptionNum != null) ? eng.fuelConsumptionNum : 0;
-    const den = (eng.fuelConsumptionDen != null) ? eng.fuelConsumptionDen : 1;
-    if (num)                       parts.push(den === 1 ? `fuel:${num}` : `fuel:${num}/${den}`);
+    if (eng.fuelConsumption)       parts.push(`fuel:${eng.fuelConsumption}`);
     if (eng.solarPowered)          parts.push('solar:1');
     if (eng.bonusPivots)           parts.push(`pivots:${eng.bonusPivots}`);
-    if (eng.afterburnFuelCost)     parts.push(`abCost:${eng.afterburnFuelCost}`);
-    if (eng.afterburnThrustGain)   parts.push(`abGain:${eng.afterburnThrustGain}`);
+    if (eng.canAfterburn) {
+        parts.push('ab:1');
+        if (eng.afterburnFuelCost)   parts.push(`abCost:${eng.afterburnFuelCost}`);
+        if (eng.afterburnThrustGain) parts.push(`abGain:${eng.afterburnThrustGain}`);
+    }
     if (eng.magSail)               parts.push('mag:1');
     if (eng.decommissionsOnAerobrake) parts.push('aero:1');
     return parts.join(',');
 }
 
 function parseEngine(s) {
+    // Defaults mirror serializeEngine's omissions (0 / false), except the
+    // afterburn cost/gain which default to the form's own defaults so an
+    // `ab:1` without explicit values still yields a usable engine. Links
+    // written before the `ab:` key existed carry stray abCost/abGain for
+    // every engine; without `ab:1` those remain inert, matching the old
+    // unchecked-checkbox behavior.
     const out = {
         baseThrust: 0,
-        fuelConsumptionNum: 0, fuelConsumptionDen: 1,
+        fuelConsumption: 0,
         solarPowered: false, bonusPivots: 0,
-        afterburnFuelCost: 0, afterburnThrustGain: 0,
+        canAfterburn: false, afterburnFuelCost: 1, afterburnThrustGain: 1,
         magSail: false, decommissionsOnAerobrake: false,
     };
     if (!s) return out;
@@ -84,22 +95,13 @@ function parseEngine(s) {
         const k = part.slice(0, idx);
         const v = part.slice(idx + 1);
         switch (k) {
-            case 'base':   out.baseThrust = parseInt(v) || 0; break;
-            case 'fuel': {
-                if (v.includes('/')) {
-                    const [n, d] = v.split('/');
-                    out.fuelConsumptionNum = parseInt(n) || 0;
-                    out.fuelConsumptionDen = parseInt(d) || 1;
-                } else {
-                    out.fuelConsumptionNum = parseInt(v) || 0;
-                    out.fuelConsumptionDen = 1;
-                }
-                break;
-            }
+            case 'base':    out.baseThrust = parseInt(v) || 0; break;
+            case 'fuel':    out.fuelConsumption = parseInt(v) || 0; break;
             case 'solar':   out.solarPowered = (v === '1' || v === 'true'); break;
             case 'pivots':  out.bonusPivots = parseInt(v) || 0; break;
-            case 'abCost':  out.afterburnFuelCost = parseInt(v) || 0; break;
-            case 'abGain':  out.afterburnThrustGain = parseInt(v) || 0; break;
+            case 'ab':      out.canAfterburn = (v === '1' || v === 'true'); break;
+            case 'abCost':  out.afterburnFuelCost = parseInt(v) || 1; break;
+            case 'abGain':  out.afterburnThrustGain = parseInt(v) || 1; break;
             case 'mag':     out.magSail = (v === '1' || v === 'true'); break;
             case 'aero':    out.decommissionsOnAerobrake = (v === '1' || v === 'true'); break;
         }
@@ -126,12 +128,18 @@ export function readShareFromUrl() {
     if (params.has('pin'))     out.pinnedEndpoint = params.get('pin');
     if (params.has('route'))   out.selectedRouteIndex = parseInt(params.get('route')) || 0;
     if (params.has('jettison')) out.allowFuelJettison = params.get('jettison') !== '0';
-    if (params.has('types') || params.has('hyd')) {
+    if (params.has('types') || params.has('hyd') || params.has('flags')
+            || params.has('fmode') || params.has('syn')) {
         out.siteFilter = {
             types: params.has('types')
                     ? params.get('types').split(',').filter(Boolean)
                     : [],
             minHydration: params.has('hyd') ? params.get('hyd') : '',
+            flags: params.has('flags')
+                    ? params.get('flags').split(',').filter(Boolean)
+                    : [],
+            flagsMode: params.get('fmode') === 'all' ? 'all' : 'any',
+            synodic: params.has('syn') ? params.get('syn') : 'any',
         };
     }
     const engineStrs = params.getAll('engine');
@@ -149,12 +157,19 @@ function buildHash(tabState) {
     if (tabState.selectedNode)                push('start', tabState.selectedNode);
     if (tabState.pinnedEndpoint)              push('pin', tabState.pinnedEndpoint);
     if (tabState.selectedRouteIndex)          push('route', tabState.selectedRouteIndex);
-    if (tabState.allowFuelJettison)           push('jettison', '1');
+    // Always written — omitting the key would leave the recipient on their
+    // own default, so "jettison off" would silently fail to transfer.
+    push('jettison', tabState.allowFuelJettison !== false ? '1' : '0');
     if (tabState.siteFilter) {
         const t = tabState.siteFilter.types;
         if (t && t.length)                    push('types', t.join(','));
         const h = tabState.siteFilter.minHydration;
         if (h != null && h !== '')            push('hyd', h);
+        const fl = tabState.siteFilter.flags;
+        if (fl && fl.length)                  push('flags', fl.join(','));
+        if (tabState.siteFilter.flagsMode === 'all') push('fmode', 'all');
+        const sy = tabState.siteFilter.synodic;
+        if (sy && sy !== 'any')               push('syn', sy);
     }
     if (Array.isArray(tabState.engines)) {
         for (const eng of tabState.engines) {

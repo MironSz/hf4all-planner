@@ -6,6 +6,7 @@ import { state } from './state.js';
 import { cfgI, cfgF } from './config.js';
 import { startSearchSpotlight } from './hexMask.js';
 import { persistTabs } from './tabs.js';
+import { rotateAboutCentre } from './rotation.js';
 
 export function initSearchBox() {
     const input = document.getElementById('search-input');
@@ -64,8 +65,13 @@ export function initSearchBox() {
         const maxK = cfgF('ui.zoom.max', 1.5);
         const desired = cfgF('ui.search.zoom.scale', 1.2);
         const k = Math.max(cur.k, Math.min(maxK, Math.max(minK, desired)));
-        const tx = rect.width  / 2 - k * (p.x * state.imgW);
-        const ty = rect.height / 2 - k * (p.y * state.imgH);
+        // The CSS transform is translate·scale·rotate-about-image-centre
+        // (applyMainTransform), so the node's visual position is the
+        // ROTATED point — centre on that, not on the raw map coords, or
+        // the view lands off-target whenever the map is rotated.
+        const rp = rotateAboutCentre(p.x * state.imgW, p.y * state.imgH, +1);
+        const tx = rect.width  / 2 - k * rp.x;
+        const ty = rect.height / 2 - k * rp.y;
         const target = d3.zoomIdentity.translate(tx, ty).scale(k);
         state.zoomSel.transition().duration(cfgI('ui.zoom.transition.ms', 400))
             .call(state.zoomBehavior.transform, target);

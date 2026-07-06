@@ -11,10 +11,10 @@
 //                                       wrapped to 1..12. Driven by hover/pin
 //                                       on every draw via the drawHooks queue.
 //
-// Currently the planner does NOT yet consume any of this — it's a UI input
-// for future season-aware features (Belt-Roll +2 in red K1, Venus-flyby
-// blue gate H8c, synodic-comet accessibility). When wiring those in, pass
-// `season: seasonForYear(displayedYear)` in the planner request.
+// The starting year is consumed by the planner: fireTraverse sends it as
+// `startingYear` in the /api/traverse request, driving the season-aware
+// rules (Belt-Roll +2 in red K1, Venus-flyby blue gate H8c, synodic-comet
+// accessibility). Clicking a spot therefore refires the traverse.
 import { state } from './state.js';
 import { persistTabs } from './tabs.js';
 import { getTreeNodeIds, getPathToRoot } from './routeTree.js';
