@@ -223,6 +223,24 @@ export function fireTraverse() {
             return;
         }
 
+        // Pre-stream failure (validation 400, 405, a 500 thrown before the
+        // 200 was committed): the body is a single {"status": ...} JSON
+        // object, not NDJSON — mid-stream errors arrive instead as a final
+        // done chunk and are handled by applyChunk. Surface the message and
+        // stop before the stream reader misreads it as a progress chunk.
+        if (!res.ok) {
+            let msg = 'HTTP ' + res.status;
+            try {
+                const body = await res.json();
+                if (body && body.status) msg = body.status;
+            } catch (e) { /* non-JSON error body (e.g. proxy error page) */ }
+            if (!stillCurrent()) return;
+            hideProgress();
+            document.getElementById('status').textContent = msg;
+            if (state.traverseAbort === abort) state.traverseAbort = null;
+            return;
+        }
+
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
