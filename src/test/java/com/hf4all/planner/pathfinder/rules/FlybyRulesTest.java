@@ -55,6 +55,68 @@ class FlybyRulesTest {
     }
 
     /**
+     * H8b + H2b — a Bonus Burn stays spendable while coasting with a
+     * non-positive net thrust. FLYBY 1142 (boost=1, solarMod=-4) sits
+     * between LAGRANGE 1143 and BURN 1141. A solar thruster with base
+     * thrust 1 nets 1 (base) + 2 (Wisp) − 4 (solar) = −1 there: zero paid
+     * burns, coasting only. The bonus collected at 1142 must still pay the
+     * burn into 1141 — the card is Operational (J3a shuts solar down only
+     * in the Neptune zone), and bonus burns ignore the burn limit (H8b).
+     *
+     * <p>Regression: the old destThrust-≤-0 entry gate in expandBurn
+     * rejected the transition before the free-burn option was considered,
+     * so 1141 was unreachable for this loadout.
+     */
+    @Test
+    void bonusBurnSpendableWhileCoastingAtNonPositiveNetThrust() {
+        SolarMap sub = MapSubgraph.extract(fullMap, "1142", 2);
+
+        // Mirrors the reported query: dry=1 fuel=3 engine=base:1,solar:1,pivots:1
+        EngineSpec engine = new EngineSpec(1, 0, 1, true, 1, 0, 0, false, false);
+        TraverseResponse r = Pathfinder.traverse(sub,
+                new TraverseRequest("1143", List.of(engine), /*dryMass=*/ 1, /*fuelSteps=*/ 3));
+        assertEquals("ok", r.status());
+
+        assertTrue(reached(r, "1142"), "flyby 1142 must be reachable by coasting from 1143");
+        Set<String> costs = costVectorsAt(r, "1141");
+        assertFalse(costs.isEmpty(),
+                "burn 1141 must be reachable: the 1142 flyby bonus pays the burn even at net thrust <= 0");
+        assertTrue(costs.stream().anyMatch(c -> c.startsWith("0|1|")),
+                "1141 should be reached on turn 1 with 0 fuel spent via the bonus burn; got " + costs);
+    }
+
+    /**
+     * H8f — a Mag Sail earns exactly ONE Bonus Burn per radiation belt
+     * entered (Sails-module clarification: "receives one Bonus Burn in the
+     * same manner as a flyby (H8b) for each Radiation Belt entered"), not
+     * the belt's radiation severity.
+     *
+     * <p>Scenario (reported route): coasting solar loadout (net thrust −2
+     * in the −4 zone → zero paid burns) starting on FLYBY 655 next to
+     * belts 1186 and 1181. One in-move farm pass yields at most
+     * 1 + 1 + 2 (flyby 655) = 4 bonus burns. That still pays single burn
+     * entries — lagrange 1151 stays reachable fuel-free — but the ten-burn
+     * corridor 1084..1093 to Bee-Zed (≥ 12 burns per movement incl. the
+     * 1151/1131 tolls, and unfarmable from mid-corridor) must be out of
+     * reach. Under the old radiation-severity grant (+6 per belt) the
+     * search reached 1093 on such a farm loop.
+     */
+    @Test
+    void magSailGrantsOneBonusBurnPerBelt() {
+        EngineSpec magSail = new EngineSpec(1, 0, 1, true, 1, 0, 0, true, false);
+        TraverseResponse r = Pathfinder.traverse(fullMap,
+                new TraverseRequest("655", List.of(magSail), /*dryMass=*/ 1, /*fuelSteps=*/ 3,
+                        /*allowFuelJettison=*/ true, /*startingYear=*/ 11));
+        assertEquals("ok", r.status());
+
+        Set<String> tollCosts = costVectorsAt(r, "1151");
+        assertTrue(tollCosts.stream().anyMatch(c -> c.startsWith("0|")),
+                "one belt bonus must still pay the burn into lagrange 1151 fuel-free; got " + tollCosts);
+        assertFalse(reached(r, "1093"),
+                "corridor end 1093 needs ~12 bonus burns in one movement — impossible at 1 per belt");
+    }
+
+    /**
      * H8d-ish — the same flyby must not be entered twice within a single turn.
      * Structural check over the full search tree: no path from root to leaf
      * contains the same flyby node id twice at the same turn counter.

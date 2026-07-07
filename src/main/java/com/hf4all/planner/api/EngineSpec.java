@@ -34,9 +34,10 @@ public record EngineSpec(
      */
     int afterburnThrustGain,
     /**
-     * Mag Sail thruster (H8f): each radiation belt entered grants Bonus
-     * Burns equal to the belt's radiation severity, once per belt per
-     * movement. Same once-per-node enforcement as flyby spaces.
+     * Mag Sail thruster (H8f): each radiation belt entered grants ONE
+     * Bonus Burn (Sails-module clarification of "in the same manner as a
+     * flyby"), once per belt per movement. Same once-per-node enforcement
+     * as flyby spaces.
      */
     boolean magSail,
     /**

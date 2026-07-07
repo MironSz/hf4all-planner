@@ -1249,16 +1249,22 @@ public final class Pathfinder {
     private List<SearchState> expandBurn(SearchState current, Neighbor neighbor,
                                          int destIdx, int prevNode, boolean oneWay) {
         MapNode dest = neighbor.node;
-        // Operational check at destination: solar engines in outer zones may
-        // have effective thrust ≤ 0. Note: per H3, the thrust used FOR THE
-        // BURN was snapshotted at turn start; this check just gates entry.
-        int destThrust = effectiveThrust(current.engineIndex, dest, current.fuelStepsRemaining);
-        if (destThrust <= 0) {
-            // Solar engine non-operational at destination zone. Jettison
-            // would lift wet mass → improve weight class → possibly raise
-            // thrust. Trigger lazy alt.
+        // J3a operational gate: a solar engine is non-operational only in
+        // the hard-shutdown zone (Neptune J, solarMod ≤
+        // SOLAR_SHUTDOWN_SOLAR_MOD). Elsewhere a recomputed thrust ≤ 0 does
+        // NOT bar burn entry: the paid-burn budget is the H3 net thrust
+        // frozen at turn start (burnsRemaining), and accumulated Bonus
+        // Burns stay spendable even on a non-operational thruster (H2b
+        // coasting examples). So entry is never rejected wholesale here —
+        // only the paid-burn option (B) and the Oberth bonus pickup
+        // require operationality.
+        boolean operationalAtDest = engineOperationalAt(current, dest);
+        // Lazy-jettison trigger (kept from the old destThrust entry gate):
+        // destination-zone thrust ≤ 0 at the current weight means a class
+        // drop — possibly onto a different engine — may revive paid burns
+        // here, which waiting alone never would.
+        if (effectiveThrust(current.engineIndex, dest, current.fuelStepsRemaining) <= 0) {
             maybeSpawnJettisonAlt(current);
-            return List.of();
         }
 
         EngineSpec engine = engines.get(current.engineIndex);
@@ -1293,7 +1299,7 @@ public final class Pathfinder {
         // H8e Solar Oberth flyby: lander burn that grants Bonus Burns equal
         // to the activated thruster's BASE thrust (not net), +1 if the ship
         // afterburned this movement. Once per move per node (use bonusSites).
-        boolean oberthBoost = dest.solarOberth()
+        boolean oberthBoost = dest.solarOberth() && operationalAtDest
                 && !current.bonusSites.contains(dest.id());
         int oberthBonusBurns = 0;
         List<String> bonusSitesAfterEntry = current.bonusSites;
@@ -1337,8 +1343,10 @@ public final class Pathfinder {
                     current.turnStart(), current.afterburnedThisMove,
                     newDecom));
         }
-        // Option B: paid burn — H5d gate: fractional partial ≤ remaining
-        if (current.burnsRemaining > 0 && !newPartial.isGreaterThan(fuelCap)) {
+        // Option B: paid burn — needs an Operational thruster (J2a) plus
+        // the H5d gate: fractional partial ≤ remaining
+        if (operationalAtDest && current.burnsRemaining > 0
+                && !newPartial.isGreaterThan(fuelCap)) {
             // burnsAfter accounts for paid-burn decrement *after* decommission
             // (so post-decommission state has 0 burns, not −1).
             int paidBurnsAfter = willDecommission ? 0 : (current.burnsRemaining - 1);
@@ -1445,10 +1453,10 @@ public final class Pathfinder {
         // start node, and that's what gates landing/liftoff/burn-limit/
         // force-turn for the rest of the move (H3, H5c, H6a).
         //
-        // Engine operational status is a separate concern (per H2b: solar
-        // engines become non-operational in the Neptune zone) — handled in
-        // expandBurn via the destThrust check, which guards burn entry but
-        // does NOT modify the frozen net thrust.
+        // Engine operational status is a separate concern (J3a: solar
+        // engines shut down in the Neptune zone) — engineOperationalAt
+        // gates paid burns and new-bonus pickups, but never the spending
+        // of accumulated Bonus Burns (H2b) and never the frozen net thrust.
         EngineSpec engine = engines.get(current.engineIndex);
         int newThrust = current.thrust;
         boolean isHazard = !sameNode && dest.hazard();
@@ -1467,7 +1475,12 @@ public final class Pathfinder {
 
         int newFreeBurns = current.freeBurns;
         List<String> newBonusSites = new ArrayList<>(current.bonusSites);
-        if (!sameNode && dest.isFlyby()) {
+        // H8a: picking up NEW Bonus Burns (flyby, mag-sail belt, Oberth)
+        // requires an Operational activated thruster — coasting qualifies,
+        // a decommissioned sail or a shutdown-zone solar card does not.
+        // Already-accumulated bonuses stay spendable regardless (H2b).
+        boolean operationalAtDest = engineOperationalAt(current, dest);
+        if (!sameNode && dest.isFlyby() && operationalAtDest) {
             // H8c Venus passage is fully season-gated upstream in
             // expandToNeighbor — by the time we get here, a Venus dest is
             // guaranteed to be in BLUE, so the +flybyBoost is unconditional
@@ -1475,18 +1488,20 @@ public final class Pathfinder {
             newFreeBurns += dest.flybyBoost();
             newBonusSites.add(dest.id());
         }
-        // H8f Mag Sail: every radiation belt entered confers Bonus Burns
-        // (severity = node.radiation), once per belt per movement.
-        if (!sameNode && dest.isRadhaz() && engine.magSail()
+        // H8f Mag Sail: every radiation belt entered confers ONE Bonus Burn,
+        // once per belt per movement. The Sails-module text pins the count:
+        // "receives one Bonus Burn in the same manner as a flyby (H8b) for
+        // each Radiation Belt entered" — NOT the belt's radiation severity.
+        if (!sameNode && dest.isRadhaz() && engine.magSail() && operationalAtDest
                 && !current.bonusSites.contains(dest.id())) {
-            newFreeBurns += dest.radiation();
+            newFreeBurns += 1;
             newBonusSites.add(dest.id());
         }
         // H8e Solar Oberth flyby (cruise entry): some maps tag a non-burn
         // node (e.g. central lagrange of an Oberth structure) with the
         // Oberth flag. Grant base-thrust bonus burns once per move.
         // (expandBurn handles the canonical lander-burn-typed Oberth.)
-        if (!sameNode && dest.solarOberth()
+        if (!sameNode && dest.solarOberth() && operationalAtDest
                 && !current.bonusSites.contains(dest.id())) {
             int oberth = engine.baseThrust();
             if (current.afterburnedThisMove) oberth += 1;
@@ -1648,8 +1663,9 @@ public final class Pathfinder {
     private int effectiveThrust(int engineIndex, MapNode node, int fuelStepsRemaining) {
         EngineSpec engine = engines.get(engineIndex);
         // H3c hard shutdown: solar engines in deep outer zones are non-
-        // operational regardless of base thrust. Returning 0 ensures the
-        // existing destThrust-≤-0 guards treat the engine as inoperative.
+        // operational regardless of base thrust. Returning 0 zeroes the
+        // paid-burn budget of movements that START here; entry-time
+        // operationality is gated separately by engineOperationalAt.
         if (engine.solarPowered() && node.solarMod() <= SOLAR_SHUTDOWN_SOLAR_MOD) {
             return 0;
         }
@@ -1657,6 +1673,23 @@ public final class Pathfinder {
         int weightMod = FuelStrip.weightClassModForWetMass(wm);
         int solar = engine.solarPowered() ? node.solarMod() : 0;
         return engine.baseThrust() + weightMod + solar;
+    }
+
+    /**
+     * J2/J3 operational status of the state's activated engine while at
+     * {@code node}. Non-operational when (a) solar-powered in the hard-
+     * shutdown zone (J3a — Neptune J, {@code solarMod ≤
+     * SOLAR_SHUTDOWN_SOLAR_MOD}), or (b) already decommissioned this
+     * search (H6b sail aerobrake). A merely negative net thrust elsewhere
+     * does NOT de-activate the card — it only zeroes the paid-burn budget
+     * of movements that start there (H3/H5c). Non-operational blocks paid
+     * burns (J2a) and picking up new Bonus Burns (H8a), but never the
+     * spending of bonuses accumulated earlier in the move (H2b).
+     */
+    private boolean engineOperationalAt(SearchState state, MapNode node) {
+        if ((state.decommissionedEngines & (1L << state.engineIndex)) != 0) return false;
+        EngineSpec engine = engines.get(state.engineIndex);
+        return !(engine.solarPowered() && node.solarMod() <= SOLAR_SHUTDOWN_SOLAR_MOD);
     }
 
     // -------------------------------------------------------------------------
