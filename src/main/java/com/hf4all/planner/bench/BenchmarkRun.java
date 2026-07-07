@@ -60,11 +60,29 @@ public final class BenchmarkRun {
     private static final EngineSpec ENGINE_CHEMICAL =
             new EngineSpec(/* baseThrust */ 7, /* fuel */ 2, /* solar */ false, /* pivots */ 1);
 
+    /** AB-capable variant of {@link #ENGINE_CHEMICAL} (opt-in via
+     *  {@code -Dbench.ab=true}): same params, but afterburnFuelCost=1,
+     *  afterburnThrustGain=1. The standard bench engines have afterburn
+     *  0/0 (canAfterburn() == false), so the AB code path (lazy-afterburn
+     *  triggers, eager branch B) is never exercised by the default bench —
+     *  this variant exists purely to measure that path. */
+    private static final EngineSpec ENGINE_CHEMICAL_AB =
+            new EngineSpec(/* baseThrust */ 7, /* fuelNum */ 2, /* fuelDen */ 1,
+                    /* solar */ false, /* pivots */ 1,
+                    /* afterburnFuelCost */ 1, /* afterburnThrustGain */ 1,
+                    /* magSail */ false, /* decommissionsOnAerobrake */ false);
+
     /** Fuel-efficient solar engine: thrust drops in outer zones. */
     private static final EngineSpec ENGINE_SOLAR =
             new EngineSpec(/* baseThrust */ 5, /* fuel */ 1, /* solar */ true, /* pivots */ 0);
 
     private static final boolean ALLOW_FUEL_JETTISON = true;
+
+    /** Opt-in AB-capable engine variant (pathfinder-boost-unify phase 0
+     *  measurement tool): when {@code -Dbench.ab=true}, {@link #ENGINE_CHEMICAL_AB}
+     *  replaces {@link #ENGINE_CHEMICAL} in the request so the afterburn
+     *  code path is actually exercised. */
+    private static final boolean BENCH_AB = Boolean.getBoolean("bench.ab");
 
     // ---- Output file ----------------------------------------------------
 
@@ -85,11 +103,16 @@ public final class BenchmarkRun {
 
     public static void main(String[] args) throws IOException {
         String description = String.join(" ", args).trim();
+        if (BENCH_AB) {
+            description = description.isEmpty() ? "ab" : description + " ab";
+        }
+
+        EngineSpec chemical = BENCH_AB ? ENGINE_CHEMICAL_AB : ENGINE_CHEMICAL;
 
         SolarMap map = MapLoader.loadDefault();
         TraverseRequest request = new TraverseRequest(
                 START_NODE_ID,
-                List.of(ENGINE_CHEMICAL, ENGINE_SOLAR),
+                List.of(chemical, ENGINE_SOLAR),
                 DRY_MASS,
                 FUEL_STEPS,
                 ALLOW_FUEL_JETTISON);
@@ -118,9 +141,10 @@ public final class BenchmarkRun {
         // Console summary — useful when eyeballing runs interactively.
         System.out.println("Benchmark complete");
         System.out.println("  start         = " + START_NODE_ID);
-        System.out.println("  engines       = " + ENGINE_CHEMICAL + " + " + ENGINE_SOLAR);
+        System.out.println("  engines       = " + chemical + " + " + ENGINE_SOLAR);
         System.out.println("  dry/fuelSteps = " + DRY_MASS + "/" + FUEL_STEPS);
         System.out.println("  jettison      = " + ALLOW_FUEL_JETTISON);
+        System.out.println("  bench.ab      = " + BENCH_AB);
         System.out.println("  elapsed       = " + elapsedMs + " ms");
         System.out.println("  tree nodes    = " + treeNodes);
         System.out.println("  endpoints     = " + endpoints);

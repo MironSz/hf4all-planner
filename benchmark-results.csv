@@ -55,3 +55,13 @@ datetime,duration_ms,tree_nodes,endpoints,description
 2026-07-05T18:31:22,11884,20591,897,stats probe after fix (not for csv)
 2026-07-06T12:11:51,22394,27345,934,"before case1 cap-floor fix, uncapped iterations"
 2026-07-06T12:13:53,22131,27345,934,"after case1 cap-floor fix, uncapped iterations"
+2026-07-07T11:08:55,11709,20750,897,boost-unify phase0 baseline
+2026-07-07T11:09:25,10854,20750,897,boost-unify phase0 baseline
+2026-07-07T11:09:55,10988,20750,897,boost-unify phase0 baseline
+2026-07-07T11:11:13,11951,20750,897,boost-unify phase0 baseline
+2026-07-07T11:11:57,12291,15325,820,boost-unify phase0 baseline ab
+2026-07-07T11:12:30,11689,15325,820,boost-unify phase0 baseline ab
+2026-07-07T11:13:01,12560,15325,820,boost-unify phase0 baseline ab
+2026-07-07T11:13:50,12040,20750,897,boost-unify phase0 baseline recheck
+2026-07-07T11:14:25,11323,20750,897,boost-unify phase0 stats
+2026-07-07T11:15:04,12278,15325,820,boost-unify phase0 stats ab
