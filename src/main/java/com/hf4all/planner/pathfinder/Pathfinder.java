@@ -71,14 +71,18 @@ public final class Pathfinder {
      *  default OFF — measured ~9× slower; see SearchState.notDominatedBy). */
     private boolean bonusSitesSound;
 
-    /** Lazy afterburn branching (pathfinder.ab.lazy, default ON). When true,
+    /** Lazy thrust-boost branching (pathfinder.boost.lazy, default ON; renamed
+     *  from {@code pathfinder.ab.lazy} when fuel jettison and afterburn were
+     *  unified into the single {@link ThrustBoost} mechanism). When true,
      *  {@link #addTurnStartStates} emits only the no-afterburn branch per
      *  engine; the afterburn sibling is spawned on demand by
      *  {@link #maybeSpawnAfterburnAlt} at the points where the +gain could
      *  actually change a route (see that method's trigger taxonomy). When
      *  false, the eager branch B in {@code addTurnStartStates} is restored:
-     *  every AB-capable engine emits its AB variant at every turn-start. Read
-     *  fresh in {@link #run} like the {@code pathfinder.dom.*} flags. */
+     *  every AB-capable engine emits its AB variant at every turn-start — this
+     *  is the eager full-menu validation harness for A/B comparison against
+     *  the lazy default. Read fresh in {@link #run} like the
+     *  {@code pathfinder.dom.*} flags. */
     private boolean abLazy;
 
     /** Total states enqueued this run — reported when {@code pathfinder.stats}
@@ -179,7 +183,7 @@ public final class Pathfinder {
     private FrontierKey keyOf(SearchState s) {
         int turnMod = ((s.turn - 1) % 12 + 12) % 12;
         int thrustKey = keyThrustCap > 0 ? Math.min(s.thrust, keyThrustCap) : 0;
-        boolean ab = keyThrustCap > 0 && s.afterburnedThisMove;
+        boolean ab = keyThrustCap > 0 && s.afterburnedThisMove();
         long decom = keyThrustCap > 0 ? s.decommissionedEngines : 0L;
         return new FrontierKey(s.nodeIdx, s.engineIndex, s.entryLabel,
                 s.previousNodeIdx, turnMod, thrustKey, ab, decom);
@@ -371,7 +375,10 @@ public final class Pathfinder {
         public boolean isEmpty() { return pq.isEmpty(); }
     }
 
-    private Pathfinder(SolarMap map, List<EngineSpec> engines,
+    /** Package-private (rather than private) so unit tests in this package
+     *  can build an instance directly to exercise instance methods like
+     *  {@link #boostMenu} without going through a full {@link #traverse} run. */
+    Pathfinder(SolarMap map, List<EngineSpec> engines,
                        int dryMass, int initialFuelSteps,
                        boolean allowFuelJettison,
                        int startingYear) {
@@ -621,7 +628,7 @@ public final class Pathfinder {
         this.bonusSitesSound =
                 Boolean.parseBoolean(System.getProperty("pathfinder.dom.bonusSitesSound", "false"));
         this.abLazy =
-                Boolean.parseBoolean(System.getProperty("pathfinder.ab.lazy", "true"));
+                Boolean.parseBoolean(System.getProperty("pathfinder.boost.lazy", "true"));
         this.thrustGateCap =
                 (!thrustKeyed && Boolean.parseBoolean(
                         System.getProperty("pathfinder.dom.thrustScoped", "true")))
@@ -665,10 +672,10 @@ public final class Pathfinder {
         List<SearchState> seeds = new ArrayList<>(engines.size() * 2);
         SearchState pseudoCurrent = new SearchState(
                 start, map.indexOf(start), null, 0, 0, 0, 0, 0,
-                initialFuelSteps, Fraction.ZERO, 0,
+                initialFuelSteps, Fraction.ZERO, ThrustBoost.base(0),
                 1, 0, 0,                       // turn=1 hazards=0 worstRadRoll=0
                 1, -1, null, List.of(),        // previousNodeIdx=-1 (no prior move)
-                null, false, 0L);
+                null, 0L);
         addTurnStartStates(seeds, pseudoCurrent, initialFuelSteps, /*jettisoned=*/ 0,
                 /*turn=*/ 1, /*parent=*/ null);
         if (sink != null) {
@@ -847,7 +854,7 @@ public final class Pathfinder {
      *  synthetic root rather than getting its own node — matching
      *  {@link #buildResponse}. Such states resolve to root id 0. */
     private static boolean isPlainSeed(SearchState s) {
-        return s.parent == null && !s.afterburnedThisMove && s.jettisonedAtTurnStart == 0;
+        return s.parent == null && !s.afterburnedThisMove() && s.jettisonedAtTurnStart() == 0;
     }
 
     /** True once a state already has a stable id (or is folded into the root). */
@@ -880,8 +887,8 @@ public final class Pathfinder {
         // jettison / afterburn badges are reported only on the turn-start node
         // where they happened (same rule as buildResponse).
         boolean isTurnStart = (s.turnStart == null);
-        int jettisonedHere  = isTurnStart ? s.jettisonedAtTurnStart : 0;
-        int afterburnedHere = (isTurnStart && s.afterburnedThisMove)
+        int jettisonedHere  = isTurnStart ? s.jettisonedAtTurnStart() : 0;
+        int afterburnedHere = (isTurnStart && s.afterburnedThisMove())
                 ? engines.get(s.engineIndex).afterburnThrustGain() : 0;
         return new StreamNode(id, parentId, s.node.id(),
                 eff, spent,
@@ -1022,8 +1029,8 @@ public final class Pathfinder {
                 // that EITHER jettisoned OR afterburned at turn 1 carries info
                 // (badge + costs) that would be silently dropped if collapsed
                 // into the shared root, so it gets its own PathNode under root.
-                boolean abAtSeed  = s.afterburnedThisMove;
-                boolean jetAtSeed = s.jettisonedAtTurnStart > 0;
+                boolean abAtSeed  = s.afterburnedThisMove();
+                boolean jetAtSeed = s.jettisonedAtTurnStart() > 0;
                 if (jetAtSeed || abAtSeed) {
                     int eff   = s.effectiveFuelStepsRemaining();
                     int wm    = FuelStrip.wetMassAt(dryMass, eff);
@@ -1038,7 +1045,7 @@ public final class Pathfinder {
                             eff, spent,
                             remainFrac.numerator(), remainFrac.denominator(),
                             spentFrac.numerator(),  spentFrac.denominator(),
-                            wm, s.jettisonedAtTurnStart, abGain,
+                            wm, s.jettisonedAtTurnStart(), abGain,
                             s.turn, s.hazards, s.worstRadRoll, s.engineIndex);
                     root.addChild(seedRoot);
                     stateToNode.put(s, seedRoot);
@@ -1071,8 +1078,8 @@ public final class Pathfinder {
                 // PathNode ONLY at the actual turn-start (where the event
                 // occurred) so the UI doesn't splash badges across the turn.
                 boolean isTurnStart = (child.turnStart == null);
-                int jettisonedOnNode = isTurnStart ? child.jettisonedAtTurnStart : 0;
-                int afterburnedOnNode = (isTurnStart && child.afterburnedThisMove)
+                int jettisonedOnNode = isTurnStart ? child.jettisonedAtTurnStart() : 0;
+                int afterburnedOnNode = (isTurnStart && child.afterburnedThisMove())
                         ? engines.get(child.engineIndex).afterburnThrustGain() : 0;
 
                 PathNode childPN = new PathNode(nextId++, child.node.id(),
@@ -1305,14 +1312,14 @@ public final class Pathfinder {
         List<String> bonusSitesAfterEntry = current.bonusSites;
         if (oberthBoost) {
             oberthBonusBurns = engine.baseThrust();
-            if (current.afterburnedThisMove) oberthBonusBurns += 1;
+            if (current.afterburnedThisMove()) oberthBonusBurns += 1;
             bonusSitesAfterEntry = new ArrayList<>(current.bonusSites);
             bonusSitesAfterEntry.add(dest.id());
         }
         // Solar-Oberth trigger: entering an Oberth node without having
         // afterburned this movement. The AB sibling harvests +1 Oberth bonus
         // burn (H8e), a strictly better route this movement.
-        if (dest.solarOberth() && !current.afterburnedThisMove) {
+        if (dest.solarOberth() && !current.afterburnedThisMove()) {
             maybeSpawnAfterburnAlt(current);
         }
 
@@ -1336,11 +1343,11 @@ public final class Pathfinder {
                     burnsAfter, current.pivotsRemaining,
                     oneWay ? 0 : current.freeBurns - 1 + oberthBonusBurns, thrustAfter,
                     current.fuelStepsRemaining, current.partialStepsThisMove,
-                    current.jettisonedAtTurnStart,
+                    current.boost,
                     current.turn, newHazards, newRadRoll,
                     current.visitedNodes + visitedInc, prevNode, current,
                     bonusSitesAfterEntry,
-                    current.turnStart(), current.afterburnedThisMove,
+                    current.turnStart(),
                     newDecom));
         }
         // Option B: paid burn — needs an Operational thruster (J2a) plus
@@ -1355,11 +1362,11 @@ public final class Pathfinder {
                     paidBurnsAfter, current.pivotsRemaining,
                     oneWay ? 0 : current.freeBurns + oberthBonusBurns, thrustAfter,
                     current.fuelStepsRemaining, newPartial,
-                    current.jettisonedAtTurnStart,
+                    current.boost,
                     current.turn, newHazards, newRadRoll,
                     current.visitedNodes + visitedInc, prevNode, current,
                     bonusSitesAfterEntry,
-                    current.turnStart(), current.afterburnedThisMove,
+                    current.turnStart(),
                     newDecom));
         }
         // Note: we deliberately do NOT trigger lazy jettison when we simply
@@ -1395,11 +1402,11 @@ public final class Pathfinder {
                     current.burnsRemaining, current.pivotsRemaining - 1,
                     current.freeBurns, current.thrust,
                     current.fuelStepsRemaining, current.partialStepsThisMove,
-                    current.jettisonedAtTurnStart,
+                    current.boost,
                     current.turn, current.hazards, current.worstRadRoll,
                     current.visitedNodes, prevNode, current,
                     current.bonusSites,
-                    current.turnStart(), current.afterburnedThisMove,
+                    current.turnStart(),
                     current.decommissionedEngines));
         }
         // Option B: force-turn via 2 paid burns (requires an operational thruster)
@@ -1413,11 +1420,11 @@ public final class Pathfinder {
                         current.burnsRemaining - 2, current.pivotsRemaining,
                         current.freeBurns, current.thrust,
                         current.fuelStepsRemaining, newPartial,
-                        current.jettisonedAtTurnStart,
+                        current.boost,
                         current.turn, current.hazards, current.worstRadRoll,
                         current.visitedNodes, prevNode, current,
                         current.bonusSites,
-                        current.turnStart(), current.afterburnedThisMove,
+                        current.turnStart(),
                     current.decommissionedEngines));
             }
         } else if (current.thrust <= 0) {
@@ -1504,14 +1511,14 @@ public final class Pathfinder {
         if (!sameNode && dest.solarOberth() && operationalAtDest
                 && !current.bonusSites.contains(dest.id())) {
             int oberth = engine.baseThrust();
-            if (current.afterburnedThisMove) oberth += 1;
+            if (current.afterburnedThisMove()) oberth += 1;
             newFreeBurns += oberth;
             newBonusSites.add(dest.id());
         }
         // Solar-Oberth trigger (cross-node entries only): entering an Oberth
         // node without having afterburned this movement. The AB sibling
         // harvests +1 Oberth bonus burn (H8e), a strictly better route.
-        if (!sameNode && dest.solarOberth() && !current.afterburnedThisMove) {
+        if (!sameNode && dest.solarOberth() && !current.afterburnedThisMove()) {
             maybeSpawnAfterburnAlt(current);
         }
         // One-way edge zeroes out free burns (applies after flyby/magsail boost too).
@@ -1534,11 +1541,11 @@ public final class Pathfinder {
                 burnsAfter, current.pivotsRemaining,
                 newFreeBurns, thrustAfter,
                 current.fuelStepsRemaining, current.partialStepsThisMove,
-                current.jettisonedAtTurnStart,
+                current.boost,
                 current.turn, newHazards, newRadRoll,
                 current.visitedNodes + visitedInc,
                 prevNode, current, newBonusSites,
-                current.turnStart(), current.afterburnedThisMove,
+                current.turnStart(),
                 newDecom));
     }
 
@@ -1603,8 +1610,9 @@ public final class Pathfinder {
             int noAbThrust = effectiveThrust(i, current.node, newFuelSteps);
 
             // Branch A: no afterburn (always present).
-            out.add(buildTurnStart(current, i, engine, noAbThrust,
-                    newFuelSteps, jettisoned, turn, parent, /*ab=*/ false));
+            out.add(buildTurnStart(current, i, engine,
+                    new ThrustBoost(0, noAbThrust, 0, jettisoned),
+                    newFuelSteps, turn, parent));
 
             // Branch B: afterburn. Eager only — under lazy mode this branch is
             // spawned on demand by maybeSpawnAfterburnAlt from the no-AB sibling
@@ -1613,29 +1621,36 @@ public final class Pathfinder {
                 int cost = engine.afterburnFuelCost();
                 if (engine.canAfterburn() && newFuelSteps >= cost) {
                     int abThrust = noAbThrust + engine.afterburnThrustGain();
-                    out.add(buildTurnStart(current, i, engine, abThrust,
-                            newFuelSteps - cost, jettisoned, turn, parent, /*ab=*/ true));
+                    out.add(buildTurnStart(current, i, engine,
+                            new ThrustBoost(cost, abThrust, 1, jettisoned),
+                            newFuelSteps - cost, turn, parent));
                 }
             }
         }
     }
 
-    /** Builds a single turn-start SearchState. Centralises the constructor
-     *  call so the AB-vs-no-AB branching above stays readable. */
+    /** Builds a single turn-start SearchState from a chosen {@link ThrustBoost}.
+     *  Centralises the constructor call so the AB-vs-no-AB branching above
+     *  stays readable. {@code boost.thrust()} is the frozen net thrust for
+     *  the movement; {@code fuelSteps} is the resulting fuel level AFTER the
+     *  boost's spend (already deducted by the caller — kept as an explicit
+     *  parameter rather than re-derived from {@code current.fuelStepsRemaining
+     *  - boost.fuelCost()} because callers pass the settled post-waitTurn
+     *  fuel level, which the boost's cost was computed against). */
     private SearchState buildTurnStart(SearchState current, int engineIndex,
-                                       EngineSpec engine, int thrust,
-                                       int fuelSteps, int jettisoned, int turn,
-                                       SearchState parent, boolean afterburned) {
+                                       EngineSpec engine, ThrustBoost boost,
+                                       int fuelSteps, int turn, SearchState parent) {
+        int thrust = boost.thrust();
         int burns = Math.max(thrust, 0);
         return new SearchState(
                 current.node, current.nodeIdx, null, engineIndex,
                 burns, engine.bonusPivots(), 0, thrust,
-                fuelSteps, Fraction.ZERO, jettisoned,
+                fuelSteps, Fraction.ZERO, boost,
                 turn,
                 current.hazards, current.worstRadRoll,
                 current.visitedNodes, -1, parent, List.of(),
                 null /* this IS a turn-start */,
-                afterburned, current.decommissionedEngines);
+                current.decommissionedEngines);
     }
 
     /**
@@ -1673,6 +1688,97 @@ public final class Pathfinder {
         int weightMod = FuelStrip.weightClassModForWetMass(wm);
         int solar = engine.solarPowered() ? node.solarMod() : 0;
         return engine.baseThrust() + weightMod + solar;
+    }
+
+    /**
+     * The full menu of turn-start thrust boosts available to {@code engineIndex}
+     * at {@code node} with {@code fuelSteps} fuel on hand: "spend x fuel steps
+     * at movement start to get frozen net thrust y" (H3/H3a/F3d/G1f), unifying
+     * fuel jettison and afterburn into one option list.
+     *
+     * <p>Menu contents, before pruning:
+     * <ul>
+     *   <li><b>base</b> — {@code (0, effectiveThrust(F), 0, 0)}: no spend, the
+     *       plain weight-class thrust.</li>
+     *   <li><b>AB</b> — {@code (cost, effectiveThrust(F)+gain, 1, 0)}, when the
+     *       engine can afterburn and can afford it. Weight class is NOT
+     *       recomputed from the post-AB fuel (project rule H3a): the gain
+     *       layers on top of the base thrust.</li>
+     *   <li><b>jettison rungs</b> — one per {@link FuelStrip#jettisonAmountsForClassChange}
+     *       entry {@code x_k}: {@code (x_k, effectiveThrust(F-x_k), 0, x_k)}.</li>
+     *   <li><b>rung+AB combos</b> — each rung layered with afterburn when
+     *       affordable: {@code (x_k+cost, thrust_k+gain, 1, x_k)}.</li>
+     * </ul>
+     *
+     * <p>Jettison-bearing options ({@code jettisonedSteps > 0}) are excluded
+     * when {@code turnOne} (the player committed to the starting load — F3d)
+     * or {@code !allowJettison} (request-level opt-out).
+     *
+     * <p>The result is sorted by {@code fuelCost} ascending, then Pareto-pruned:
+     * an option is dropped if another surviving option is at least as good on
+     * every axis (fuelCost no greater, thrust no smaller, oberthBonus no
+     * smaller) — a straight improvement-or-tie, so the dropped option can
+     * never be the uniquely best choice for any trigger.
+     */
+    List<ThrustBoost> boostMenu(int engineIndex, MapNode node, int fuelSteps,
+                                boolean turnOne, boolean allowJettison) {
+        EngineSpec engine = engines.get(engineIndex);
+        List<ThrustBoost> menu = new ArrayList<>();
+
+        int baseThrust = effectiveThrust(engineIndex, node, fuelSteps);
+        menu.add(new ThrustBoost(0, baseThrust, 0, 0));
+
+        int abCost = engine.afterburnFuelCost();
+        boolean canAb = engine.canAfterburn();
+        if (canAb && fuelSteps >= abCost) {
+            menu.add(new ThrustBoost(abCost, baseThrust + engine.afterburnThrustGain(), 1, 0));
+        }
+
+        boolean jettisonEligible = allowJettison && !turnOne;
+        if (jettisonEligible) {
+            int[] rungs = FuelStrip.jettisonAmountsForClassChange(dryMass, fuelSteps);
+            for (int x : rungs) {
+                int newFuel = fuelSteps - x;
+                int rungThrust = effectiveThrust(engineIndex, node, newFuel);
+                menu.add(new ThrustBoost(x, rungThrust, 0, x));
+                if (canAb && newFuel >= abCost) {
+                    menu.add(new ThrustBoost(x + abCost, rungThrust + engine.afterburnThrustGain(),
+                            1, x));
+                }
+            }
+        }
+
+        menu.sort(Comparator.comparingInt(ThrustBoost::fuelCost));
+        return pruneBoostMenu(menu);
+    }
+
+    /**
+     * Pareto-prune a boost menu: drop any option dominated by another —
+     * i.e. another option with {@code fuelCost <=}, {@code thrust >=}, and
+     * {@code oberthBonus >=} (with the pair not identical on all three, so an
+     * option never removes itself). {@code jettisonedSteps} is provenance
+     * only and does not participate in dominance.
+     */
+    private static List<ThrustBoost> pruneBoostMenu(List<ThrustBoost> menu) {
+        List<ThrustBoost> survivors = new ArrayList<>(menu.size());
+        for (ThrustBoost candidate : menu) {
+            boolean dominated = false;
+            for (ThrustBoost other : menu) {
+                if (other == candidate) continue;
+                boolean noWorse = other.fuelCost() <= candidate.fuelCost()
+                        && other.thrust() >= candidate.thrust()
+                        && other.oberthBonus() >= candidate.oberthBonus();
+                boolean strictlyBetter = other.fuelCost() < candidate.fuelCost()
+                        || other.thrust() > candidate.thrust()
+                        || other.oberthBonus() > candidate.oberthBonus();
+                if (noWorse && strictlyBetter) {
+                    dominated = true;
+                    break;
+                }
+            }
+            if (!dominated) survivors.add(candidate);
+        }
+        return survivors;
     }
 
     /**
@@ -1781,15 +1887,15 @@ public final class Pathfinder {
      */
     private void maybeSpawnAfterburnAlt(SearchState current) {
         SearchState ts = current.turnStart();
-        if (ts.afterburnedThisMove) return;            // already afterburning
+        if (ts.afterburnedThisMove()) return;           // already afterburning
         EngineSpec engine = engines.get(ts.engineIndex);
         if (!engine.canAfterburn()) return;
         int cost = engine.afterburnFuelCost();
         if (ts.fuelStepsRemaining < cost) return;      // can't afford the burn
         int abThrust = ts.thrust + engine.afterburnThrustGain();
-        SearchState ab = buildTurnStart(ts, ts.engineIndex, engine, abThrust,
-                ts.fuelStepsRemaining - cost, ts.jettisonedAtTurnStart,
-                ts.turn, ts.parent, /*ab=*/ true);
+        ThrustBoost boost = new ThrustBoost(cost, abThrust, 1, ts.jettisonedAtTurnStart());
+        SearchState ab = buildTurnStart(ts, ts.engineIndex, engine, boost,
+                ts.fuelStepsRemaining - cost, ts.turn, ts.parent);
         if (addIfBest(ab, bestFound)) enqueue(ab);
     }
 

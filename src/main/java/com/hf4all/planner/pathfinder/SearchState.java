@@ -40,7 +40,6 @@ final class SearchState {
     // Mass / fuel ledger
     final int fuelStepsRemaining;          // chit position (steps from Dry Mass) at start of move
     final Fraction partialStepsThisMove;   // fractional fuel used so far this move (H5b)
-    final int jettisonedAtTurnStart;       // fuel steps dumped at this turn's start (0 if none)
 
     // Cumulative output costs (the Pareto dimensions besides fuel)
     final int turn;
@@ -65,12 +64,29 @@ final class SearchState {
     final SearchState turnStart;
 
     /**
-     * Whether the engine afterburned at the start of this movement (HF4A H3a:
-     * once per movement). Set on the AB turn-start state; propagated unchanged
-     * through every mid-turn descendant; reset to {@code false} by the next
-     * {@link Pathfinder#addTurnStartStates}.
+     * The thrust boost chosen at this state's most recent turn-start (HF4A
+     * H3/H3a/F3d/G1f): "spend x fuel steps at movement start to get frozen
+     * net thrust y", unifying fuel jettison and afterburn into one option.
+     * Set on the turn-start state; propagated unchanged through every
+     * mid-turn descendant; replaced by the next
+     * {@link Pathfinder#addTurnStartStates}. Never {@code null} — a plain
+     * no-spend turn-start still carries {@link ThrustBoost#base}.
      */
-    final boolean afterburnedThisMove;
+    final ThrustBoost boost;
+
+    /** Whether the engine afterburned at the start of this movement (HF4A
+     *  H3a: once per movement) — {@code boost.afterburned()}. Kept as an
+     *  accessor (not a field) so every existing read site
+     *  ({@code state.afterburnedThisMove}) keeps working unchanged. */
+    boolean afterburnedThisMove() {
+        return boost.afterburned();
+    }
+
+    /** Fuel steps jettisoned at this state's turn-start (0 if none) —
+     *  {@code boost.jettisonedSteps()}. Accessor mirroring the old field. */
+    int jettisonedAtTurnStart() {
+        return boost.jettisonedSteps();
+    }
 
     /**
      * Bitmask of engine indices that are permanently decommissioned (HF4A
@@ -83,10 +99,10 @@ final class SearchState {
 
     SearchState(MapNode node, int nodeIdx, String entryLabel, int engineIndex,
                 int burnsRemaining, int pivotsRemaining, int freeBurns, int thrust,
-                int fuelStepsRemaining, Fraction partialStepsThisMove, int jettisonedAtTurnStart,
+                int fuelStepsRemaining, Fraction partialStepsThisMove, ThrustBoost boost,
                 int turn, int hazards, int worstRadRoll,
                 int visitedNodes, int previousNodeIdx, SearchState parent, List<String> bonusSites,
-                SearchState turnStart, boolean afterburnedThisMove,
+                SearchState turnStart,
                 long decommissionedEngines) {
         this.node = node;
         this.nodeIdx = nodeIdx;
@@ -98,7 +114,7 @@ final class SearchState {
         this.thrust = thrust;
         this.fuelStepsRemaining = fuelStepsRemaining;
         this.partialStepsThisMove = partialStepsThisMove;
-        this.jettisonedAtTurnStart = jettisonedAtTurnStart;
+        this.boost = boost;
         this.turn = turn;
         this.hazards = hazards;
         this.worstRadRoll = worstRadRoll;
@@ -108,7 +124,6 @@ final class SearchState {
         this.bonusSites = bonusSites;
         this.turnStart = turnStart;
         this.decommissionedEngines = decommissionedEngines;
-        this.afterburnedThisMove = afterburnedThisMove;
     }
 
     /** Returns the most recent turn-start state in this state's lineage
