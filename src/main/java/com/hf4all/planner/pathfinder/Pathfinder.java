@@ -76,7 +76,7 @@ public final class Pathfinder {
      *  unified into the single {@link ThrustBoost} mechanism). When true,
      *  {@link #addTurnStartStates} emits only the no-afterburn branch per
      *  engine; the afterburn sibling is spawned on demand by
-     *  {@link #maybeSpawnAfterburnAlt} at the points where the +gain could
+     *  {@link #maybeSpawnBoostAlt} at the points where the +gain could
      *  actually change a route (see that method's trigger taxonomy). When
      *  false, the eager branch B in {@code addTurnStartStates} is restored:
      *  every AB-capable engine emits its AB variant at every turn-start — this
@@ -702,15 +702,14 @@ public final class Pathfinder {
             for (Neighbor neighbor : getNeighbors(current)) {
                 for (SearchState next : expandToNeighbor(current, neighbor)) {
                     if (!isAllowed(current, next)) {
-                        // Lazy-jettison / lazy-afterburn trigger: if this
-                        // transition was blocked by a thrust gate, see if a
-                        // jettison alt OR the afterburn sibling at the current
-                        // turn-start would have unblocked it (both raise the
-                        // frozen net thrust that the gate compares against).
+                        // Lazy thrust-boost trigger: if this transition was
+                        // blocked by a thrust gate, see if a jettison alt OR
+                        // the afterburn sibling at the current turn-start
+                        // would have unblocked it (both raise the frozen net
+                        // thrust that the gate compares against).
                         int req = requiredThrustForTransition(current.node, next.node);
                         if (req > current.thrust) {
-                            maybeSpawnJettisonAlt(current);
-                            maybeSpawnAfterburnAlt(current);
+                            maybeSpawnBoostAlt(current, 0, TriggerKind.THRUST_GATE);
                         }
                         continue;
                     }
@@ -1269,9 +1268,11 @@ public final class Pathfinder {
         // Lazy-jettison trigger (kept from the old destThrust entry gate):
         // destination-zone thrust ≤ 0 at the current weight means a class
         // drop — possibly onto a different engine — may revive paid burns
-        // here, which waiting alone never would.
+        // here, which waiting alone never would. DEAD_ENGINE: jettison
+        // responds (as before); AB also responds under the phase-2 mask —
+        // verified bit-identical against the phase-0/1 baseline (see gate).
         if (effectiveThrust(current.engineIndex, dest, current.fuelStepsRemaining) <= 0) {
-            maybeSpawnJettisonAlt(current);
+            maybeSpawnBoostAlt(current, 0, TriggerKind.DEAD_ENGINE);
         }
 
         EngineSpec engine = engines.get(current.engineIndex);
@@ -1292,7 +1293,7 @@ public final class Pathfinder {
         // impossible in expandBurn: burns are always cross-node entries.)
         if (dest.radiation() > 0
                 && radSeverityUnder(dest, current.thrust, current.turn) > 0) {
-            maybeSpawnAfterburnAlt(current);
+            maybeSpawnBoostAlt(current, 0, TriggerKind.RADIATION);
         }
         // H5e: half-burn lander spaces (landing = 1/2) cost half the fuel
         // steps of a full burn. landing == 1 (full burn) leaves cost unchanged.
@@ -1320,7 +1321,7 @@ public final class Pathfinder {
         // afterburned this movement. The AB sibling harvests +1 Oberth bonus
         // burn (H8e), a strictly better route this movement.
         if (dest.solarOberth() && !current.afterburnedThisMove()) {
-            maybeSpawnAfterburnAlt(current);
+            maybeSpawnBoostAlt(current, 0, TriggerKind.OBERTH);
         }
 
         // H6b sail-aerobrake decommission: a sail entering a hazard node
@@ -1385,7 +1386,7 @@ public final class Pathfinder {
         // when burns remained but the H5d fuel cap blocked the burn, afterburn
         // can't help — it only reduces fuel.
         if (current.burnsRemaining == 0) {
-            maybeSpawnAfterburnAlt(current);
+            maybeSpawnBoostAlt(current, 0, TriggerKind.BURNS_EXHAUSTED);
         }
         return out;
     }
@@ -1434,15 +1435,14 @@ public final class Pathfinder {
             // the engine; afterburn would raise the frozen net thrust the same
             // way. (Jettison doesn't trigger on burnsRemaining < 2 alone:
             // that's just running out of budget this turn.)
-            maybeSpawnJettisonAlt(current);
-            maybeSpawnAfterburnAlt(current);
+            maybeSpawnBoostAlt(current, 0, TriggerKind.DEAD_ENGINE);
         } else {
             // Force-turn skipped for burn BUDGET (thrust > 0, burnsRemaining
             // ≤ 1). Afterburn's extra burn is exactly the missing budget, so
             // the AB sibling may make this force-turn — without this trigger
             // lazy mode loses max-burn sprint routes that need a 2-burn turn
             // late in a movement (verified: eager-only 1:2:0:0 at 728/734).
-            maybeSpawnAfterburnAlt(current);
+            maybeSpawnBoostAlt(current, 0, TriggerKind.FORCE_TURN_BUDGET);
         }
         return out;
     }
@@ -1476,7 +1476,7 @@ public final class Pathfinder {
         // lower Belt Roll — a strictly better radRoll route (H10b).
         if (!sameNode && dest.radiation() > 0
                 && radSeverityUnder(dest, newThrust, current.turn) > 0) {
-            maybeSpawnAfterburnAlt(current);
+            maybeSpawnBoostAlt(current, 0, TriggerKind.RADIATION);
         }
         int visitedInc   = (!sameNode && !dest.isDecorative()) ? 1 : 0;
 
@@ -1519,7 +1519,7 @@ public final class Pathfinder {
         // node without having afterburned this movement. The AB sibling
         // harvests +1 Oberth bonus burn (H8e), a strictly better route.
         if (!sameNode && dest.solarOberth() && !current.afterburnedThisMove()) {
-            maybeSpawnAfterburnAlt(current);
+            maybeSpawnBoostAlt(current, 0, TriggerKind.OBERTH);
         }
         // One-way edge zeroes out free burns (applies after flyby/magsail boost too).
         if (oneWay) newFreeBurns = 0;
@@ -1555,12 +1555,12 @@ public final class Pathfinder {
      * thrust.
      *
      * <p>Spawns only the no-jettison branch. Jettison alternatives are
-     * generated lazily by {@link #maybeSpawnJettisonAlt(SearchState)} when
-     * a downstream transition fails for thrust reasons that a class drop
-     * would resolve. Eagerly spawning all class-change alternatives floods
-     * the search with branches that get strictly dominated at the output
-     * Pareto step (less fuel, same other dims) unless they actually unblock
-     * something — which only the search itself can determine.
+     * generated lazily by {@link #maybeSpawnBoostAlt} when a downstream
+     * transition fails for thrust reasons that a class drop would resolve.
+     * Eagerly spawning all class-change alternatives floods the search with
+     * branches that get strictly dominated at the output Pareto step (less
+     * fuel, same other dims) unless they actually unblock something — which
+     * only the search itself can determine.
      */
     private List<SearchState> waitTurn(SearchState current) {
         // Apply end-of-move rounding (H5b) to settle the chit.
@@ -1576,7 +1576,7 @@ public final class Pathfinder {
 
     /**
      * Spawn fresh-turn states per available engine, given the settled fuel
-     * level. Used by {@link #waitTurn}, {@link #maybeSpawnJettisonAlt}, and
+     * level. Used by {@link #waitTurn}, {@link #maybeSpawnBoostAlt}, and
      * the search seed.
      *
      * <p>For each engine we always emit the afterburn-off branch (branch A).
@@ -1615,7 +1615,7 @@ public final class Pathfinder {
                     newFuelSteps, turn, parent));
 
             // Branch B: afterburn. Eager only — under lazy mode this branch is
-            // spawned on demand by maybeSpawnAfterburnAlt from the no-AB sibling
+            // spawned on demand by maybeSpawnBoostAlt from the no-AB sibling
             // instead of unconditionally here.
             if (!abLazy) {
                 int cost = engine.afterburnFuelCost();
@@ -1799,104 +1799,92 @@ public final class Pathfinder {
     }
 
     // -------------------------------------------------------------------------
-    // Lazy jettison (HF4A F3d / G1f)
+    // Lazy thrust-boost triggers (HF4A F3d / G1f jettison, H3a afterburn)
     //
-    // Eager jettison branching at every waitTurn floods the search with
-    // siblings that are strictly dominated at output-Pareto time (less fuel,
-    // same other dims) UNLESS they actually unlock a transition the no-jet
-    // sibling can't make. The methods below spawn jettison alternatives
-    // only when a forward expansion blocks for thrust reasons that a
-    // class-drop would resolve.
+    // Eager boost branching at every waitTurn floods the search with siblings
+    // that are strictly dominated at output-Pareto time (less fuel, same
+    // other dims) UNLESS they actually unlock a transition the base sibling
+    // can't make. The trigger below spawns boost alternatives only when a
+    // forward expansion blocks (or could be improved) for thrust reasons that
+    // a menu option would resolve.
     // -------------------------------------------------------------------------
 
     /**
-     * Look at the most recent turn-start ancestor of {@code current} and
-     * lazily enqueue its smallest jettison alternative whose post-jettison
-     * thrust strictly exceeds the no-jet sibling's. Caller is responsible
-     * for invoking this only when the current state was blocked by thrust
-     * (or burns, which is a downstream consequence of thrust at turn start).
-     *
-     * <p>The alt is spawned at the same node and turn as the original
-     * turn-start; the BFS will explore its subtree from there. Duplicate
-     * spawns are deduped by the standard Pareto frontier check inside
-     * {@link #addIfBest}, so the trigger may fire multiple times for the
-     * same alt without correctness impact.
+     * The situations where a bigger thrust boost than the current turn-start's
+     * could unblock or improve a route. See {@link #maybeSpawnBoostAlt} for
+     * the per-kind response mask.
      */
-    private void maybeSpawnJettisonAlt(SearchState current) {
-        if (!allowFuelJettison) return;
-        SearchState ts = current.turnStart();
-        int[] alts = FuelStrip.jettisonAmountsForClassChange(dryMass, ts.fuelStepsRemaining);
-        for (int alt : alts) {
-            int newFuelSteps = ts.fuelStepsRemaining - alt;
-            int altThrust = effectiveThrust(ts.engineIndex, ts.node, newFuelSteps);
-            if (altThrust > ts.thrust) {
-                // Smallest alt that produces strictly more thrust than no-jet.
-                // Spawn it as a sibling turn-start of ts (same parent, same turn).
-                List<SearchState> spawned = new ArrayList<>(engines.size());
-                addTurnStartStates(spawned, ts, newFuelSteps, alt, ts.turn, ts.parent);
-                for (SearchState s : spawned) {
-                    if (addIfBest(s, bestFound)) enqueue(s);
-                }
-                return;
-            }
-        }
-    }
+    private enum TriggerKind { THRUST_GATE, DEAD_ENGINE, FORCE_TURN_BUDGET, BURNS_EXHAUSTED, RADIATION, OBERTH }
 
     /**
-     * Lazily enqueue the afterburn (AB) sibling of {@code current}'s most
-     * recent turn-start, when that turn-start could afterburn but did not.
-     * The AB sibling is the exact state eager branch B in
-     * {@link #addTurnStartStates} would have emitted: same node / turn /
-     * parent / engine / jettison amount as the no-AB turn-start, thrust raised
-     * by {@code afterburnThrustGain} (frozen for the whole movement), burns
-     * budget = {@code max(thrust, 0)}, fuel reduced by {@code afterburnFuelCost},
-     * and the afterburn bit set. Weight class is NOT recomputed from the reduced
-     * fuel — the AB gain layers on top of the pre-AB net thrust (project rule,
-     * H3a), so the thrust must be {@code ts.thrust + gain}, never re-derived from
-     * {@code ts.fuelStepsRemaining - cost}.
+     * Look at the most recent turn-start ancestor of {@code current} and
+     * lazily enqueue whichever thrust-boost alternatives respond to
+     * {@code kind}: the smallest pure-jettison rung that strictly beats the
+     * turn-start's thrust, and/or the pure-AB option, per the response mask
+     * below. Caller is responsible for invoking this only when the current
+     * state was blocked (or could be improved) for thrust reasons that
+     * {@code kind} describes. {@code minThrustNeeded} is accepted for a
+     * future phase (full-menu / gate-aware spawning); phase 2 does not use it
+     * — every call site passes 0, and thresholding is "strictly exceeds
+     * {@code ts.thrust}", matching the old two spawners exactly.
      *
-     * <p><b>Trigger taxonomy.</b> Afterburn helps a route through exactly three
-     * frozen-for-the-movement effects: it raises net thrust by the gain, it
-     * raises the per-turn burns budget by the gain, and (H8e) it adds +1 to any
-     * Solar-Oberth bonus this movement. The callers therefore fire this on the
-     * situations where one of those effects could unblock or improve a route:
-     * <ul>
-     *   <li><b>thrust-gate</b> — an {@code isAllowed} rejection where the
-     *       transition's required thrust exceeds the frozen net thrust
-     *       (landing / liftoff / landing-burn); the +gain might clear it;</li>
-     *   <li><b>dead force-turn</b> — {@link #expandTurn} hits {@code thrust ≤ 0}
-     *       so no force-turn is possible; the +gain might revive the engine;</li>
-     *   <li><b>burns-exhausted</b> — {@link #expandBurn} wants a paid burn but
-     *       {@code burnsRemaining == 0}; the +gain buys more burns this turn, so
-     *       the destination can be reached earlier (fewer turns);</li>
-     *   <li><b>radiation</b> — entering a radhaz whose post-mitigation Belt-Roll
-     *       severity is still positive under the frozen thrust; the +gain
-     *       mitigates a worse roll better (H10b);</li>
-     *   <li><b>Oberth</b> — entering a Solar-Oberth node without having
-     *       afterburned this movement; the AB variant harvests +1 bonus
-     *       burn (H8e).</li>
-     * </ul>
+     * <p><b>Response mask (phase 2 — replicates the old two-spawner split).</b>
+     * The pure-jettison rungs ({@link FuelStrip#jettisonAmountsForClassChange})
+     * respond only to {@link TriggerKind#THRUST_GATE} and
+     * {@link TriggerKind#DEAD_ENGINE} (the two sites the old
+     * {@code maybeSpawnJettisonAlt} fired from); the pure-AB option responds to
+     * every kind (the old {@code maybeSpawnAfterburnAlt}'s full trigger
+     * taxonomy). Deliberately NOT sourced from the pruned {@link #boostMenu}:
+     * that menu Pareto-prunes a jettison rung whenever a cheaper/better AB
+     * option dominates it, which would silently drop the jettison-only
+     * candidate this method must still consider independently (the old
+     * jettison spawner never looked at AB at all) — so the two searches stay
+     * separate, exactly like the two old methods.
      *
-     * <p><b>Over-firing is safe.</b> The AB sibling is deduped by the standard
-     * Pareto frontier check in {@link #addIfBest}, so triggering many times for
-     * the same turn-start enqueues its subtree at most once. Under-firing, by
-     * contrast, silently loses routes, so callers err toward triggering. Because
-     * the trigger keys off {@code current.turnStart()} generically, it fires
-     * correctly for states descending from lazy-jettison alternatives too (whose
-     * turn-start is the jettison alt, itself AB-capable).
+     * <p><b>Spawn asymmetry (preserved from phases 0–1).</b> The jettison alt
+     * spawns ALL engines' turn-starts at its fuel level (via
+     * {@link #addTurnStartStates}, matching the old jettison alt); the pure-AB
+     * option spawns only the triggering engine's sibling (via
+     * {@link #buildTurnStart}, matching the old afterburn alt).
+     *
+     * <p><b>Over-firing is safe</b> (dedup via {@link #addIfBest}); under-firing
+     * silently loses routes, so callers err toward triggering.
      */
-    private void maybeSpawnAfterburnAlt(SearchState current) {
+    private void maybeSpawnBoostAlt(SearchState current, int minThrustNeeded, TriggerKind kind) {
         SearchState ts = current.turnStart();
-        if (ts.afterburnedThisMove()) return;           // already afterburning
-        EngineSpec engine = engines.get(ts.engineIndex);
-        if (!engine.canAfterburn()) return;
-        int cost = engine.afterburnFuelCost();
-        if (ts.fuelStepsRemaining < cost) return;      // can't afford the burn
-        int abThrust = ts.thrust + engine.afterburnThrustGain();
-        ThrustBoost boost = new ThrustBoost(cost, abThrust, 1, ts.jettisonedAtTurnStart());
-        SearchState ab = buildTurnStart(ts, ts.engineIndex, engine, boost,
-                ts.fuelStepsRemaining - cost, ts.turn, ts.parent);
-        if (addIfBest(ab, bestFound)) enqueue(ab);
+        boolean respondsJettison = kind == TriggerKind.THRUST_GATE || kind == TriggerKind.DEAD_ENGINE;
+
+        if (respondsJettison && allowFuelJettison) {
+            int[] alts = FuelStrip.jettisonAmountsForClassChange(dryMass, ts.fuelStepsRemaining);
+            for (int alt : alts) {
+                int newFuelSteps = ts.fuelStepsRemaining - alt;
+                int altThrust = effectiveThrust(ts.engineIndex, ts.node, newFuelSteps);
+                if (altThrust > ts.thrust) {
+                    // Smallest alt that produces strictly more thrust than no-jet.
+                    List<SearchState> spawned = new ArrayList<>(engines.size());
+                    addTurnStartStates(spawned, ts, newFuelSteps, alt, ts.turn, ts.parent);
+                    for (SearchState s : spawned) {
+                        if (addIfBest(s, bestFound)) enqueue(s);
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Pure-AB responds to every kind.
+        if (!ts.afterburnedThisMove()) {
+            EngineSpec engine = engines.get(ts.engineIndex);
+            if (engine.canAfterburn()) {
+                int cost = engine.afterburnFuelCost();
+                if (ts.fuelStepsRemaining >= cost) {
+                    int abThrust = ts.thrust + engine.afterburnThrustGain();
+                    ThrustBoost boost = new ThrustBoost(cost, abThrust, 1, ts.jettisonedAtTurnStart());
+                    SearchState ab = buildTurnStart(ts, ts.engineIndex, engine, boost,
+                            ts.fuelStepsRemaining - cost, ts.turn, ts.parent);
+                    if (addIfBest(ab, bestFound)) enqueue(ab);
+                }
+            }
+        }
     }
 
     /**

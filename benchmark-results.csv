@@ -70,3 +70,5 @@ datetime,duration_ms,tree_nodes,endpoints,description
 2026-07-07T12:13:09,12685,20750,897,boost-unify phase1 gate default
 2026-07-07T12:14:31,13977,15325,820,boost-unify phase1 gate ab ab
 2026-07-07T12:15:09,12991,15325,820,boost-unify phase1 gate ab recheck ab
+2026-07-07T12:23:12,11374,20750,897,boost-unify phase2 gate default
+2026-07-07T12:23:46,13027,15325,820,boost-unify phase2 gate ab ab
