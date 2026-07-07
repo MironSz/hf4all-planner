@@ -72,3 +72,14 @@ datetime,duration_ms,tree_nodes,endpoints,description
 2026-07-07T12:15:09,12991,15325,820,boost-unify phase1 gate ab recheck ab
 2026-07-07T12:23:12,11374,20750,897,boost-unify phase2 gate default
 2026-07-07T12:23:46,13027,15325,820,boost-unify phase2 gate ab ab
+2026-07-07T12:27:26,12863,20541,899,boost-unify phase3 wip default
+2026-07-07T12:28:04,14198,15218,820,boost-unify phase3 wip ab ab
+2026-07-07T12:46:35,12870,20541,899,boost-unify phase3
+2026-07-07T12:47:32,12946,20541,899,boost-unify phase3
+2026-07-07T12:48:11,12626,20541,899,boost-unify phase3
+2026-07-07T12:48:56,14023,15218,820,boost-unify phase3 ab
+2026-07-07T13:06:32,14344,15218,820,boost-unify phase3 ab
+2026-07-07T13:07:13,14373,15218,820,boost-unify phase3 ab
+2026-07-07T13:08:00,12958,20541,899,boost-unify phase3 stats
+2026-07-07T13:08:35,12962,20541,899,boost-unify phase3 stats recheck
+2026-07-07T13:09:34,14397,15218,820,boost-unify phase3 stats ab ab

@@ -706,10 +706,13 @@ public final class Pathfinder {
                         // blocked by a thrust gate, see if a jettison alt OR
                         // the afterburn sibling at the current turn-start
                         // would have unblocked it (both raise the frozen net
-                        // thrust that the gate compares against).
+                        // thrust that the gate compares against). This site
+                        // knows the concrete required thrust, so it passes it
+                        // as minThrustNeeded — the cheapest option that clears
+                        // the actual gate, not just "any improvement".
                         int req = requiredThrustForTransition(current.node, next.node);
                         if (req > current.thrust) {
-                            maybeSpawnBoostAlt(current, 0, TriggerKind.THRUST_GATE);
+                            maybeSpawnBoostAlt(current, req, TriggerKind.THRUST_GATE);
                         }
                         continue;
                     }
@@ -1818,72 +1821,76 @@ public final class Pathfinder {
 
     /**
      * Look at the most recent turn-start ancestor of {@code current} and
-     * lazily enqueue whichever thrust-boost alternatives respond to
-     * {@code kind}: the smallest pure-jettison rung that strictly beats the
-     * turn-start's thrust, and/or the pure-AB option, per the response mask
-     * below. Caller is responsible for invoking this only when the current
-     * state was blocked (or could be improved) for thrust reasons that
-     * {@code kind} describes. {@code minThrustNeeded} is accepted for a
-     * future phase (full-menu / gate-aware spawning); phase 2 does not use it
-     * — every call site passes 0, and thresholding is "strictly exceeds
-     * {@code ts.thrust}", matching the old two spawners exactly.
+     * lazily enqueue the cheapest {@link #boostMenu} option that improves on
+     * it: {@code thrust > ts.thrust} in general, or {@code thrust >=
+     * minThrustNeeded} when the caller knows a concrete gate requirement
+     * (currently only the search-loop {@link TriggerKind#THRUST_GATE} site,
+     * via {@link #requiredThrustForTransition}; every other caller passes 0
+     * and gets the plain "improves on ts.thrust" rule). {@code kind} is
+     * retained for callers/documentation of the trigger taxonomy but no
+     * longer masks which options may respond (phase 3 — every trigger
+     * considers the full menu, jettison rungs, the pure-AB option, and
+     * rung+AB combos alike); the distinction between "jettison" and
+     * "afterburn" now exists only as data inside the {@link ThrustBoost}
+     * options themselves.
      *
-     * <p><b>Response mask (phase 2 — replicates the old two-spawner split).</b>
-     * The pure-jettison rungs ({@link FuelStrip#jettisonAmountsForClassChange})
-     * respond only to {@link TriggerKind#THRUST_GATE} and
-     * {@link TriggerKind#DEAD_ENGINE} (the two sites the old
-     * {@code maybeSpawnJettisonAlt} fired from); the pure-AB option responds to
-     * every kind (the old {@code maybeSpawnAfterburnAlt}'s full trigger
-     * taxonomy). Deliberately NOT sourced from the pruned {@link #boostMenu}:
-     * that menu Pareto-prunes a jettison rung whenever a cheaper/better AB
-     * option dominates it, which would silently drop the jettison-only
-     * candidate this method must still consider independently (the old
-     * jettison spawner never looked at AB at all) — so the two searches stay
-     * separate, exactly like the two old methods.
-     *
-     * <p><b>Spawn asymmetry (preserved from phases 0–1).</b> The jettison alt
-     * spawns ALL engines' turn-starts at its fuel level (via
-     * {@link #addTurnStartStates}, matching the old jettison alt); the pure-AB
-     * option spawns only the triggering engine's sibling (via
-     * {@link #buildTurnStart}, matching the old afterburn alt).
+     * <p><b>Spawn mode (phase 3 — unified).</b> A jettisoning option (with or
+     * without a combined afterburn) spawns via {@link #addTurnStartStates} at
+     * its fuel level — this naturally covers every engine, since a fuel dump
+     * changes weight class for the whole ship, not just the triggering engine
+     * (matching phases 0–2). A PURE afterburn option (no jettison) instead
+     * builds just the triggering engine's single state via
+     * {@link #buildTurnStart}: afterburn cost/gain are per-engine card
+     * parameters, so "spending engine A's afterburn" has no coherent meaning
+     * for engine B's turn-start — spawning every other engine's plain sibling
+     * at the same fuel level would just re-derive states {@link #waitTurn}
+     * already produces, and charging them engine A's afterburn cost would be
+     * wrong. This single-engine restriction for the pure-AB case is a
+     * deliberate, documented choice (the plan's phase-3 fallback for an
+     * "incoherent" fully-uniform path), not a leftover asymmetry: every
+     * OPTION now comes from the same unified {@link #boostMenu}, and only the
+     * final materialisation step (all engines vs. one) still branches on
+     * whether the option touches fuel-strip weight class or not.
      *
      * <p><b>Over-firing is safe</b> (dedup via {@link #addIfBest}); under-firing
-     * silently loses routes, so callers err toward triggering.
+     * silently loses routes, so callers err toward triggering. Chaining is
+     * preserved: a spawned alt's subtree can itself trigger further alts (e.g.
+     * a jettison rung that still can't clear a gate re-triggers a bigger rung,
+     * or a rung whose sibling still needs AB re-triggers the combo) exactly as
+     * before, since every spawn goes through the normal {@code addIfBest}/
+     * {@code enqueue} path and re-enters {@code expand*}/the search loop.
      */
     private void maybeSpawnBoostAlt(SearchState current, int minThrustNeeded, TriggerKind kind) {
         SearchState ts = current.turnStart();
-        boolean respondsJettison = kind == TriggerKind.THRUST_GATE || kind == TriggerKind.DEAD_ENGINE;
+        List<ThrustBoost> menu = boostMenu(ts.engineIndex, ts.node, ts.fuelStepsRemaining,
+                /*turnOne=*/ ts.parent == null, allowFuelJettison);
 
-        if (respondsJettison && allowFuelJettison) {
-            int[] alts = FuelStrip.jettisonAmountsForClassChange(dryMass, ts.fuelStepsRemaining);
-            for (int alt : alts) {
-                int newFuelSteps = ts.fuelStepsRemaining - alt;
-                int altThrust = effectiveThrust(ts.engineIndex, ts.node, newFuelSteps);
-                if (altThrust > ts.thrust) {
-                    // Smallest alt that produces strictly more thrust than no-jet.
-                    List<SearchState> spawned = new ArrayList<>(engines.size());
-                    addTurnStartStates(spawned, ts, newFuelSteps, alt, ts.turn, ts.parent);
-                    for (SearchState s : spawned) {
-                        if (addIfBest(s, bestFound)) enqueue(s);
-                    }
-                    break;
-                }
+        int threshold = ts.thrust;
+        ThrustBoost best = null;
+        for (ThrustBoost option : menu) {
+            if (option.fuelCost() == 0) continue; // base: identical to ts, never worth spawning
+            boolean improves = minThrustNeeded > 0
+                    ? option.thrust() >= minThrustNeeded
+                    : option.thrust() > threshold;
+            if (!improves) continue;
+            if (best == null || option.fuelCost() < best.fuelCost()) {
+                best = option;
             }
         }
+        if (best == null) return;
 
-        // Pure-AB responds to every kind.
-        if (!ts.afterburnedThisMove()) {
-            EngineSpec engine = engines.get(ts.engineIndex);
-            if (engine.canAfterburn()) {
-                int cost = engine.afterburnFuelCost();
-                if (ts.fuelStepsRemaining >= cost) {
-                    int abThrust = ts.thrust + engine.afterburnThrustGain();
-                    ThrustBoost boost = new ThrustBoost(cost, abThrust, 1, ts.jettisonedAtTurnStart());
-                    SearchState ab = buildTurnStart(ts, ts.engineIndex, engine, boost,
-                            ts.fuelStepsRemaining - cost, ts.turn, ts.parent);
-                    if (addIfBest(ab, bestFound)) enqueue(ab);
-                }
+        int newFuelSteps = ts.fuelStepsRemaining - best.fuelCost();
+        if (best.jettisonedSteps() > 0) {
+            List<SearchState> spawned = new ArrayList<>(engines.size());
+            addTurnStartStates(spawned, ts, newFuelSteps, best.jettisonedSteps(), ts.turn, ts.parent);
+            for (SearchState s : spawned) {
+                if (addIfBest(s, bestFound)) enqueue(s);
             }
+        } else {
+            EngineSpec engine = engines.get(ts.engineIndex);
+            SearchState s = buildTurnStart(ts, ts.engineIndex, engine, best, newFuelSteps,
+                    ts.turn, ts.parent);
+            if (addIfBest(s, bestFound)) enqueue(s);
         }
     }
 
