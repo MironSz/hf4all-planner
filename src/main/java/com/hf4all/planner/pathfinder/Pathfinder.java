@@ -477,23 +477,38 @@ public final class Pathfinder {
         int maxAch = maxAchievableThrust();
         int cap = 0;
         boolean oberth = false;
+        boolean hazard = false;
         for (MapNode n : map.allNodes()) {
             int g = gateNeed(n);
             if (g <= maxAch) cap = Math.max(cap, g);
             if (n.radiation() > 0) cap = Math.max(cap, n.radiation() + 2);
             oberth |= n.solarOberth();
+            hazard |= n.hazard();
         }
-        // H8e guard: keyOf keys the afterburn bit (and dead-engine mask) only
-        // when the cap is positive. On a map with no clearable gate and no
-        // belt the cap would be 0, dropping the ab bit even though a pending
-        // Solar-Oberth +1 still distinguishes an afterburned state from its
-        // no-AB sibling for the rest of the movement — the no-AB sibling
-        // would unsoundly dominate it once the extra burns are spent,
-        // pre-harvest. Floor the cap at 1 so the bit stays keyed. The
-        // resulting min(thrust, 1) merges all positive thrusts, which is
-        // sound here: with no gates and no belts, frozen thrust acts only
-        // through the burns budget, which is already a dominance axis.
-        if (cap == 0 && oberth && anyEngineCanAfterburn()) cap = 1;
+        // Zero-cap guard: keyOf keys the afterburn bit AND the dead-engine mask
+        // only when the cap is positive. On a map with no clearable gate and no
+        // belt the cap would be 0, dropping both even though each can still
+        // change future costs in ways no dominance axis captures:
+        //  - H8e (afterburn bit): a pending Solar-Oberth +1 distinguishes an
+        //    afterburned state from its no-AB sibling for the rest of the
+        //    movement — the no-AB sibling would unsoundly dominate it once the
+        //    extra burns are spent, pre-harvest. Needs an Oberth node and an
+        //    AB-capable engine to matter.
+        //  - H6b (dead-engine mask): a decommissioned sail bars that engine
+        //    from every future turn-start (engineOperationalAt), which no
+        //    Pareto dimension mirrors — a dead-sail state that skipped a
+        //    detour could dominate and prune a live-sail state whose best
+        //    plans need the sail. Needs a hazard node and an engine that
+        //    decommissions on aerobrake to matter.
+        // Floor the cap at 1 when either arm is live so both key components
+        // stay armed. The resulting min(thrust, 1) merges all positive
+        // thrusts, which is sound here: with no gates and no belts, frozen
+        // thrust acts only through the burns budget, which is already a
+        // dominance axis.
+        if (cap == 0 && ((oberth && anyEngineCanAfterburn())
+                      || (hazard && anyEngineDecommissions()))) {
+            cap = 1;
+        }
         return cap;
     }
 
@@ -501,6 +516,15 @@ public final class Pathfinder {
     private boolean anyEngineCanAfterburn() {
         for (EngineSpec e : engines) {
             if (e.canAfterburn()) return true;
+        }
+        return false;
+    }
+
+    /** True if any engine in this query is destroyed by an aerobrake hazard
+     *  entry (H6b — sails). */
+    private boolean anyEngineDecommissions() {
+        for (EngineSpec e : engines) {
+            if (e.decommissionsOnAerobrake()) return true;
         }
         return false;
     }
@@ -1869,6 +1893,15 @@ public final class Pathfinder {
         ThrustBoost best = null;
         for (ThrustBoost option : menu) {
             if (option.fuelCost() == 0) continue; // base: identical to ts, never worth spawning
+            // H3a: afterburn is once per movement. When ts itself already
+            // afterburned, every AB-bearing option in its menu would charge
+            // the (already-spent) afterburn cost a second time — the menu is
+            // built from ts's post-AB fuel, so materialising such an option
+            // double-deducts abCost while applying the gain once. Restores
+            // the old maybeSpawnAfterburnAlt early-return; jettison-only
+            // rungs stay eligible (matching the old jettison spawner, which
+            // had no such guard).
+            if (option.afterburned() && ts.afterburnedThisMove()) continue;
             boolean improves = minThrustNeeded > 0
                     ? option.thrust() >= minThrustNeeded
                     : option.thrust() > threshold;
