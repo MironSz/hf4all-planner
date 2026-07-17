@@ -149,7 +149,72 @@ class Phase3BoostBehaviorTest {
                         + describeChildren(abSeed));
     }
 
+    /**
+     * Rung+AB combo materialisation: a thrust gate that ONLY the combined
+     * jettison-plus-afterburn option can clear.
+     *
+     * <p>Node 356 is a landing-burn node gated at {@code thrust >= 7},
+     * adjacent to plain burn node 354. Ship: dryMass=4, fuelSteps=25 (strip
+     * position 44, Tug class, mod -2), engine baseThrust=7 with afterburn
+     * cost=1/gain=1. The turn-2 boost menu at 354 (turn 1 excludes jettison,
+     * F3d): base=(0,5), AB=(1,6), rung4+AB=(5,7), rung15+AB=(16,8) — the
+     * pure rung 4 (thrust 6) is menu-pruned by the cheaper AB, so the ONLY
+     * cheapest option with thrust >= 7 is the rung4+AB combo. Its correct
+     * materialisation is one turn-start with BOTH badges: jettisonedHere=4,
+     * afterburnedHere=1, thrust 7 (weight class from F-4 per H3a, gain
+     * layered on top), fuel 25-5=20.
+     *
+     * <p>Before the combo fix, maybeSpawnBoostAlt routed the combo through
+     * addTurnStartStates at the AB-over-deducted fuel level: the afterburn
+     * bit and +gain were dropped (thrust 6, gate still blocked) and the gate
+     * was only cleared later by a chained pure-AB alt that paid the afterburn
+     * cost a second time — no turn-start anywhere in the tree carried both
+     * badges. This test FAILS on that code and passes after the fix.
+     */
+    @Test
+    void comboJettisonPlusAfterburnClearsThrustGate() {
+        SolarMap sub = MapSubgraph.extract(fullMap, "354", 2);
+
+        EngineSpec engine = new EngineSpec(7, 2, 1, false, 0, 1, 1, false, false);
+        TraverseResponse r = Pathfinder.traverse(sub,
+                new TraverseRequest("354", List.of(engine), 4, 25, true));
+        assertEquals("ok", r.status());
+
+        PathNode combo = findComboTurnStart(r.tree());
+        assertNotNull(combo,
+                "expected a turn-start carrying BOTH a jettison and an afterburn badge "
+                        + "(the rung4+AB combo at 354) somewhere in the tree");
+        assertEquals(4, combo.jettisonedHere(),
+                "combo must jettison exactly the 4-step Tug->Transport rung");
+        assertEquals(engine.afterburnThrustGain(), combo.afterburnedHere(),
+                "combo's afterburn badge must equal the engine's afterburnThrustGain()");
+        assertTrue(subtreeContainsNode(combo, "356"),
+                "the combo turn-start must actually clear the thrust-7 landing gate "
+                        + "into node 356; combo children=" + describeChildren(combo));
+    }
+
     // --- helpers -------------------------------------------------------
+
+    /** First tree node carrying both a jettison and an afterburn badge. */
+    private static PathNode findComboTurnStart(PathNode root) {
+        if (root == null) return null;
+        if (root.jettisonedHere() > 0 && root.afterburnedHere() > 0) return root;
+        for (PathNode child : root.children()) {
+            PathNode hit = findComboTurnStart(child);
+            if (hit != null) return hit;
+        }
+        return null;
+    }
+
+    /** True if {@code root}'s subtree (inclusive) visits {@code nodeId}. */
+    private static boolean subtreeContainsNode(PathNode root, String nodeId) {
+        if (root == null) return false;
+        if (nodeId.equals(root.nodeId())) return true;
+        for (PathNode child : root.children()) {
+            if (subtreeContainsNode(child, nodeId)) return true;
+        }
+        return false;
+    }
 
     /** Indexes every PathNode by id and records each node's parent id
      *  (-1 for the root), since {@link PathNode} itself has no parent

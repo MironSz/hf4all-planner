@@ -1879,17 +1879,37 @@ public final class Pathfinder {
         }
         if (best == null) return;
 
-        int newFuelSteps = ts.fuelStepsRemaining - best.fuelCost();
-        if (best.jettisonedSteps() > 0) {
+        // Materialise the chosen option in two independent parts, because a
+        // rung+AB combo is BOTH a jettison and an afterburn and each has a
+        // different spawn scope. Routing a combo through a single branch (as an
+        // earlier version did, keyed on jettisonedSteps > 0) fed the AB-reduced
+        // fuel into addTurnStartStates, which re-derived weight class from it
+        // (H3a violation) and, under lazy mode, dropped the afterburn gain/bit
+        // entirely — silently losing any route that needs jettison AND afterburn
+        // together to clear a thrust gate.
+        int jettison = best.jettisonedSteps();
+        if (jettison > 0) {
+            // Jettison is ship-wide: it lifts the weight class for EVERY engine,
+            // so spawn each engine's plain turn-start at the post-jettison fuel
+            // level. Only the jettison is deducted here — per H3a any afterburn
+            // cost must not feed the weight-class snapshot (that layer is added
+            // below, on the triggering engine only).
             List<SearchState> spawned = new ArrayList<>(engines.size());
-            addTurnStartStates(spawned, ts, newFuelSteps, best.jettisonedSteps(), ts.turn, ts.parent);
+            addTurnStartStates(spawned, ts, ts.fuelStepsRemaining - jettison, jettison,
+                    ts.turn, ts.parent);
             for (SearchState s : spawned) {
                 if (addIfBest(s, bestFound)) enqueue(s);
             }
-        } else {
+        }
+        if (best.afterburned()) {
+            // Afterburn is a per-engine card, layered on the TRIGGERING engine's
+            // turn-start on top of any jettison already applied. Use the option's
+            // precomputed thrust (base+gain, H3a) directly — never re-derived from
+            // the AB-reduced fuel. best.fuelCost() covers jettison + AB cost, so
+            // the combo lands at the correct post-jettison-and-AB fuel level.
             EngineSpec engine = engines.get(ts.engineIndex);
-            SearchState s = buildTurnStart(ts, ts.engineIndex, engine, best, newFuelSteps,
-                    ts.turn, ts.parent);
+            SearchState s = buildTurnStart(ts, ts.engineIndex, engine, best,
+                    ts.fuelStepsRemaining - best.fuelCost(), ts.turn, ts.parent);
             if (addIfBest(s, bestFound)) enqueue(s);
         }
     }
