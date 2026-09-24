@@ -69,7 +69,8 @@ function snapshotActiveTabFromDom() {
     document.querySelectorAll('.engine-block').forEach(b => {
         s.engines.push({
             baseThrust:              parseInt(b.querySelector('.e-base-thrust').value) || 0,
-            fuelConsumption:         parseInt(b.querySelector('.e-fuel').value)   || 0,
+            // Kept as typed ("1/2", "0.5", …) like fuelText; parsed on use.
+            fuelConsumption:         b.querySelector('.e-fuel').value,
             solarPowered:            b.querySelector('.e-solar').checked,
             bonusPivots:             parseInt(b.querySelector('.e-pivots').value) || 0,
             canAfterburn:            b.querySelector('.e-afterburn').checked,

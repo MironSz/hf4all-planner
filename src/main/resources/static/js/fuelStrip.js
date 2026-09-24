@@ -163,3 +163,105 @@ export function parseFuelText(text, dryMass) {
     }
     return { ok: true, fuelSteps };
 }
+
+// ---- Fractional fuel consumption (HF4A H5b) --------------------------------
+// Burns of a fractional thruster (e.g. 1/2, 1/10) are summed exactly over a
+// movement and rounded up only when it ends. The server does that math; the
+// UI parses the engine's Fuel/burn text into an exact fraction and shows the
+// exact pre-rounding amounts next to the rounded ones.
+
+// Mirror EngineSpec.MAX_FUEL_CONSUMPTION (the whole strip — a dearer burn
+// could never be paid) and EngineSpec.MAX_FUEL_CONSUMPTION_DEN.
+export const MAX_FUEL_CONSUMPTION = STRIP_MAX_STEP;
+export const MAX_FUEL_CONSUMPTION_DEN = 100;
+
+function gcd(a, b) {
+    a = Math.abs(a);
+    b = Math.abs(b);
+    while (b) [a, b] = [b, a % b];
+    return a;
+}
+
+// Lowest terms with a positive denominator.
+export function reduceFraction(num, den) {
+    const g = gcd(num, den) || 1;
+    const sign = den < 0 ? -1 : 1;
+    return { num: sign * num / g, den: sign * den / g };
+}
+
+// Canonical text of a fraction: "2", "1/2", "3/2". Used in share links and
+// wherever an exact amount is displayed.
+export function formatFraction(num, den) {
+    const f = reduceFraction(num, den);
+    return f.den === 1 ? String(f.num) : f.num + '/' + f.den;
+}
+
+// Parse an engine's Fuel/burn text into an exact reduced fraction. Accepts
+//   "2"                   whole fuel steps
+//   "1/2", "3/2"          fraction
+//   "1+1/2", "1 1/2"      mixed number
+//   "0.5", ".25", "0,5"   decimal (comma allowed), converted exactly: 0.1 → 1/10
+// Returns { ok: true, num, den } or { ok: false, error: "human-readable" }.
+export function parseFuelConsumption(text) {
+    const t = (text == null ? '' : String(text)).trim().replace(/,/g, '.');
+    if (t === '') return { ok: false, error: 'enter fuel steps per burn, e.g. "2", "1/2" or "0.5"' };
+
+    const tooManyDecimals = { ok: false, error: 'too many decimal places; use a fraction such as 1/3' };
+    let num, den, m, decimal = false;
+    if ((m = t.match(/^(\d+)$/))) {
+        num = parseInt(m[1], 10);
+        den = 1;
+    } else if ((m = t.match(/^(\d*)\.(\d+)$/))) {
+        if (m[2].length > 6) return tooManyDecimals;
+        den = 10 ** m[2].length;
+        num = parseInt(m[1] || '0', 10) * den + parseInt(m[2], 10);
+        decimal = true;
+    } else if ((m = t.match(/^(\d+)\s*\/\s*(\d+)$/))) {
+        num = parseInt(m[1], 10);
+        den = parseInt(m[2], 10);
+    } else if ((m = t.match(/^(\d+)(?:\s*\+\s*|\s+)(\d+)\s*\/\s*(\d+)$/))) {
+        const whole = parseInt(m[1], 10);
+        const part  = parseInt(m[2], 10);
+        den = parseInt(m[3], 10);
+        if (den >= 1 && part >= den) {
+            return { ok: false, error: `numerator ${part} must be < denominator ${den} in a mixed number` };
+        }
+        num = whole * den + part;
+    } else {
+        return { ok: false, error: 'expected e.g. "2", "1/2", "1+1/2" or "0.5"' };
+    }
+    if (den < 1) return { ok: false, error: 'denominator must be at least 1' };
+
+    const f = reduceFraction(num, den);
+    if (f.den > MAX_FUEL_CONSUMPTION_DEN) {
+        if (decimal) return tooManyDecimals;
+        return { ok: false, error: `denominator ${f.den} is too large (max ${MAX_FUEL_CONSUMPTION_DEN})` };
+    }
+    if (f.num > MAX_FUEL_CONSUMPTION * f.den) {
+        return { ok: false, error: `at most ${MAX_FUEL_CONSUMPTION} fuel steps per burn` };
+    }
+    return { ok: true, num: f.num, den: f.den };
+}
+
+// Exact fuel spent at a route-tree node before the end-of-move rounding, as
+// {num, den}. The server sends it next to the rounded fuelSpent; nodes that
+// lack it (a tree cached from an older server) fall back to the rounded value.
+export function exactFuelSpent(pn) {
+    if (pn && pn.fuelSpentDen > 0 && typeof pn.fuelSpentNum === 'number') {
+        return { num: pn.fuelSpentNum, den: pn.fuelSpentDen };
+    }
+    return { num: (pn && pn.fuelSpent) || 0, den: 1 };
+}
+
+// Exact fuel spent between two route-tree nodes (to − from), reduced.
+export function exactFuelSpentBetween(from, to) {
+    const a = exactFuelSpent(from);
+    const b = exactFuelSpent(to);
+    return reduceFraction(b.num * a.den - a.num * b.den, a.den * b.den);
+}
+
+// " (3/2)" when an exact fuel amount is fractional, "" when it is whole —
+// appended to the rounded figure wherever the UI reports spent fuel.
+export function exactFuelSuffix(f) {
+    return f.den === 1 ? '' : ' (' + formatFraction(f.num, f.den) + ')';
+}

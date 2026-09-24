@@ -1,6 +1,7 @@
 package com.hf4all.planner.server.handler;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonParseException;
 import com.google.gson.JsonSyntaxException;
 import com.hf4all.planner.config.Config;
 import com.hf4all.planner.model.SolarMap;
@@ -46,6 +47,17 @@ public final class TraverseHandler implements HttpHandler {
             TraverseRequest request;
             try (var reader = new InputStreamReader(exchange.getRequestBody(), StandardCharsets.UTF_8)) {
                 request = gson.fromJson(reader, TraverseRequest.class);
+            } catch (RuntimeException e) {
+                // Records validate their own fields (EngineSpec: fuel-consumption
+                // bounds) and Gson wraps the constructor's IllegalArgumentException
+                // in a plain RuntimeException. That is bad input, not an internal
+                // error. JSON syntax errors keep their own message below.
+                if (!(e instanceof JsonParseException)
+                        && e.getCause() instanceof IllegalArgumentException bad) {
+                    sendJson(exchange, 400, gson.toJson(Map.of("status", "invalid request: " + bad.getMessage())));
+                    return;
+                }
+                throw e;
             }
 
             String error = validate(request);

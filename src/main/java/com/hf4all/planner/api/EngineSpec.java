@@ -1,6 +1,7 @@
 package com.hf4all.planner.api;
 
 import com.hf4all.planner.model.Fraction;
+import com.hf4all.planner.model.FuelStrip;
 
 /**
  * Engine description supplied by the request.
@@ -13,6 +14,8 @@ import com.hf4all.planner.model.Fraction;
  *
  * <p>Fuel consumption is rational (HF4A rule H5b: fractional thrusters
  * such as 3–1/10). For integer-consumption engines pass {@code den == 1}.
+ * A fuel-modifying support (J5c) is folded in by the caller: pass the
+ * product, e.g. {@code 2 × 1/2 = 1}.
  */
 public record EngineSpec(
     int baseThrust,
@@ -48,14 +51,36 @@ public record EngineSpec(
     boolean decommissionsOnAerobrake
 ) {
 
+    /**
+     * Largest accepted fuel-consumption denominator. Printed thrusters use
+     * halves, quarters and tenths (H5b, glossary "Scale"); products with a
+     * fuel-modifying support stay far below this. The bound also keeps the
+     * exact {@link Fraction} arithmetic of a movement well inside int range.
+     */
+    public static final int MAX_FUEL_CONSUMPTION_DEN = 100;
+
+    /**
+     * Largest accepted fuel consumption, in fuel steps per burn: the whole
+     * fuel strip. A dearer burn could never be paid (H5d), so the cap never
+     * hides a route.
+     */
+    public static final int MAX_FUEL_CONSUMPTION =
+            FuelStrip.stepsBetween(FuelStrip.MIN_DRY_MASS, FuelStrip.MAX_WET_MASS);
+
     public EngineSpec {
-        if (fuelConsumptionDen <= 0) {
+        if (fuelConsumptionDen <= 0 || fuelConsumptionDen > MAX_FUEL_CONSUMPTION_DEN) {
             throw new IllegalArgumentException(
-                    "fuelConsumptionDen must be positive: " + fuelConsumptionDen);
+                    "fuelConsumptionDen must be in 1.." + MAX_FUEL_CONSUMPTION_DEN
+                    + ": " + fuelConsumptionDen);
         }
         if (fuelConsumptionNum < 0) {
             throw new IllegalArgumentException(
                     "fuelConsumptionNum must be >= 0: " + fuelConsumptionNum);
+        }
+        if (fuelConsumptionNum > MAX_FUEL_CONSUMPTION * fuelConsumptionDen) {
+            throw new IllegalArgumentException(
+                    "fuel consumption must be at most " + MAX_FUEL_CONSUMPTION
+                    + " steps per burn: " + fuelConsumptionNum + "/" + fuelConsumptionDen);
         }
         if (afterburnFuelCost < 0) {
             throw new IllegalArgumentException(

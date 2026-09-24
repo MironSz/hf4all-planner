@@ -18,11 +18,12 @@
 // back-stack and don't fire our own `hashchange` listener.
 //
 // Example URL:
-//   #dry=4&fuel=15&start=138&engine=base:5,fuel:2&route=0
+//   #dry=4&fuel=15&start=138&engine=base:5,fuel:2&engine=base:3,fuel:1/2&route=0
 //
 // Scope is intentionally the ACTIVE tab only — the rest of the user's
 // tabs are a local concept; pasting a link should slot the plan into
 // the recipient's current tab without disturbing their other tabs.
+import { parseFuelConsumption, formatFraction } from './fuelStrip.js';
 
 // The exact subset of tab state that's shareable. Adding a new knob
 // requires (a) listing it here so callers can introspect, and (b)
@@ -52,16 +53,20 @@ function urlEncodeReadable(s) {
 }
 
 // ---- Engine pack/unpack ----
-// One engine becomes `base:N,fuel:N,solar:1,pivots:N,ab:1,abCost:N,abGain:N`.
+// One engine becomes `base:N,fuel:F,solar:1,pivots:N,ab:1,abCost:N,abGain:N`.
 // Both sides speak the TAB-STATE engine shape (the one snapshotted from the
 // engine form: fuelConsumption / canAfterburn / ...) so a round-trip is
 // lossless. Zero/false-valued fields are omitted, and afterburn cost/gain
 // only appear when afterburn is actually enabled — an engine whose Afterburn
 // box is unchecked shares nothing about it.
+// F is the Fuel/burn value in canonical fraction form ("2", "1/2", "3/2"):
+// the typed text may hold a `,` decimal or a `+` mixed number, which would
+// collide with the engine separator / decode as a space.
 function serializeEngine(eng) {
     const parts = [];
     if (eng.baseThrust)            parts.push(`base:${eng.baseThrust}`);
-    if (eng.fuelConsumption)       parts.push(`fuel:${eng.fuelConsumption}`);
+    const fuel = parseFuelConsumption(eng.fuelConsumption);
+    if (fuel.ok && fuel.num)       parts.push(`fuel:${formatFraction(fuel.num, fuel.den)}`);
     if (eng.solarPowered)          parts.push('solar:1');
     if (eng.bonusPivots)           parts.push(`pivots:${eng.bonusPivots}`);
     if (eng.canAfterburn) {
@@ -96,7 +101,11 @@ function parseEngine(s) {
         const v = part.slice(idx + 1);
         switch (k) {
             case 'base':    out.baseThrust = parseInt(v) || 0; break;
-            case 'fuel':    out.fuelConsumption = parseInt(v) || 0; break;
+            case 'fuel': {
+                const fuel = parseFuelConsumption(v);
+                out.fuelConsumption = fuel.ok ? formatFraction(fuel.num, fuel.den) : 0;
+                break;
+            }
             case 'solar':   out.solarPowered = (v === '1' || v === 'true'); break;
             case 'pivots':  out.bonusPivots = parseInt(v) || 0; break;
             case 'ab':      out.canAfterburn = (v === '1' || v === 'true'); break;

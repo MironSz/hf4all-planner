@@ -57,6 +57,24 @@ public final class RuleTestSupport {
         return out;
     }
 
+    /**
+     * Like {@link #costVectorsAt}, with the exact fuel spent before the H5b
+     * end-of-move rounding appended: {@code fuel|turns|hazards|radRoll@num/den}.
+     */
+    public static Set<String> exactCostVectorsAt(TraverseResponse r, String nodeId) {
+        Set<String> out = new LinkedHashSet<>();
+        if (r.endpoints() == null) return out;
+        List<Integer> ids = r.endpoints().get(nodeId);
+        if (ids == null) return out;
+        for (int id : ids) {
+            PathNode pn = findTreeNode(r.tree(), id);
+            if (pn != null) out.add(pn.fuelSpent() + "|" + pn.turns()
+                    + "|" + pn.hazards() + "|" + pn.worstRadRoll()
+                    + "@" + pn.fuelSpentNum() + "/" + pn.fuelSpentDen());
+        }
+        return out;
+    }
+
     /** True if the node id is among the search response's endpoints. */
     public static boolean reached(TraverseResponse r, String nodeId) {
         return r.endpoints() != null && r.endpoints().containsKey(nodeId);

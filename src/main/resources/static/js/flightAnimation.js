@@ -28,7 +28,7 @@
 
 import { state } from './state.js';
 import { getTreeNodeIds, getPathToRoot } from './routeTree.js';
-import { massToStripStep } from './fuelStrip.js';
+import { massToStripStep, exactFuelSpentBetween } from './fuelStrip.js';
 import { updateEndpointFuelStrip } from './endpointFuelStripOverlay.js';
 
 // Single dial. Multiply every wall-clock duration in this module so the
@@ -97,13 +97,19 @@ export function startFlightAnimation() {
         const a = pathPoints[i], b = pathPoints[i+1];
         const sameNode = a.pn.nodeId === b.pn.nodeId;
         const turnDelta = b.pn.turns - a.pn.turns;
-        const fuelDelta = b.pn.fuelSpent - a.pn.fuelSpent;
-        const isBurn = fuelDelta > 0 && !sameNode;     // crossing a burn-space edge
-        const isPivot = sameNode && fuelDelta > 0;     // same-node force-pivot
+        // Did this edge spend fuel? Within a movement compare the EXACT
+        // amounts (H5b): a fractional engine's burn can leave the rounded
+        // fuelSpent unchanged. Across a turn boundary keep the rounded ones —
+        // the end-of-move round-up is not a burn.
+        const spentFuel = turnDelta === 0
+                ? exactFuelSpentBetween(a.pn, b.pn).num > 0
+                : b.pn.fuelSpent > a.pn.fuelSpent;
+        const isBurn = spentFuel && !sameNode;         // crossing a burn-space edge
+        const isPivot = sameNode && spentFuel;         // same-node force-pivot
         const anchorIsRouteStart = i === 0
                 || (i === 1 && pathPoints[0].pn.nodeId === a.pn.nodeId
                             && pathPoints[0].pn.turns === a.pn.turns);
-        const isWait = sameNode && turnDelta > 0 && fuelDelta === 0
+        const isWait = sameNode && turnDelta > 0 && !spentFuel
                 && (anchorIsRouteStart || isBoundaryEdge(i - 1));
 
         let dur;

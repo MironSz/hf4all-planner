@@ -10,7 +10,8 @@
 // self-perpetuating rAF tick that auto-stops once no route is active.
 import { state } from './state.js';
 import { cfgI, cfgF } from './config.js';
-import { weightClassMod, weightClassName } from './fuelStrip.js';
+import { weightClassMod, weightClassName, exactFuelSpentBetween, exactFuelSuffix }
+        from './fuelStrip.js';
 import { getActiveEndpoint, getActiveRouteIndex, getTreeNodeIds, getPathToRoot } from './routeTree.js';
 import { readSiteFilter } from './siteFilter.js';
 import { rotateAboutCentre } from './rotation.js';
@@ -332,9 +333,8 @@ function drawInner() {
                     // mass is just the anchor's mass.
                     const jettisoned   = pathNodes[i].jettisonedHere || 0;
                     const wmForSegment = jettisoned > 0 ? pathNodes[i].wetMass : anchor.wetMass;
-                    const segStartFuelSpent = jettisoned > 0
-                            ? pathNodes[i].fuelSpent
-                            : anchor.fuelSpent;
+                    const segStartNode = jettisoned > 0 ? pathNodes[i] : anchor;
+                    const segStartFuelSpent = segStartNode.fuelSpent;
                     const afterburns = pathNodes[i].afterburnedHere || 0;
                     const eng = engineCfgs[ei];
                     let thrustStr = '?';
@@ -353,6 +353,8 @@ function drawInner() {
                     // Skip the jettison-creation edge (pn[i-1] → pn[i]) when this
                     // segment starts with a jettison node — that edge changes
                     // fuelSpent but is NOT a burn.
+                    // Fuel is compared EXACTLY (H5b): with a fractional engine a
+                    // 2-burn force-turn may not move the rounded fuelSpent at all.
                     const burnLoopStart = jettisoned > 0 ? i + 1 : i;
                     let burns = 0;
                     for (let k = burnLoopStart; k < segEnd; k++) {
@@ -364,12 +366,15 @@ function drawInner() {
                         const sameTurn = (prev.turns  === cur.turns);
                         if (!sameNode && dst.type === 'burn') {
                             burns++;
-                        } else if (sameNode && sameTurn && cur.fuelSpent > prev.fuelSpent) {
+                        } else if (sameNode && sameTurn && exactFuelSpentBetween(prev, cur).num > 0) {
                             burns += 2;
                         }
                     }
+                    // Rounded steps the move costs (H5b), plus the exact sum
+                    // when fractional burns leave a remainder: "2 (3/2)".
                     const fuelSteps = pathNodes[segEnd - 1].fuelSpent - segStartFuelSpent;
-                    line2 = 'Burns ' + burns + ' - Fuel Steps ' + fuelSteps;
+                    const exactSteps = exactFuelSpentBetween(segStartNode, pathNodes[segEnd - 1]);
+                    line2 = 'Burns ' + burns + ' - Fuel Steps ' + fuelSteps + exactFuelSuffix(exactSteps);
                     if (afterburns > 0) line2 += ' - Afterburn +' + afterburns;
                     line3 = jettisoned > 0 ? 'Jettison ' + jettisoned + ' fuel steps' : null;
                 }

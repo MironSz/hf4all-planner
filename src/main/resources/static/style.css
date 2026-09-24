@@ -59,10 +59,13 @@ label { display: block; font-size: 12px; margin-bottom: 2px; color: #aaa; }
    gap is acceptable and invisible in practice. */
 #sidebar label { white-space: nowrap; }
 input[type="number"] { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #555; color: #eee; font-family: monospace; font-size: 13px; }
-input#fuel[type="text"] { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #555; color: #eee; font-family: monospace; font-size: 13px; }
-/* Fuel input flagged invalid by the parser (denominator mismatch, off
-   strip, unparseable, etc.). The `title` attr carries the explanation. */
-input#fuel.fuel-input-invalid { border-color: #e94560; background: #2b0f15; }
+input#fuel[type="text"],
+input.e-fuel[type="text"] { width: 100%; padding: 4px 6px; background: #0f3460; border: 1px solid #555; color: #eee; font-family: monospace; font-size: 13px; }
+/* Fuel / engine Fuel/burn input flagged invalid by its parser (denominator
+   mismatch, off strip, unparseable, etc.). The `title` attr carries the
+   explanation. */
+input#fuel.fuel-input-invalid,
+input.e-fuel.fuel-input-invalid { border-color: #e94560; background: #2b0f15; }
 input[type="checkbox"] { margin-right: 6px; }
 .engine-block { background: #0f3460; padding: 8px; border-radius: 4px; border: 1px solid #333; }
 .engine-block h3 { font-size: 12px; color: #e94560; margin-bottom: 6px; }

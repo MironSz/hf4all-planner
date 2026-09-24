@@ -2,7 +2,8 @@
 // dump, route-cycle arrows, copy-to-clipboard).
 import { state } from './state.js';
 import { cfgI } from './config.js';
-import { formatFuelOnStrip } from './fuelStrip.js';
+import { formatFuelOnStrip, parseFuelConsumption, formatFraction, exactFuelSpent,
+         exactFuelSuffix } from './fuelStrip.js';
 import { getActiveEndpoint, getActiveRouteIndex, getTreeNodeIds, getPathToRoot } from './routeTree.js';
 import { updateEndpointFuelStrip } from './endpointFuelStripOverlay.js';
 import { draw } from './draw.js';
@@ -43,8 +44,10 @@ export function updateRouteInfo() {
             ? `  [${idx + 1}/${treeNodeIds.length}]` : '';
     document.getElementById('route-info-name').textContent = name + routeLabel;
     const dry = parseInt(document.getElementById('dry-mass').value) || cfgI('ui.dry.mass.default', 4);
+    // Rounded as if the move ended here (H5b), plus the exact pre-rounding
+    // amount when a fractional engine leaves the chit between two spots.
     document.getElementById('route-info-cost').textContent =
-            'fuel spent: ' + endNode.fuelSpent
+            'fuel spent: ' + endNode.fuelSpent + exactFuelSuffix(exactFuelSpent(endNode))
             + '  fuel left: ' + formatFuelOnStrip(dry, endNode.fuelStepsRemaining);
     document.getElementById('route-info-haz').textContent =
             'turns: ' + endNode.turns
@@ -100,12 +103,16 @@ function buildRouteDetailText() {
     // form values (these are also what the last /api/traverse used).
     const dryMass = parseInt(document.getElementById('dry-mass').value) || 0;
     const fuelText = document.getElementById('fuel').value;
-    const engines = Array.from(document.querySelectorAll('.engine-block')).map(b => ({
-        baseThrust:   parseInt(b.querySelector('.e-base-thrust').value) || 0,
-        fuel:         parseInt(b.querySelector('.e-fuel').value)        || 0,
-        pivots:       parseInt(b.querySelector('.e-pivots').value)      || 0,
-        solar:        b.querySelector('.e-solar').checked,
-    }));
+    const engines = Array.from(document.querySelectorAll('.engine-block')).map(b => {
+        const fuelText = b.querySelector('.e-fuel').value;
+        const fuel = parseFuelConsumption(fuelText);
+        return {
+            baseThrust:   parseInt(b.querySelector('.e-base-thrust').value) || 0,
+            fuel:         fuel.ok ? formatFraction(fuel.num, fuel.den) : `"${fuelText}" (invalid)`,
+            pivots:       parseInt(b.querySelector('.e-pivots').value)      || 0,
+            solar:        b.querySelector('.e-solar').checked,
+        };
+    });
 
     // Pretty names for start / end nodes.
     const labelOf = (id) => {
@@ -145,7 +152,10 @@ function buildRouteDetailText() {
         // Calendar year and season at this step's turn.
         const yr = wrapYear(startingYear + n.turns - 1);
         const season = seasonForYear(yr).charAt(0).toUpperCase();   // R / Y / B
-        return `${i}) ${name} [${type}] t${n.turns}(y${yr}${season}) f${n.fuelSpent} h${n.hazards} r${n.worstRadRoll}${eng}${jet}${ab}`;
+        // Rounded fuel spent, plus the exact amount mid-move when fractional.
+        const ex = exactFuelSpent(n);
+        const fuel = n.fuelSpent + (ex.den === 1 ? '' : `(${formatFraction(ex.num, ex.den)})`);
+        return `${i}) ${name} [${type}] t${n.turns}(y${yr}${season}) f${fuel} h${n.hazards} r${n.worstRadRoll}${eng}${jet}${ab}`;
     });
     return header + lines.join('\n');
 }

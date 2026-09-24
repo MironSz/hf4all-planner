@@ -8,7 +8,7 @@
 import { state } from './state.js';
 import { draw } from './draw.js';
 import { persistTabs } from './tabs.js';
-import { parseFuelText } from './fuelStrip.js';
+import { parseFuelText, parseFuelConsumption } from './fuelStrip.js';
 import { updateRouteInfo, updateDebugRoute } from './routeInfo.js';
 import { startFlightAnimation } from './flightAnimation.js';
 
@@ -34,16 +34,23 @@ export function fireTraverse() {
     if (!state.selectedNode) return;
 
     const engines = [];
-    document.querySelectorAll('.engine-block').forEach(block => {
+    let engineFuelError = null;
+    document.querySelectorAll('.engine-block').forEach((block, i) => {
         const canAB = block.querySelector('.e-afterburn').checked;
         // `|| 1` mirrors the form's own defaults (both inputs have min=1),
         // and matches what snapshotActiveTabFromDom persists.
         const abCost = canAB ? (parseInt(block.querySelector('.e-ab-cost').value) || 1) : 0;
         const abGain = canAB ? (parseInt(block.querySelector('.e-ab-gain').value) || 1) : 0;
+        // Fuel/burn may be fractional (HF4A H5b): "1/2", "1+1/2", "0.1", …
+        const fuel = parseFuelConsumption(block.querySelector('.e-fuel').value);
+        if (!fuel.ok) {
+            if (!engineFuelError) engineFuelError = 'Engine ' + (i + 1) + ' Fuel/burn: ' + fuel.error;
+            return;
+        }
         engines.push({
             baseThrust: parseInt(block.querySelector('.e-base-thrust').value) || 0,
-            fuelConsumptionNum: parseInt(block.querySelector('.e-fuel').value) || 0,
-            fuelConsumptionDen: 1,
+            fuelConsumptionNum: fuel.num,
+            fuelConsumptionDen: fuel.den,
             solarPowered: block.querySelector('.e-solar').checked,
             bonusPivots: parseInt(block.querySelector('.e-pivots').value) || 0,
             afterburnFuelCost: abCost,
@@ -56,6 +63,12 @@ export function fireTraverse() {
     // Bail BEFORE touching the pin/route state — clearing the pin here and
     // returning without a redraw used to leave the old route line painted
     // on the canvas with no pin behind it.
+    if (engineFuelError) {
+        // Planning with a guessed consumption would show wrong routes; the
+        // input itself is already flagged red by engineForm.
+        document.getElementById('status').textContent = engineFuelError;
+        return;
+    }
     if (engines.length === 0) {
         document.getElementById('status').textContent = 'Add at least one engine.';
         return;

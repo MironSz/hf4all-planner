@@ -9,7 +9,7 @@
   "filter-mode": "ANY-OF: match sites with at least one selected modifier. ALL-OF: match only sites that have every selected modifier.",
 
   "engine.base-thrust": "Engine thrust per burn before adjustments.",
-  "engine.fuel":        "Fuel steps this engine consumes per burn. Most engines are 1–2; high-thrust engines cost more.",
+  "engine.fuel":        "Fuel steps this engine consumes per burn (right number of the thrust triangle). Whole numbers (2), fractions (1/2, 1/10, 3/2), mixed numbers (1+1/2) and decimals (0.5) are accepted. Fractional use is summed over the move and rounded up only when the move ends (H5b). With a fuel-modifying support, enter the product (e.g. 2 × 1/2 = 1).",
   "engine.pivots":      "Lets you turn at non-Lagrange nodes without ending the turn or performing double burn.",
   "engine.solar":       "Solar-powered engine: thrust scales with distance from the Sun.",
   "engine.afterburn":   "Once per movement: spend fuel to gain net thrust.",

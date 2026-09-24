@@ -7,20 +7,32 @@ import { cfgI } from './config.js';
 import { fireTraverse } from './traverse.js';
 import { persistTabs } from './tabs.js';
 import { updateEndpointFuelStrip } from './endpointFuelStripOverlay.js';
-import { parseFuelText, formatFuelSteps, massToStripStep, STRIP_MAX_STEP }
-        from './fuelStrip.js';
+import { parseFuelText, formatFuelSteps, massToStripStep, STRIP_MAX_STEP,
+         parseFuelConsumption } from './fuelStrip.js';
 import { inflateTooltips } from './tooltip.js';
 
-// CSS hook applied when the Fuel input has unparseable text. Cleared on
-// next valid edit. Visible affordance + we suppress fireTraverse while
-// invalid so the planner doesn't run a stale request.
+// CSS hook applied when the Fuel input (or an engine's Fuel/burn input) has
+// unparseable text. Cleared on next valid edit. Visible affordance + we
+// suppress fireTraverse while invalid so the planner doesn't run a stale
+// request.
 const FUEL_INPUT_INVALID_CLASS = 'fuel-input-invalid';
+
+function markInputValid(el, valid, message) {
+    el.classList.toggle(FUEL_INPUT_INVALID_CLASS, !valid);
+    el.title = valid ? '' : (message || '');
+}
 
 function setFuelInputValid(valid, message) {
     const el = document.getElementById('fuel');
     if (!el) return;
-    el.classList.toggle(FUEL_INPUT_INVALID_CLASS, !valid);
-    el.title = valid ? '' : (message || '');
+    markInputValid(el, valid, message);
+}
+
+// Flags an engine's Fuel/burn input from its current text; returns the parse.
+function validateEngineFuelInput(el) {
+    const parsed = parseFuelConsumption(el.value);
+    markInputValid(el, parsed.ok, parsed.error);
+    return parsed;
 }
 
 function renumberEngines() {
@@ -33,7 +45,8 @@ function renumberEngines() {
 
 // initial: optional {baseThrust, fuelConsumption, solarPowered, bonusPivots,
 // canAfterburn, afterburnFuelCost, afterburnThrustGain, magSail,
-// decommissionsOnAerobrake}.
+// decommissionsOnAerobrake}. fuelConsumption is the Fuel/burn text ("2",
+// "1/2", "0.5", …); older tab saves stored a plain number.
 // When called from a tab restore, state.suppressFire is true so we don't
 // fire a traverse for every engine block being rebuilt.
 export function addEngineBlock(initial) {
@@ -42,7 +55,8 @@ export function addEngineBlock(initial) {
     const thrustDef = (initial && initial.baseThrust      != null) ? initial.baseThrust
                     : (initial && initial.netThrust       != null) ? initial.netThrust
                     : cfgI('ui.engine.thrust.default', 3);
-    const fuelDef   = (initial && initial.fuelConsumption != null) ? initial.fuelConsumption : cfgI('ui.engine.fuel.default',   2);
+    const fuelDef   = String((initial && initial.fuelConsumption != null)
+                    ? initial.fuelConsumption : cfgI('ui.engine.fuel.default', 2));
     const pivotsDef = (initial && initial.bonusPivots     != null) ? initial.bonusPivots     : cfgI('ui.engine.pivots.default', 0);
     const solarDef  = !!(initial && initial.solarPowered);
     const abOnDef   = !!(initial && initial.canAfterburn);
@@ -59,7 +73,7 @@ export function addEngineBlock(initial) {
         </div>
         <div class="engine-row">
             <div><label>Base Thrust: <span class="tip" data-tip-key="engine.base-thrust">?</span></label><input type="number" class="e-base-thrust" value="${thrustDef}" min="0" max="20"></div>
-            <div><label>Fuel/burn: <span class="tip" data-tip-key="engine.fuel">?</span></label><input type="number" class="e-fuel" value="${fuelDef}" min="0" max="20"></div>
+            <div><label>Fuel/burn: <span class="tip" data-tip-key="engine.fuel">?</span></label><input type="text" class="e-fuel" spellcheck="false" autocomplete="off"></div>
         </div>
         <div class="engine-row">
             <div><label>Pivots: <span class="tip" data-tip-key="engine.pivots">?</span></label><input type="number" class="e-pivots" value="${pivotsDef}" min="0" max="5"></div>
@@ -77,6 +91,11 @@ export function addEngineBlock(initial) {
             <div><label><input type="checkbox" class="e-aerobrake-decom"${aerodecDef ? ' checked' : ''}>Aerobrake decom <span class="tip" data-tip-key="engine.aerobrake-decom">?</span></label></div>
         </div>
     `;
+    // Set as a property, not interpolated into the markup above: the text
+    // comes from tab storage / share links and may be arbitrary.
+    const fuelEl = div.querySelector('.e-fuel');
+    fuelEl.value = fuelDef;
+    validateEngineFuelInput(fuelEl);
     const abCb  = div.querySelector('.e-afterburn');
     const abRow = div.querySelector('.engine-ab-row');
     abCb.addEventListener('change', () => {
@@ -88,8 +107,16 @@ export function addEngineBlock(initial) {
         fireTraverse();
         persistTabs();
     });
-    div.querySelectorAll('input').forEach(inp => {
+    div.querySelectorAll('input:not(.e-fuel)').forEach(inp => {
         inp.addEventListener('change', () => { fireTraverse(); persistTabs(); });
+    });
+    // Fuel/burn is free text ("2", "1/2", "1+1/2", "0.5"): flag it while
+    // typing, and only plan / persist once it parses.
+    fuelEl.addEventListener('input', () => validateEngineFuelInput(fuelEl));
+    fuelEl.addEventListener('change', () => {
+        if (!validateEngineFuelInput(fuelEl).ok) return;
+        fireTraverse();
+        persistTabs();
     });
     document.getElementById('engines-container').appendChild(div);
     renumberEngines();
