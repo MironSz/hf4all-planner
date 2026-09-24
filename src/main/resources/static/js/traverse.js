@@ -35,7 +35,7 @@ export function fireTraverse() {
 
     const engines = [];
     let engineFuelError = null;
-    document.querySelectorAll('.engine-block').forEach((block, i) => {
+    document.querySelectorAll('.engine-block').forEach(block => {
         const canAB = block.querySelector('.e-afterburn').checked;
         // `|| 1` mirrors the form's own defaults (both inputs have min=1),
         // and matches what snapshotActiveTabFromDom persists.
@@ -44,7 +44,10 @@ export function fireTraverse() {
         // Fuel/burn may be fractional (HF4A H5b): "1/2", "1+1/2", "0.1", …
         const fuel = parseFuelConsumption(block.querySelector('.e-fuel').value);
         if (!fuel.ok) {
-            if (!engineFuelError) engineFuelError = 'Engine ' + (i + 1) + ' Fuel/burn: ' + fuel.error;
+            if (!engineFuelError) {
+                engineFuelError = block.querySelector('.e-title').textContent
+                        + ' Fuel/burn: ' + fuel.error;
+            }
             return;
         }
         engines.push({

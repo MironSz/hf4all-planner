@@ -107,6 +107,7 @@ function buildRouteDetailText() {
         const fuelText = b.querySelector('.e-fuel').value;
         const fuel = parseFuelConsumption(fuelText);
         return {
+            name:         b.dataset.engineName || '',   // custom name only; '' = "Engine N"
             baseThrust:   parseInt(b.querySelector('.e-base-thrust').value) || 0,
             fuel:         fuel.ok ? formatFraction(fuel.num, fuel.den) : `"${fuelText}" (invalid)`,
             pivots:       parseInt(b.querySelector('.e-pivots').value)      || 0,
@@ -136,7 +137,7 @@ function buildRouteDetailText() {
         `Year:   starting=${startingYear} (${seasonForYear(startingYear)})`,
         `Engines (${engines.length}):`,
         ...engines.map((e, i) =>
-            `  e${i + 1}: thrust=${e.baseThrust}, fuel/burn=${e.fuel}, pivots=${e.pivots}` +
+            `  e${i + 1}${e.name ? ` "${e.name}"` : ''}: thrust=${e.baseThrust}, fuel/burn=${e.fuel}, pivots=${e.pivots}` +
             (e.solar ? ', solar' : '')),
         ''
     ].join('\n');

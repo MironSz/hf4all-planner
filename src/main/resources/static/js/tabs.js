@@ -68,6 +68,8 @@ function snapshotActiveTabFromDom() {
     s.engines = [];
     document.querySelectorAll('.engine-block').forEach(b => {
         s.engines.push({
+            // Custom display name ('' = "Engine N"); see engineForm.js.
+            name:                    b.dataset.engineName || '',
             baseThrust:              parseInt(b.querySelector('.e-base-thrust').value) || 0,
             // Kept as typed ("1/2", "0.5", …) like fuelText; parsed on use.
             fuelConsumption:         b.querySelector('.e-fuel').value,

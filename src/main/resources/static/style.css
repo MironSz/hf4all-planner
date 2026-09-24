@@ -68,7 +68,13 @@ input#fuel.fuel-input-invalid,
 input.e-fuel.fuel-input-invalid { border-color: #e94560; background: #2b0f15; }
 input[type="checkbox"] { margin-right: 6px; }
 .engine-block { background: #0f3460; padding: 8px; border-radius: 4px; border: 1px solid #333; }
-.engine-block h3 { font-size: 12px; color: #e94560; margin-bottom: 6px; }
+.engine-block h3 { font-size: 12px; color: #e94560; margin-bottom: 6px; min-width: 0; flex: 1; }
+/* Engine title — click to rename (engineForm.js). Long names ellipsize so
+   the X button keeps its place. */
+.engine-block .e-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+.engine-block .e-title:hover,
+.engine-block .e-title:focus-visible { text-decoration: underline dotted; outline: none; }
+.engine-block input.e-name { width: 100%; padding: 1px 4px; background: #1a1a2e; border: 1px solid #e94560; color: #e94560; font: inherit; }
 .engine-row { display: flex; gap: 6px; margin-bottom: 4px; }
 .engine-row > div { flex: 1; }
 button { padding: 8px 16px; background: #e94560; color: white; border: none; cursor: pointer; font-family: monospace; font-size: 13px; border-radius: 4px; margin-bottom: 4px; }

@@ -213,8 +213,10 @@ function drawInner() {
             // every turn boundary AND at every engine switch, not only at
             // the start of the trip.
             // Snapshot engine config once per render so each segment label
-            // can show the effective thrust (base + weight-class + solar).
+            // can show the engine's name (custom or "Engine N", see
+            // engineForm.js) and effective thrust (base + weight-class + solar).
             const engineCfgs = Array.from(document.querySelectorAll('.engine-block')).map(b => ({
+                name:         b.querySelector('.e-title').textContent,
                 baseThrust:   parseInt(b.querySelector('.e-base-thrust').value) || 0,
                 solarPowered: b.querySelector('.e-solar').checked,
             }));
@@ -342,7 +344,8 @@ function drawInner() {
                         const solarMod = eng.solarPowered ? (p.solarMod || 0) : 0;
                         thrustStr = String(eng.baseThrust + weightClassMod(wmForSegment) + solarMod + afterburns);
                     }
-                    line1 = labelTurn + '. Engine ' + (ei + 1) + ' - ' + weightClassName(wmForSegment) + ' - Thrust ' + thrustStr;
+                    const engineName = (eng && eng.name) || ('Engine ' + (ei + 1));
+                    line1 = labelTurn + '. ' + engineName + ' - ' + weightClassName(wmForSegment) + ' - Thrust ' + thrustStr;
 
                     // Burns within this segment.
                     //   • Standard burn: move into a burn-type node from a

@@ -2,10 +2,17 @@
 // fuel/dry-mass inputs. Re-numbering keeps the visible "Engine N"
 // titles in sync with their position; the Add button caps at
 // ui.engines.max and disables itself accordingly.
+//
+// Clicking an engine's title renames it. The custom name lives on the block
+// as data-engine-name and the title always shows the effective name, which
+// the route labels, debug dump and status messages read. Names are display-
+// only: the planner request never carries them, so renaming doesn't re-plan.
 import { state } from './state.js';
 import { cfgI } from './config.js';
 import { fireTraverse } from './traverse.js';
 import { persistTabs } from './tabs.js';
+import { draw } from './draw.js';
+import { updateDebugRoute } from './routeInfo.js';
 import { updateEndpointFuelStrip } from './endpointFuelStripOverlay.js';
 import { parseFuelText, formatFuelSteps, massToStripStep, STRIP_MAX_STEP,
          parseFuelConsumption } from './fuelStrip.js';
@@ -35,18 +42,83 @@ function validateEngineFuelInput(el) {
     return parsed;
 }
 
+// Longest custom engine name — same cap as tab names (tabs.js renameTab).
+const ENGINE_NAME_MAX = 30;
+
+function defaultEngineName(index) {
+    return 'Engine ' + (index + 1);
+}
+
+// Trimmed and capped; '' means "no custom name".
+function normalizeEngineName(name) {
+    return (name == null ? '' : String(name)).trim().slice(0, ENGINE_NAME_MAX);
+}
+
 function renumberEngines() {
     const blocks = document.querySelectorAll('.engine-block');
     blocks.forEach((block, i) => {
-        block.querySelector('h3').textContent = 'Engine ' + (i + 1);
+        block.querySelector('.e-title').textContent =
+                block.dataset.engineName || defaultEngineName(i);
     });
     document.getElementById('add-engine').disabled = blocks.length >= cfgI('ui.engines.max', 4);
 }
 
-// initial: optional {baseThrust, fuelConsumption, solarPowered, bonusPivots,
-// canAfterburn, afterburnFuelCost, afterburnThrustGain, magSail,
-// decommissionsOnAerobrake}. fuelConsumption is the Fuel/burn text ("2",
-// "1/2", "0.5", …); older tab saves stored a plain number.
+// Inline rename of an engine block's title. Enter or clicking away saves,
+// Esc cancels; an empty name (or the default "Engine N" typed back) clears
+// the custom name so the title follows the engine's position again.
+function beginEngineRename(block) {
+    if (block.querySelector('.e-name')) return;   // already editing
+    const title = block.querySelector('.e-title');
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'e-name';
+    input.maxLength = ENGINE_NAME_MAX;
+    input.spellcheck = false;
+    input.autocomplete = 'off';
+    input.value = title.textContent;
+    title.style.display = 'none';
+    title.after(input);
+    input.focus();
+    input.select();
+
+    let finished = false;
+    const finish = (save) => {
+        if (finished) return;
+        finished = true;
+        if (save) {
+            const index = Array.from(document.querySelectorAll('.engine-block')).indexOf(block);
+            const name = normalizeEngineName(input.value);
+            if (name && name !== defaultEngineName(index)) block.dataset.engineName = name;
+            else delete block.dataset.engineName;
+        }
+        input.remove();
+        title.style.display = '';
+        renumberEngines();
+        if (save) {
+            // Display-only: refresh the route labels and debug dump, no re-plan.
+            draw();
+            updateDebugRoute();
+            persistTabs();
+        }
+    };
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            finish(true);
+        } else if (e.key === 'Escape') {
+            // Cancel only — keep the global ESC handler (blur / clear routes) out.
+            e.stopPropagation();
+            finish(false);
+        }
+    });
+    input.addEventListener('blur', () => finish(true));
+}
+
+// initial: optional {name, baseThrust, fuelConsumption, solarPowered,
+// bonusPivots, canAfterburn, afterburnFuelCost, afterburnThrustGain, magSail,
+// decommissionsOnAerobrake}. name is the custom title ('' / absent = "Engine
+// N"). fuelConsumption is the Fuel/burn text ("2", "1/2", "0.5", …); older
+// tab saves stored a plain number.
 // When called from a tab restore, state.suppressFire is true so we don't
 // fire a traverse for every engine block being rebuilt.
 export function addEngineBlock(initial) {
@@ -67,8 +139,8 @@ export function addEngineBlock(initial) {
     const div = document.createElement('div');
     div.className = 'engine-block';
     div.innerHTML = `
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-            <h3 style="margin:0">Engine</h3>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:6px">
+            <h3 style="margin:0"><span class="e-title" tabindex="0" title="Click to rename">Engine</span></h3>
             <button class="e-remove" style="padding:2px 8px;font-size:11px;margin:0">X</button>
         </div>
         <div class="engine-row">
@@ -91,11 +163,21 @@ export function addEngineBlock(initial) {
             <div><label><input type="checkbox" class="e-aerobrake-decom"${aerodecDef ? ' checked' : ''}>Aerobrake decom <span class="tip" data-tip-key="engine.aerobrake-decom">?</span></label></div>
         </div>
     `;
-    // Set as a property, not interpolated into the markup above: the text
+    // Set as properties, not interpolated into the markup above: the text
     // comes from tab storage / share links and may be arbitrary.
+    const name = normalizeEngineName(initial && initial.name);
+    if (name) div.dataset.engineName = name;
     const fuelEl = div.querySelector('.e-fuel');
     fuelEl.value = fuelDef;
     validateEngineFuelInput(fuelEl);
+    const titleEl = div.querySelector('.e-title');
+    titleEl.addEventListener('click', () => beginEngineRename(div));
+    titleEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            beginEngineRename(div);
+        }
+    });
     const abCb  = div.querySelector('.e-afterburn');
     const abRow = div.querySelector('.engine-ab-row');
     abCb.addEventListener('change', () => {

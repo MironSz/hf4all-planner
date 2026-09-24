@@ -18,7 +18,7 @@
 // back-stack and don't fire our own `hashchange` listener.
 //
 // Example URL:
-//   #dry=4&fuel=15&start=138&engine=base:5,fuel:2&engine=base:3,fuel:1/2&route=0
+//   #dry=4&fuel=15&start=138&engine=name:Crew,base:5,fuel:2&engine=base:3,fuel:1/2&route=0
 //
 // Scope is intentionally the ACTIVE tab only — the rest of the user's
 // tabs are a local concept; pasting a link should slot the plan into
@@ -53,17 +53,22 @@ function urlEncodeReadable(s) {
 }
 
 // ---- Engine pack/unpack ----
-// One engine becomes `base:N,fuel:F,solar:1,pivots:N,ab:1,abCost:N,abGain:N`.
+// One engine becomes
+// `name:S,base:N,fuel:F,solar:1,pivots:N,ab:1,abCost:N,abGain:N`.
 // Both sides speak the TAB-STATE engine shape (the one snapshotted from the
 // engine form: fuelConsumption / canAfterburn / ...) so a round-trip is
 // lossless. Zero/false-valued fields are omitted, and afterburn cost/gain
 // only appear when afterburn is actually enabled — an engine whose Afterburn
 // box is unchecked shares nothing about it.
+// S is the custom engine name (omitted when unnamed), percent-encoded here so
+// its own `,` / `:` can't split the engine; buildHash encodes the whole
+// engine value once more for the URL, so a link reads e.g. `Ion%2520drive`.
 // F is the Fuel/burn value in canonical fraction form ("2", "1/2", "3/2"):
 // the typed text may hold a `,` decimal or a `+` mixed number, which would
 // collide with the engine separator / decode as a space.
 function serializeEngine(eng) {
     const parts = [];
+    if (eng.name)                  parts.push(`name:${encodeURIComponent(eng.name)}`);
     if (eng.baseThrust)            parts.push(`base:${eng.baseThrust}`);
     const fuel = parseFuelConsumption(eng.fuelConsumption);
     if (fuel.ok && fuel.num)       parts.push(`fuel:${formatFraction(fuel.num, fuel.den)}`);
@@ -87,6 +92,7 @@ function parseEngine(s) {
     // every engine; without `ab:1` those remain inert, matching the old
     // unchecked-checkbox behavior.
     const out = {
+        name: '',
         baseThrust: 0,
         fuelConsumption: 0,
         solarPowered: false, bonusPivots: 0,
@@ -100,6 +106,11 @@ function parseEngine(s) {
         const k = part.slice(0, idx);
         const v = part.slice(idx + 1);
         switch (k) {
+            case 'name':
+                // Undo serializeEngine's own encoding layer; a malformed one
+                // (hand-edited link) falls back to the raw text.
+                try { out.name = decodeURIComponent(v); } catch (e) { out.name = v; }
+                break;
             case 'base':    out.baseThrust = parseInt(v) || 0; break;
             case 'fuel': {
                 const fuel = parseFuelConsumption(v);
@@ -183,7 +194,7 @@ function buildHash(tabState) {
     if (Array.isArray(tabState.engines)) {
         for (const eng of tabState.engines) {
             const enc = serializeEngine(eng);
-            if (enc) parts.push(`engine=${enc}`);
+            if (enc) parts.push(`engine=${urlEncodeReadable(enc)}`);
         }
     }
     return parts.join('&');
