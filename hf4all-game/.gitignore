@@ -1,0 +1,8 @@
+# Original card artwork and game graphics (c) ION Game Design / Sierra Madre Games - recreate locally
+# with `python tools/extract_cards.py --download` (see README).
+assets/cards/
+assets/gfx/
+.cache/
+# Game server build output and saved games.
+server/target/
+server/games/
