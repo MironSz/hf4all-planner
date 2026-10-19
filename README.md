@@ -26,6 +26,7 @@ The project is two cleanly separated halves wired together by a small JSON HTTP 
 Everything in `src/main/java/com/hf4all/planner/`:
 
 - **`pathfinder/`** — the core solver. A Pareto-optimal best-first search over `SearchState` (node, engine, fuel, partial fuel, weight class, hazards, radiation, turn, parent…) with a frontier keyed by full comparability context. Implements HF4A movement, lagrange free turns, hohmann pivots, force-turns, weight-class modifiers, solar zones, fuel jettison (lazy), and Pareto frontiers per (site, route).
+- **`rules/`** — `MoveRules`: the HF4A movement rules (net thrust, burns and fuel, lanes and pivots, bonus burns, landing and liftoff, synodic and Venus gates, Belt Rolls) as pure functions. The pathfinder calls them, and so does the hot-seat game in `hf4all-game/`; where the two apply a rule differently the variant is a parameter.
 - **`model/`** — domain primitives. `MapNode`, `Fraction` (exact rational fuel), `FuelStrip` (the non-linear wet-mass strip), `SolarMap` (the loaded graph).
 - **`io/`** — `MapLoader` reads the JSON board into `SolarMap`.
 - **`server/`** — minimal HTTP layer with one handler per endpoint:

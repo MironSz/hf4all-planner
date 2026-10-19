@@ -7,6 +7,7 @@ import com.hf4all.planner.model.MapNode;
 import com.hf4all.planner.model.NodeType;
 import com.hf4all.planner.model.Season;
 import com.hf4all.planner.model.SolarMap;
+import com.hf4all.planner.rules.MoveRules;
 import com.hf4all.planner.api.*;
 
 import java.util.*;
@@ -1174,7 +1175,7 @@ public final class Pathfinder {
         Set<String> seenLabels = new HashSet<>();
         for (int i = 0; i < n; i++) {
             String label = labelFromNode[i];
-            if (label != null && !label.equals("0") && !label.equals(dir)
+            if (label != null && !MoveRules.isOneWay(label) && !label.equals(dir)
                     && seenLabels.add(label)) {
                 neighbors.add(new Neighbor(node, label));
             }
@@ -1183,13 +1184,9 @@ public final class Pathfinder {
         // Part 2: Cross-node moves.
         for (int i = 0; i < n; i++) {
             String labelAtAdjI = labelAtAdj[i];
-            if ("0".equals(labelAtAdjI)) continue;
+            if (MoveRules.isOneWay(labelAtAdjI)) continue;
 
-            String labelFromNodeI = labelFromNode[i];
-            if (nodeHasLabels && labelFromNodeI != null && dir != null
-                    && !labelFromNodeI.equals(dir)) {
-                continue;
-            }
+            if (MoveRules.leavesOffLane(nodeHasLabels, labelFromNode[i], dir)) continue;
 
             MapNode adj = adjList.get(i);
             String arrivalDir = labelAtAdjI;
@@ -1220,7 +1217,7 @@ public final class Pathfinder {
         // the same gate; the bonus-burn check inside expandCruise is now
         // structurally unreachable outside blue).
         if (!sameNode && dest.type() == NodeType.VENUS
-                && seasonAtTurn(current.turn) != Season.BLUE) {
+                && !MoveRules.venusOpen(dest, seasonAtTurn(current.turn))) {
             return List.of();
         }
 
@@ -1232,7 +1229,7 @@ public final class Pathfinder {
 
         // Crossing a one-way edge (aerobrake-style) consumes all free burns:
         // the maneuver is passive, not a powered burn.
-        boolean oneWay = !sameNode && "0".equals(map.edgeLabel(current.node, dest));
+        boolean oneWay = !sameNode && MoveRules.isOneWay(map.edgeLabel(current.node, dest));
 
         if (!sameNode && dest.isBurn()) {
             return expandBurn(current, neighbor, destIdx, prevNode, oneWay);
@@ -1244,9 +1241,7 @@ public final class Pathfinder {
     }
 
     private static boolean isPivot(SearchState current, Neighbor neighbor, boolean sameNode) {
-        return sameNode && neighbor.node.isHohmann()
-                && current.entryLabel != null && neighbor.direction != null
-                && !current.entryLabel.equals(neighbor.direction);
+        return sameNode && MoveRules.isPivot(neighbor.node, current.entryLabel, neighbor.direction);
     }
 
     /**
@@ -1274,8 +1269,7 @@ public final class Pathfinder {
      * thrust would mitigate a worse roll better).
      */
     private int radSeverityUnder(MapNode dest, int thrust, int turn) {
-        int penalty = (seasonAtTurn(turn) == Season.RED) ? 2 : 0;
-        return Math.max(dest.radiation() - thrust + penalty, 0);
+        return Math.max(MoveRules.beltSeverity(dest.radiation(), thrust, seasonAtTurn(turn)), 0);
     }
 
     /** BURN edge: either a free burn (if available) or a paid burn. */
@@ -1324,12 +1318,10 @@ public final class Pathfinder {
         }
         // H5e: half-burn lander spaces (landing = 1/2) cost half the fuel
         // steps of a full burn. landing == 1 (full burn) leaves cost unchanged.
-        Fraction burnCost = engine.fuelConsumption();
-        if (isLanding) burnCost = burnCost.multiply(dest.landing());
+        Fraction burnCost = MoveRules.burnFuel(engine.fuelConsumption(), 1, dest.landing());
         int visitedInc   = dest.isDecorative() ? 0 : 1;
 
         Fraction newPartial = current.partialStepsThisMove.add(burnCost);
-        Fraction fuelCap    = Fraction.of(current.fuelStepsRemaining);
 
         // H8e Solar Oberth flyby: lander burn that grants Bonus Burns equal
         // to the activated thruster's BASE thrust (not net), +1 if the ship
@@ -1339,8 +1331,7 @@ public final class Pathfinder {
         int oberthBonusBurns = 0;
         List<String> bonusSitesAfterEntry = current.bonusSites;
         if (oberthBoost) {
-            oberthBonusBurns = engine.baseThrust();
-            if (current.afterburnedThisMove()) oberthBonusBurns += 1;
+            oberthBonusBurns = MoveRules.oberthBonus(engine.baseThrust(), current.afterburnedThisMove());
             bonusSitesAfterEntry = new ArrayList<>(current.bonusSites);
             bonusSitesAfterEntry.add(dest.id());
         }
@@ -1355,7 +1346,7 @@ public final class Pathfinder {
         // is destroyed. Engine becomes permanently non-operational for the
         // rest of the search; the resulting state has thrust=0, burns=0,
         // and the engine's bit set in decommissionedEngines.
-        boolean willDecommission = isHazard
+        boolean willDecommission = MoveRules.sailBurnsUp(isHazard, /* aerobrake: not told apart */ false, false)
                 && engine.decommissionsOnAerobrake()
                 && (current.decommissionedEngines & (1L << current.engineIndex)) == 0;
         long newDecom    = willDecommission
@@ -1365,11 +1356,11 @@ public final class Pathfinder {
         int  burnsAfter  = willDecommission ? 0 : current.burnsRemaining;
 
         // Option A: free burn (not allowed on a landing approach)
-        if (current.freeBurns > 0 && !isLanding) {
+        if (current.freeBurns > 0 && MoveRules.bonusPaysBurn(dest)) {
             out.add(new SearchState(
                     dest, destIdx, neighbor.direction, current.engineIndex,
                     burnsAfter, current.pivotsRemaining,
-                    oneWay ? 0 : current.freeBurns - 1 + oberthBonusBurns, thrustAfter,
+                    MoveRules.bonusAfterOneWay(current.freeBurns - 1 + oberthBonusBurns, oneWay, true), thrustAfter,
                     current.fuelStepsRemaining, current.partialStepsThisMove,
                     current.boost,
                     current.turn, newHazards, newRadRoll,
@@ -1381,14 +1372,14 @@ public final class Pathfinder {
         // Option B: paid burn — needs an Operational thruster (J2a) plus
         // the H5d gate: fractional partial ≤ remaining
         if (operationalAtDest && current.burnsRemaining > 0
-                && !newPartial.isGreaterThan(fuelCap)) {
+                && MoveRules.fuelCovers(newPartial, current.fuelStepsRemaining)) {
             // burnsAfter accounts for paid-burn decrement *after* decommission
             // (so post-decommission state has 0 burns, not −1).
             int paidBurnsAfter = willDecommission ? 0 : (current.burnsRemaining - 1);
             out.add(new SearchState(
                     dest, destIdx, neighbor.direction, current.engineIndex,
                     paidBurnsAfter, current.pivotsRemaining,
-                    oneWay ? 0 : current.freeBurns + oberthBonusBurns, thrustAfter,
+                    MoveRules.bonusAfterOneWay(current.freeBurns + oberthBonusBurns, oneWay, true), thrustAfter,
                     current.fuelStepsRemaining, newPartial,
                     current.boost,
                     current.turn, newHazards, newRadRoll,
@@ -1418,14 +1409,18 @@ public final class Pathfinder {
         return out;
     }
 
-    /** Same-node direction change at a Hohmann intersection: pivot or 2-burn force-turn. */
+    /**
+     * Same-node direction change at a Hohmann intersection (H4c Pivot). Paid
+     * in a fixed order, as in the game: a Bonus Pivot if one is left (always
+     * spent — keeping it for a later Pivot is not offered), else the move's
+     * Bonus Burns (up to both burns), else paid burns for the rest.
+     */
     private List<SearchState> expandTurn(SearchState current, Neighbor neighbor, int prevNode) {
-        List<SearchState> out = new ArrayList<>(2);
         MapNode dest = neighbor.node;
 
         // Option A: use a pivot (free, no fuel)
         if (current.pivotsRemaining > 0) {
-            out.add(new SearchState(
+            return List.of(new SearchState(
                     dest, current.nodeIdx, neighbor.direction, current.engineIndex,
                     current.burnsRemaining, current.pivotsRemaining - 1,
                     current.freeBurns, current.thrust,
@@ -1437,16 +1432,19 @@ public final class Pathfinder {
                     current.turnStart(),
                     current.decommissionedEngines));
         }
-        // Option B: force-turn via 2 paid burns (requires an operational thruster)
-        if (current.burnsRemaining > 1 && current.thrust > 0) {
-            Fraction twoBurns = engines.get(current.engineIndex).fuelConsumption().multiply(2);
-            Fraction newPartial = current.partialStepsThisMove.add(twoBurns);
-            Fraction fuelCap = Fraction.of(current.fuelStepsRemaining);
-            if (!newPartial.isGreaterThan(fuelCap)) {
-                out.add(new SearchState(
+        // Option B: force-turn via 2 burns, Bonus Burns first. The Bonus Burn
+        // part needs no fuel and no operational thruster (H2b coasting
+        // examples); a paid part needs an operational thruster.
+        int fromBonus = MoveRules.pivotBurnsFromBonus(current.freeBurns);
+        int pivotBurns = MoveRules.PIVOT_BURNS - fromBonus;
+        if (pivotBurns == 0 || (current.burnsRemaining >= pivotBurns && current.thrust > 0)) {
+            Fraction pivotFuel = MoveRules.burnFuel(engines.get(current.engineIndex).fuelConsumption(), pivotBurns, null);
+            Fraction newPartial = current.partialStepsThisMove.add(pivotFuel);
+            if (MoveRules.fuelCovers(newPartial, current.fuelStepsRemaining)) {
+                return List.of(new SearchState(
                         dest, current.nodeIdx, neighbor.direction, current.engineIndex,
-                        current.burnsRemaining - 2, current.pivotsRemaining,
-                        current.freeBurns, current.thrust,
+                        current.burnsRemaining - pivotBurns, current.pivotsRemaining,
+                        current.freeBurns - fromBonus, current.thrust,
                         current.fuelStepsRemaining, newPartial,
                         current.boost,
                         current.turn, current.hazards, current.worstRadRoll,
@@ -1456,8 +1454,8 @@ public final class Pathfinder {
                     current.decommissionedEngines));
             }
         } else if (current.thrust <= 0) {
-            // Engine non-operational (e.g. solar in deep outer zone). Free
-            // pivot may still work (Option A above) but force-turn is dead.
+            // Engine non-operational (e.g. solar in deep outer zone) and too
+            // few Bonus Burns: the force-turn is dead.
             // Jettison would lift wet mass → improve weight class → revive
             // the engine; afterburn would raise the frozen net thrust the same
             // way. (Jettison doesn't trigger on burnsRemaining < 2 alone:
@@ -1465,13 +1463,14 @@ public final class Pathfinder {
             maybeSpawnBoostAlt(current, 0, TriggerKind.DEAD_ENGINE);
         } else {
             // Force-turn skipped for burn BUDGET (thrust > 0, burnsRemaining
-            // ≤ 1). Afterburn's extra burn is exactly the missing budget, so
-            // the AB sibling may make this force-turn — without this trigger
-            // lazy mode loses max-burn sprint routes that need a 2-burn turn
-            // late in a movement (verified: eager-only 1:2:0:0 at 728/734).
+            // below the paid part). Afterburn's extra burn is exactly the
+            // missing budget, so the AB sibling may make this force-turn —
+            // without this trigger lazy mode loses max-burn sprint routes that
+            // need a 2-burn turn late in a movement (verified: eager-only
+            // 1:2:0:0 at 728/734).
             maybeSpawnBoostAlt(current, 0, TriggerKind.FORCE_TURN_BUDGET);
         }
-        return out;
+        return List.of();
     }
 
     /** Free passage: Lagrange, flyby, radhaz, site, decorative, etc. */
@@ -1519,7 +1518,7 @@ public final class Pathfinder {
             // expandToNeighbor — by the time we get here, a Venus dest is
             // guaranteed to be in BLUE, so the +flybyBoost is unconditional
             // for all flyby types.
-            newFreeBurns += dest.flybyBoost();
+            newFreeBurns += MoveRules.flybyBonus(dest, true);
             newBonusSites.add(dest.id());
         }
         // H8f Mag Sail: every radiation belt entered confers ONE Bonus Burn,
@@ -1528,7 +1527,7 @@ public final class Pathfinder {
         // each Radiation Belt entered" — NOT the belt's radiation severity.
         if (!sameNode && dest.isRadhaz() && engine.magSail() && operationalAtDest
                 && !current.bonusSites.contains(dest.id())) {
-            newFreeBurns += 1;
+            newFreeBurns += MoveRules.MAG_SAIL_BELT_BONUS;
             newBonusSites.add(dest.id());
         }
         // H8e Solar Oberth flyby (cruise entry): some maps tag a non-burn
@@ -1537,9 +1536,7 @@ public final class Pathfinder {
         // (expandBurn handles the canonical lander-burn-typed Oberth.)
         if (!sameNode && dest.solarOberth() && operationalAtDest
                 && !current.bonusSites.contains(dest.id())) {
-            int oberth = engine.baseThrust();
-            if (current.afterburnedThisMove()) oberth += 1;
-            newFreeBurns += oberth;
+            newFreeBurns += MoveRules.oberthBonus(engine.baseThrust(), current.afterburnedThisMove());
             newBonusSites.add(dest.id());
         }
         // Solar-Oberth trigger (cross-node entries only): entering an Oberth
@@ -1549,13 +1546,14 @@ public final class Pathfinder {
             maybeSpawnBoostAlt(current, 0, TriggerKind.OBERTH);
         }
         // One-way edge zeroes out free burns (applies after flyby/magsail boost too).
-        if (oneWay) newFreeBurns = 0;
+        newFreeBurns = MoveRules.bonusAfterOneWay(newFreeBurns, oneWay, true);
 
         // H6b sail-aerobrake decommission: a sail entering a hazard node
         // is destroyed. Engine becomes permanently non-operational; state
         // gets thrust=0 burns=0 so coasting is the only option for the rest
         // of the move and waitTurn skips this engine onward.
-        boolean willDecommission = isHazard && engine.decommissionsOnAerobrake()
+        boolean willDecommission = MoveRules.sailBurnsUp(isHazard, /* aerobrake: not told apart */ false, false)
+                && engine.decommissionsOnAerobrake()
                 && (current.decommissionedEngines & (1L << current.engineIndex)) == 0;
         long newDecom    = willDecommission
                 ? current.decommissionedEngines | (1L << current.engineIndex)
@@ -1591,8 +1589,7 @@ public final class Pathfinder {
      */
     private List<SearchState> waitTurn(SearchState current) {
         // Apply end-of-move rounding (H5b) to settle the chit.
-        int settledFuel = current.fuelStepsRemaining
-                        - current.partialStepsThisMove.ceilToInt();
+        int settledFuel = MoveRules.settledFuel(current.fuelStepsRemaining, current.partialStepsThisMove);
         if (settledFuel < 0) settledFuel = 0; // defensive; H5d should have prevented
 
         List<SearchState> results = new ArrayList<>(engines.size());
@@ -1668,7 +1665,7 @@ public final class Pathfinder {
                                        EngineSpec engine, ThrustBoost boost,
                                        int fuelSteps, int turn, SearchState parent) {
         int thrust = boost.thrust();
-        int burns = Math.max(thrust, 0);
+        int burns = MoveRules.burnLimit(thrust);
         return new SearchState(
                 current.node, current.nodeIdx, null, engineIndex,
                 burns, engine.bonusPivots(), 0, thrust,
@@ -1688,7 +1685,7 @@ public final class Pathfinder {
      * than letting a high-base-thrust engine still produce positive net
      * thrust there.
      */
-    private static final int SOLAR_SHUTDOWN_SOLAR_MOD = -5;
+    private static final int SOLAR_SHUTDOWN_SOLAR_MOD = MoveRules.SOLAR_SHUTDOWN_SOLAR_MOD;
 
     /**
      * Net thrust for an engine at a given node, with Wet Mass derived from
@@ -1708,13 +1705,12 @@ public final class Pathfinder {
         // operational regardless of base thrust. Returning 0 zeroes the
         // paid-burn budget of movements that START here; entry-time
         // operationality is gated separately by engineOperationalAt.
-        if (engine.solarPowered() && node.solarMod() <= SOLAR_SHUTDOWN_SOLAR_MOD) {
+        if (MoveRules.solarShutdown(engine.solarPowered(), node.solarMod())) {
             return 0;
         }
         int wm = FuelStrip.wetMassAt(dryMass, fuelStepsRemaining);
         int weightMod = FuelStrip.weightClassModForWetMass(wm);
-        int solar = engine.solarPowered() ? node.solarMod() : 0;
-        return engine.baseThrust() + weightMod + solar;
+        return MoveRules.netThrust(engine.baseThrust(), weightMod, engine.solarPowered() ? node.solarMod() : 0);
     }
 
     /**
@@ -1822,7 +1818,7 @@ public final class Pathfinder {
     private boolean engineOperationalAt(SearchState state, MapNode node) {
         if ((state.decommissionedEngines & (1L << state.engineIndex)) != 0) return false;
         EngineSpec engine = engines.get(state.engineIndex);
-        return !(engine.solarPowered() && node.solarMod() <= SOLAR_SHUTDOWN_SOLAR_MOD);
+        return !MoveRules.solarShutdown(engine.solarPowered(), node.solarMod());
     }
 
     // -------------------------------------------------------------------------
@@ -1967,8 +1963,8 @@ public final class Pathfinder {
             int siteReq = to.thrustRequired();
             if (siteReq > 0) {
                 boolean viaDecChain = from.isDecorative();
-                boolean viaOneWayIn = "0".equals(map.edgeLabel(from, to));
-                boolean aerobrakeEligible = (viaDecChain || viaOneWayIn) && siteReq >= 6;
+                boolean viaOneWayIn = MoveRules.isOneWay(map.edgeLabel(from, to));
+                boolean aerobrakeEligible = MoveRules.aerobrakeLanding(viaOneWayIn, viaDecChain, false, siteReq, false);
                 if (!aerobrakeEligible) {
                     required = Math.max(required, siteReq + 1);
                 }
@@ -2017,22 +2013,19 @@ public final class Pathfinder {
      * is rejected. This naturally enforces both entry AND exit semantics.
      */
     private boolean passesSynodicSeasonGate(SearchState from, SearchState to) {
-        Season toGate = map.synodicGate(to.node);
-        if (toGate != null && seasonAtTurn(to.turn) != toGate) return false;
-        Season fromGate = map.synodicGate(from.node);
+        // Fast path: most Spaces have no gate, and the season is only needed for one.
+        if (map.synodicGate(to.node) == null && map.synodicGate(from.node) == null) return true;
         // Liftoff: 'from' was reached at from.turn; the move into 'to'
         // happens during to.turn (which equals from.turn unless this
         // transition crosses a turn boundary, but that's only true for
         // waitTurn — handled separately by sameNode branch above).
-        if (fromGate != null && seasonAtTurn(to.turn) != fromGate) return false;
-        return true;
+        Season season = seasonAtTurn(to.turn);
+        return MoveRules.seasonGateOpen(map, to.node, season) && MoveRules.seasonGateOpen(map, from.node, season);
     }
 
     /** A landing-burn node requires {@code thrust ≥ thrustRequired}. */
     private static boolean passesLandingBurnThrustGate(SearchState to) {
-        if (to.node.landing().isZero()) return true;
-        int required = to.node.thrustRequired();
-        return required <= 0 || to.thrust >= required;
+        return MoveRules.landerBurnThrustOk(to.node, to.thrust, true);
     }
 
     /**
@@ -2049,34 +2042,32 @@ public final class Pathfinder {
     private boolean passesSiteLandingRule(SearchState from, SearchState to) {
         if (!to.node.isSite()) return true;
         int required = to.node.thrustRequired();
-        if (required <= 0 || to.thrust > required) return true;
+        if (MoveRules.poweredLanding(to.thrust, required)) return true;
 
         boolean viaDecChain = from.node.isDecorative();
-        boolean viaOneWayIn = "0".equals(map.edgeLabel(from.node, to.node));
-        return (viaDecChain || viaOneWayIn) && required >= 6;
+        boolean viaOneWayIn = MoveRules.isOneWay(map.edgeLabel(from.node, to.node));
+        return MoveRules.aerobrakeLanding(viaOneWayIn, viaDecChain, false, required, false);
     }
 
     /** H6a: liftoff from a site requires {@code thrust > siteSize}. */
     private static boolean passesSiteLiftoffRule(SearchState from, SearchState to) {
         if (!from.node.isSite()) return true;
-        int required = from.node.thrustRequired();
-        return required <= 0 || to.thrust > required;
+        return MoveRules.poweredLanding(to.thrust, from.node.thrustRequired());
     }
 
     /** Cannot end a turn on a landing-burn node or a decorative (mid-edge) node. */
     private static boolean canEndTurnHere(SearchState at) {
-        return at.node.landing().isZero() && !at.node.isDecorative();
+        return MoveRules.canStop(at.node);
     }
 
     /** No-U-turn: cannot immediately return to the node we just came from. */
     private static boolean isReversingLastMove(SearchState from, SearchState to) {
-        return from.previousNodeIdx != -1
-            && to.nodeIdx == from.previousNodeIdx;
+        return MoveRules.isUTurn(from.previousNodeIdx, to.nodeIdx);
     }
 
     /** Cannot re-enter a flyby node already used this turn. */
     private static boolean isFlybyReentry(SearchState from, SearchState to) {
-        return from.bonusSites.contains(to.node.id());
+        return !MoveRules.flybyEntryAllowed(from.bonusSites.contains(to.node.id()), false);
     }
 
     // -------------------------------------------------------------------------

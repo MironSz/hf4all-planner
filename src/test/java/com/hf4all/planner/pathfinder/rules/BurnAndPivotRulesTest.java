@@ -3,6 +3,7 @@ package com.hf4all.planner.pathfinder.rules;
 import com.hf4all.planner.map.MapLoader;
 import com.hf4all.planner.model.SolarMap;
 import com.hf4all.planner.api.EngineSpec;
+import com.hf4all.planner.api.PathNode;
 import com.hf4all.planner.api.TraverseResponse;
 
 import org.junit.jupiter.api.BeforeAll;
@@ -176,6 +177,87 @@ class BurnAndPivotRulesTest {
         assertTrue(costVectorsAt(r, "6").contains("0|1|0|0"),
                 "bonus pivot should let us reach Hohmann 6 with 0 fuel on turn 1; "
                         + "got " + costVectorsAt(r, "6"));
+    }
+
+    /**
+     * H4c + H8b — Bonus Burns pay a Pivot (a Bonus Burn pays any Burn but an
+     * afterburn or a lander burn). From radhaz 525 the move enters FLYBY 528
+     * (+4 Bonus Burns), coasts 544 → 545 → 1051 → 1050 into Hohmann 523 on
+     * lane 1 and pivots onto lane 2 toward BURN 1045. Two Bonus Burns pay the
+     * Pivot and a third the burn into 1045: 0 fuel on turn 1. Paying the
+     * Pivot with paid burns instead would cost 4 fuel.
+     */
+    @Test
+    void bonusBurnsPayPivot() {
+        SolarMap sub = MapSubgraph.extract(fullMap, "1050", 6);
+
+        EngineSpec engine = new EngineSpec(5, 2, false, 0);
+        TraverseResponse r = traverse(sub, "525", engine, FUEL_DEFAULT);
+
+        assertEquals("ok", r.status());
+        assertTrue(costVectorsAt(r, "1045").contains("0|1|0|3"),
+                "two Bonus Burns should pay the Pivot at Hohmann 523; got " + costVectorsAt(r, "1045"));
+    }
+
+    /**
+     * H4c + H8b — a Pivot paid with one Bonus Burn and one paid burn. Same
+     * move as {@link #bonusBurnsPayPivot}, with net thrust 1 (one paid burn
+     * a move): the Pivot at 523 takes two of the four Bonus Burns and the
+     * burn into 1045 a third, so the Pivot at Hohmann 1046 (lane 2 onto lane 1
+     * toward 1047 → lagrange 1048) is paid with the last Bonus Burn plus the
+     * one paid burn: 2 fuel on turn 1. Paid burns alone could not pivot at all.
+     */
+    @Test
+    void bonusAndPaidBurnPayPivot() {
+        SolarMap sub = MapSubgraph.extract(fullMap, "1050", 6);
+
+        EngineSpec engine = new EngineSpec(3, 2, false, 0);
+        TraverseResponse r = traverse(sub, "525", engine, FUEL_DEFAULT);
+
+        assertEquals("ok", r.status());
+        assertTrue(costVectorsAt(r, "1048").contains("2|1|1|5"),
+                "a Bonus Burn and a paid burn should pay the Pivot at Hohmann 1046; got "
+                        + costVectorsAt(r, "1048"));
+    }
+
+    /**
+     * H4c (bonus pivots) — a Spacecraft with a Bonus Pivot always spends it on
+     * its next Pivot; keeping it while paying the Pivot with burns is not a
+     * choice. Structural check: in every turn of every path, the first Pivot
+     * at a Hohmann spends no fuel.
+     *
+     * <p>Regression: the search also paid a Pivot with burns while a Bonus
+     * Pivot was left, and kept that branch when the fuel burned lightened the
+     * ship into a better weight class (587 → 606 paid Pivot → ... → lander
+     * burn 652 on turn 2).
+     */
+    @Test
+    void bonusPivotAlwaysSpentFirst() {
+        SolarMap sub = MapSubgraph.extract(fullMap, "606", 12);
+
+        EngineSpec engine = new EngineSpec(7, 2, false, 1);
+        TraverseResponse r = traverse(sub, "587", engine, 19);
+
+        assertEquals("ok", r.status());
+        assertFalse(paysFirstPivotOfATurn(sub, r.tree(), false),
+                "a path pays a Pivot with burns while its Bonus Pivot is left");
+    }
+
+    /**
+     * True if some path below {@code parent} pays the first Pivot of a turn
+     * with fuel. A Pivot is a same-turn step to the same Hohmann.
+     */
+    private static boolean paysFirstPivotOfATurn(SolarMap map, PathNode parent, boolean pivotThisTurn) {
+        for (PathNode child : parent.children()) {
+            boolean sameTurn = child.turns() == parent.turns();
+            boolean pivot = sameTurn && child.nodeId().equals(parent.nodeId())
+                    && map.nodeById(child.nodeId()).isHohmann();
+            boolean paid = (long) child.fuelSpentNum() * parent.fuelSpentDen()
+                    != (long) parent.fuelSpentNum() * child.fuelSpentDen();
+            if (pivot && !pivotThisTurn && paid) return true;
+            if (paysFirstPivotOfATurn(map, child, sameTurn && (pivotThisTurn || pivot))) return true;
+        }
+        return false;
     }
 
     /**

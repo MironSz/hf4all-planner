@@ -83,3 +83,38 @@ datetime,duration_ms,tree_nodes,endpoints,description
 2026-07-07T13:08:00,12958,20541,899,boost-unify phase3 stats
 2026-07-07T13:08:35,12962,20541,899,boost-unify phase3 stats recheck
 2026-07-07T13:09:34,14397,15218,820,boost-unify phase3 stats ab ab
+2026-10-19T08:27:01,14801,20541,899,rules-extract baseline
+2026-10-19T08:27:35,16473,15220,820,rules-extract baseline ab ab
+2026-10-19T08:32:08,14503,20541,899,rules-extract MoveRules
+2026-10-19T08:32:41,15854,15220,820,rules-extract MoveRules ab ab
+2026-10-19T08:49:07,16905,20541,899,rules-extract final
+2026-10-19T08:49:43,18210,15220,820,rules-extract final ab ab
+2026-10-19T08:50:26,14336,20541,899,rules-extract A/B base 1
+2026-10-19T08:50:57,14541,20541,899,rules-extract A/B final 1
+2026-10-19T08:51:28,14415,20541,899,rules-extract A/B base 2
+2026-10-19T08:51:59,14636,20541,899,rules-extract A/B final 2
+2026-10-19T08:52:31,14618,20541,899,rules-extract A/B base 3
+2026-10-19T08:53:01,14424,20541,899,rules-extract A/B final 3
+2026-10-19T09:48:47,24475,27160,934,pivot-pay before
+2026-10-19T09:51:03,78005,31201,935,pivot-pay before ab
+2026-10-19T09:53:26,12255,20541,899,pivot-pay before canonical
+2026-10-19T10:20:16,26507,29504,934,pivot-pay after
+2026-10-19T10:22:10,56624,32032,935,pivot-pay after ab
+2026-10-19T10:22:41,15199,23125,905,pivot-pay after canonical
+2026-10-19T10:23:59,30781,27160,934,pivot-pay A/B untrunc base 1
+2026-10-19T10:24:51,24686,27160,934,pivot-pay A/B untrunc base 2
+2026-10-19T10:25:43,24797,27160,934,pivot-pay A/B untrunc base 3
+2026-10-19T10:26:43,24383,27160,934,pivot-pay A/B untrunc base 1
+2026-10-19T10:27:30,22731,29504,934,pivot-pay A/B untrunc new 1
+2026-10-19T10:28:20,24294,27160,934,pivot-pay A/B untrunc base 2
+2026-10-19T10:29:06,22574,29504,934,pivot-pay A/B untrunc new 2
+2026-10-19T10:29:57,24329,27160,934,pivot-pay A/B untrunc base 3
+2026-10-19T10:30:44,22695,29504,934,pivot-pay A/B untrunc new 3
+2026-10-19T10:32:50,56046,31201,935,pivot-pay A/B untrunc base ab
+2026-10-19T10:34:27,47740,32032,935,pivot-pay A/B untrunc new ab
+2026-10-19T10:34:54,12428,20541,899,pivot-pay A/B canonical base 1
+2026-10-19T10:35:20,12184,23125,905,pivot-pay A/B canonical new 1
+2026-10-19T10:35:48,12997,20541,899,pivot-pay A/B canonical base 2
+2026-10-19T10:36:14,12621,23125,905,pivot-pay A/B canonical new 2
+2026-10-19T10:36:41,12602,20541,899,pivot-pay A/B canonical base 3
+2026-10-19T10:37:05,11459,23125,905,pivot-pay A/B canonical new 3

@@ -93,18 +93,25 @@ class FlybyRulesTest {
      *
      * <p>Scenario (reported route): coasting solar loadout (net thrust −2
      * in the −4 zone → zero paid burns) starting on FLYBY 655 next to
-     * belts 1186 and 1181. One in-move farm pass yields at most
-     * 1 + 1 + 2 (flyby 655) = 4 bonus burns. That still pays single burn
-     * entries — lagrange 1151 stays reachable fuel-free — but the ten-burn
-     * corridor 1084..1093 to Bee-Zed (≥ 12 burns per movement incl. the
-     * 1151/1131 tolls, and unfarmable from mid-corridor) must be out of
-     * reach. Under the old radiation-severity grant (+6 per belt) the
-     * search reached 1093 on such a farm loop.
+     * belts 1186 and 1181, on a subgraph whose only Bonus Burn sources are
+     * that farm (belts 1186, 1181, 1183, 654 and flyby 655: at most 6 a
+     * movement). One belt bonus still pays the burn into lagrange 1151
+     * fuel-free, but BURN 586 must be out of reach: from the farm it takes
+     * 8 Bonus Burns in one movement (the 1151 and 1131 tolls, Pivots at
+     * 587 and 584 once the Bonus Pivot went on 606, lagrange 585 and the
+     * burn into 586), and stopping on the way does not help — no belt lies
+     * past 1151 to refill from. Under the old radiation-severity grant
+     * (+6 per belt) the search reached 586.
+     *
+     * <p>The full map no longer serves: Bonus Burns pay Pivots, so a long
+     * belt tour through the inner system gathers enough for the Bee-Zed
+     * corridor 1084..1093 this test used to rule out.
      */
     @Test
     void magSailGrantsOneBonusBurnPerBelt() {
+        SolarMap sub = MapSubgraph.extract(fullMap, "606", 8);
         EngineSpec magSail = new EngineSpec(1, 0, 1, true, 1, 0, 0, true, false);
-        TraverseResponse r = Pathfinder.traverse(fullMap,
+        TraverseResponse r = Pathfinder.traverse(sub,
                 new TraverseRequest("655", List.of(magSail), /*dryMass=*/ 1, /*fuelSteps=*/ 3,
                         /*allowFuelJettison=*/ true, /*startingYear=*/ 11));
         assertEquals("ok", r.status());
@@ -112,8 +119,8 @@ class FlybyRulesTest {
         Set<String> tollCosts = costVectorsAt(r, "1151");
         assertTrue(tollCosts.stream().anyMatch(c -> c.startsWith("0|")),
                 "one belt bonus must still pay the burn into lagrange 1151 fuel-free; got " + tollCosts);
-        assertFalse(reached(r, "1093"),
-                "corridor end 1093 needs ~12 bonus burns in one movement — impossible at 1 per belt");
+        assertFalse(reached(r, "586"),
+                "burn 586 needs 8 bonus burns in one movement — impossible at 1 per belt");
     }
 
     /**

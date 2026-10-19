@@ -695,12 +695,19 @@ class PathfinderTest {
      * fails), eager AB branches should be pruned by the output Pareto step
      * because they spend strictly more fuel without unlocking anything.
      * Resulting tree should contain zero {@code afterburnedHere > 0} nodes.
+     *
+     * <p>Runs on a radius-18 subgraph around 334, which stops one hop short
+     * of the Solar Oberth flyby 1486: there an afterburn is worth one more
+     * Bonus Burn (H8e), and since Bonus Burns pay Pivots that is a real
+     * saving (1 fuel step of afterburn for a 2-step paid burn) even when
+     * thrust never binds.
      */
     @Test
     void unusedAfterburnBranchesPrunedFromOutput() {
         // baseThrust=30 → trivially clears every gate; AB is always wasted.
         EngineSpec overpowered = new EngineSpec(30, 2, 1, false, 0, 1, 1, false, false);
-        TraverseResponse r = Pathfinder.traverse(map,
+        SolarMap sub = MapSubgraph.extract(map, "334", 18);
+        TraverseResponse r = Pathfinder.traverse(sub,
                 new TraverseRequest("334", List.of(overpowered), DEFAULT_DRY, DEFAULT_FUEL_STEPS, false));
         assertEquals("ok", r.status());
 
